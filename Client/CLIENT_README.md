@@ -1,7 +1,6 @@
-# AMS Client — V2 Reference
+# AMS Client
 
-React 19 + Vite 7 + TypeScript frontend for the Asset Management System (AMS) V2, reading/writing directly to Supabase via its anon key with RLS.
-
+React 19 + Vite 7 + TypeScript frontend for the Asset Management System (AMS) V2.
 ---
 
 ## Table of Contents
@@ -807,12 +806,3 @@ VITE_SUPABASE_ANON_KEY=<anon-public-key>
 ```
 
 ---
-
-## Known Issues & Notes
-
-- **`VITE_API_URL` is unused.** `Client/.env` defines it, but no client code reads it. Remove it or keep for future FastAPI integration.
-- **Client `.gitignore` is missing.** The `Client/` directory has no `.gitignore`. Add one with `.env` listed to prevent credentials from being committed.
-- **`supabaseClient.ts` fails fast** if env vars are missing — this is intentional and correct. Set vars in Vercel before deploying.
-- **No client → FastAPI runtime path.** The client talks only to Supabase. The FastAPI server is not called from any page at runtime.
-- **Admin check is async per page.** Each page independently calls `hasActiveAdminAccess()` on mount — there is no shared global auth context storing the admin state. This is simple but causes multiple RPC calls on page load.
-- **Employee Passport warning:** If `fn_is_admin()` fails but the profile has `role: 'admin'`, an `accessWarning` is shown to the user indicating RLS policies may need to be re-applied.

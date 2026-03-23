@@ -1,11 +1,60 @@
-# Asset Manager (AMS)
+# Asset Management System (AMS)
 
-This repository contains the ongoing development and documentation for the Asset Management System (AMS). 
+Centralized platform for tracking, managing, and auditing digital and physical assets — with ERP-aware employee profiles, RPC-driven assignment lifecycle, and QR-based asset scanning.
 
-## Why we are building this
-To provide a centralized, efficient, and reliable platform for tracking, managing, and maintaining digital and/or physical assets.
+> [!NOTE]
+> 🚧 **Under Development** — This project is actively being built. Features, APIs, and database schemas may change.
 
-## What we solve
-- **Disorganization:** Replaces fractured tracking methods with a single source of truth.
-- **Inefficiency:** Streamlines the workflow for asset allocation, recovery, and auditing.
-- **Lack of Visibility:** Provides clear insights into what assets exist, where they are, and who is responsible for them.
+## Repository layout
+
+```
+assetmanager/
+├── Client/   — React 19 + Vite + TypeScript frontend
+└── Server/   — FastAPI backend (Supabase service-role, QR generation)
+```
+
+## Request flow
+
+```mermaid
+flowchart TD
+    Browser["🌐 Browser (React Client)"]
+
+    Browser -->|"Google OAuth redirect"| SupaAuth["Supabase Auth"]
+    SupaAuth -->|"Session token"| Browser
+
+    Browser -->|"Read/Write data\n(anon key + RLS)"| SupaDB["Supabase PostgREST\n(tables, views)"]
+    Browser -->|"fn_assign_asset\nfn_return_asset\nfn_is_admin\nfn_public_scan_asset\netc."| SupaRPC["Supabase RPC\n(PostgreSQL functions)"]
+    Browser -->|"INSERT/UPDATE events\n(dashboard counters)"| SupaRT["Supabase Realtime"]
+
+    Browser -. "NOT called at runtime" .-> Server["FastAPI Server\n(Vercel Python)"]
+    Server -->|"service-role key\nbypasses RLS"| SupaDB
+
+    Server -->|"Generates QR PNG\nstored via fn_create_asset_with_log"| SupaRPC
+
+    subgraph Supabase
+        SupaAuth
+        SupaDB
+        SupaRPC
+        SupaRT
+    end
+```
+
+## Detailed documentation
+
+- [`Client/CLIENT_README.md`](./Client/CLIENT_README.md) — full client reference (routing, pages, components, API layer, styles, deployment)
+- [`Server/SERVER_README.md`](./Server/SERVER_README.md) — full server reference (routers, schemas, settings, auth, DB migrations, deployment)
+
+## Quick start
+
+```bash
+# Client
+cd Client && npm install && npm run dev
+
+# Server
+cd Server && pip install -r requirements.txt
+uvicorn main:app --reload --host 0.0.0.0 --port 8000
+```
+
+## Deployment
+
+Two separate Vercel projects — `Client/` and `Server/`. Each has its own `vercel.json` and environment variables. See the individual READMEs for exact env var checklists.

@@ -1,1 +1,12 @@
 .env
+# Python cache - never commit these
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Runtime/debug artifacts
+*.log
+debug.txt
+server_log.txt
+import_report*.json

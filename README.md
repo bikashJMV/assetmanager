@@ -1,4 +1,4 @@
-# Asset Management System (AMS)
+# [Asset Management System](https://ourassets.vercel.app)
 
 Centralized platform for tracking, managing, and auditing digital and physical assets — with ERP-aware employee profiles, RPC-driven assignment lifecycle, and QR-based asset scanning.
 
@@ -58,3 +58,18 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ## Deployment
 
 Two separate Vercel projects — `Client/` and `Server/`. Each has its own `vercel.json` and environment variables. See the individual READMEs for exact env var checklists.
+
+### Production URLs (example)
+
+These are the live deployments for this fork; replace with your own domains if you self-host.
+
+| Surface | URL | Notes |
+| --- | --- | --- |
+| Frontend (Vite) | `https://ourassets.vercel.app` | Set as `FRONTEND_URL` on the server and in Supabase Auth redirect allowlist |
+| Backend (FastAPI) | `https://assetmanager-backend.vercel.app` | API root; Swagger UI is at `/docs` — do **not** use `/docs` as the API base URL |
+
+### Environment alignment
+
+- **Client Vercel:** `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` only (see [Client/CLIENT_README.md](./Client/CLIENT_README.md)).
+- **Server Vercel:** `SUPABASE_URL`, `SUPABASE_KEY` (service role), `FRONTEND_URL` (must match the deployed client origin), `ALLOWED_ORIGINS` (comma-separated, include the client origin), `ENV=production`, and a non-empty `BACKEND_API_KEY` for internet-facing APIs (see [Server/SERVER_README.md](./Server/SERVER_README.md)).
+- **Supabase:** Under Authentication → URL configuration, add the production site URL and redirect URLs for your client origin (e.g. `https://ourassets.vercel.app` and `https://ourassets.vercel.app/**` as needed).

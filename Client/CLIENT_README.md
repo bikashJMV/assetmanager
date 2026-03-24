@@ -1,6 +1,6 @@
 # AMS Client
 
-React 19 + Vite 7 + TypeScript frontend for the Asset Management System (AMS) V2.
+[React 19 + Vite 7 + TypeScript frontend for the Asset Management](https://ourassets.vercel.app)
 ---
 
 ## Table of Contents
@@ -60,11 +60,11 @@ Browser
   │     ├─ Views (v_asset_inventory)
   │     └─ RPC (fn_public_scan_asset, fn_assign_asset, fn_return_asset, fn_is_admin, etc.)
   │
-  └─► FastAPI Server (NOT called at runtime)
-        └─ QR generation only (server-generated QRs stored in asset_logs.qr_code)
+  └─► FastAPI Server (optional at runtime)
+        └─ Used when integrations call the REST API; QR in DB may be produced server-side with `FRONTEND_URL`
 ```
 
-- The client **never calls the FastAPI server** at runtime. All data flows through Supabase's PostgREST + Auth + RPC.
+- The SPA **does not use `fetch` to the FastAPI base URL** for normal screens: lists, detail, assign/return, and auth all go through Supabase (anon key + RLS + RPC). The FastAPI server still matters for server-side QR embedding and for any tooling that uses the HTTP API.
 - Admin privilege is checked via `fn_is_admin()` RPC (backed by `employees.metadata.role = 'admin'` for the signed-in `auth_user_id`).
 
 ---
@@ -105,8 +105,9 @@ Client/
     │   │   ├── sidebarNav.ts       # Nav section/item definitions
     │   │   ├── AnimatedNavIcon.tsx # Animated SVG nav icons
     │   │   ├── Error.tsx           # Reusable error display card
+    │   │   ├── Footer.tsx          # Site footer (layout)
     │   │   ├── Loader.tsx          # Full-screen loading indicator
-    │   │   ├── Guide.tsx           # Usage guide page
+    │   │   ├── Guide.tsx           # Public usage guide (non-technical copy)
     │   │   ├── PageNotFound.tsx    # 404 page
     │   │   └── RefreshButton.tsx   # Accessible refresh button
     │   │
@@ -157,11 +158,13 @@ All Vite env vars must be prefixed with `VITE_` to be available in browser code 
 |---|---|---|
 | `VITE_SUPABASE_URL` | ✅ Yes | Your Supabase project URL |
 | `VITE_SUPABASE_ANON_KEY` | ✅ Yes | Supabase anon (public) key |
-| `VITE_API_URL` | ❌ Unused | Was intended for FastAPI integration; not consumed by any client code today |
+| `VITE_API_URL` | ❌ Unused | Reserved for future FastAPI calls from the browser; not read anywhere today |
 
 **`supabaseClient.ts` throws immediately** (`throw new Error(...)`) at module load time if either required variable is missing — this is intentional fail-fast behavior.
 
 For Vercel deployment, set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` in the **Client Vercel project** dashboard. The local `.env` file is NOT used during Vercel builds.
+
+**Production example:** `VITE_SUPABASE_*` values come from the same Supabase project as the server’s `SUPABASE_URL` / service key. The deployed app URL (e.g. `https://ourassets.vercel.app`) must be allowed in Supabase Auth → URL configuration (site URL + redirect URLs).
 
 ---
 
@@ -217,15 +220,18 @@ App
     └── AppRoutes
         ├── Sidebar (shown only when: session exists AND not /scan/* AND not /login)
         └── Routes
-            ├── /                   → <Home isAuthenticated={...} />
-            ├── /scan/:id           → <ScanPage /> (public)
+            ├── /                   → <Home isAuthenticated={...} /> (public)
+            ├── /dashboard/home     → same Home (public alias)
+            ├── /scan/:id           → <ScanPage /> (public QR landing)
+            ├── /guide              → <Guide /> (public)
             ├── /login              → <SignInScreen /> or redirect if session
             │
             └── <RequireAuth>       (guards all below)
+                ├── /assets/scan    → <ScanPage protectedRoute />
+                ├── /assets/scan/:id → <ScanPage protectedRoute />
                 ├── /assets         → <AllAssets />
                 ├── /assets/new     → <NewAsset />
                 ├── /assets/:id     → <AssetDetail />
-                ├── /guide          → <Guide />
                 ├── /404            → <PageNotFound />
                 ├── /employee       → <Employee />
                 └── /employee/new   → <NewEmployee />
@@ -371,7 +377,7 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
 - When authenticated: calls `getDashboardStats()` and subscribes to `subscribeDashboardRealtime()` for live counter updates.
 - When unauthenticated: shows `stats = null` (zeros), text "Sign in to see live counts."
 - Never calls stats or realtime when unauthenticated.
-- Sections: hero with CTA links → stats grid (5 counters) → "How It Works" 3-step cards.
+- Sections: hero with CTA links → stats grid (5 counters) → "How It Works" 3-step cards → `Footer` at the bottom.
 
 **Stat cards:** Total Assets, Assigned, In Stock, ERP Active employees, Total Employees.
 
@@ -478,7 +484,7 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
 
 **File:** `Sidebar.tsx` (551 lines)
 
-Adaptive navigation sidebar with user settings. Shown only when a session exists and not on `/scan/*` or `/login`.
+Adaptive navigation sidebar with user settings. Shown only when a session exists and not on public `/scan/*` (path prefix `/scan/`) or `/login`. Authenticated users can also open **Scan Asset** from the sidebar (`/assets/scan`), which keeps the sidebar visible.
 
 **Layout variants:**
 - **Desktop (≥sm):** Fixed-width sidebar (`292px` expanded, `54px` collapsed). Toggled by collapse button.
@@ -516,12 +522,16 @@ Defines the navigation structure as typed data:
 ```typescript
 sidebarSections: SidebarNavSection[] = [
   { id: 'overview',   items: [{ id: 'home', label: 'Home', to: '/', icon: 'home' }] },
-  { id: 'assets',     items: [{ id: 'all-assets', ... }, { id: 'new-asset', tone: 'accent', ... }] },
+  { id: 'assets',     items: [
+      { id: 'all-assets', label: 'All Assets', to: '/assets', icon: 'boxes', matchPrefix: true },
+      { id: 'scan-asset', label: 'Scan Asset', to: '/assets/scan', icon: 'scan', matchPrefix: true },
+      { id: 'new-asset', label: '+ New Asset', to: '/assets/new', icon: 'plus', tone: 'accent' },
+    ] },
   { id: 'employees',  items: [{ id: 'all-employees', ... }, { id: 'new-employee', tone: 'accent', ... }] },
 ]
 ```
 
-Icon names: `'home' | 'boxes' | 'users' | 'plus'` — rendered by `AnimatedNavIcon`.
+Icon names: `'home' | 'boxes' | 'users' | 'plus' | 'scan'` — rendered by `AnimatedNavIcon`.
 
 ---
 
@@ -557,15 +567,9 @@ Full-screen centered "Loading..." text indicator. Used by `AssetDetail` while fe
 
 ### Guide
 
-**Route:** `/guide`
+**Route:** `/guide` (public; no login required)
 
-Step-by-step guide explaining AMS workflows:
-1. Add a new asset
-2. Track inventory vs ERP separately
-3. Assign/return with RPC
-4. Use filters and QR
-
-Also shows a tips section.
+Short, non-technical walkthrough for end users: signing in, finding assets, scanning QR codes, and who to contact for access issues. Tone avoids implementation jargon (no RPC/RLS detail in the primary copy).
 
 ---
 
@@ -587,7 +591,7 @@ Simple "404 – Page not found" display. Navigated to from the catch-all `*` rou
 
 ### AnimatedNavIcon
 
-SVG icon component keyed by icon name (`home`, `boxes`, `users`, `plus`, `settings`, `guide`, `logout`, `sun`, `moon`, `list-chevrons-up-down`). Animated on parent `.nav-item` hover via CSS transitions defined in `global.css`.
+SVG icon component keyed by icon name (`home`, `boxes`, `users`, `plus`, `scan`, `settings`, `guide`, `logout`, `sun`, `moon`, `list-chevrons-up-down`). Animated on parent `.nav-item` hover via CSS transitions defined in `global.css`.
 
 ---
 
@@ -804,5 +808,14 @@ All paths are rewritten to `index.html` so React Router deep links (e.g. `/asset
 VITE_SUPABASE_URL=https://<your-project-ref>.supabase.co
 VITE_SUPABASE_ANON_KEY=<anon-public-key>
 ```
+
+### Production reference (this deployment)
+
+| Item | Value |
+| --- | --- |
+| Client | `https://ourassets.vercel.app` |
+| Server (API root, not `/docs`) | `https://assetmanager-backend.vercel.app` |
+
+Ensure the server Vercel project sets `FRONTEND_URL` and `ALLOWED_ORIGINS` to the client origin above so CORS and server-generated QR links stay correct.
 
 ---

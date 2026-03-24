@@ -1,6 +1,6 @@
-# AMS Server — V2 Reference
+# AMS Server Reference
 
-FastAPI backend for the Asset Management System (AMS) V2, backed by Supabase (PostgreSQL + Auth + RPC + RLS).
+[FastAPI backend for the Asset Management System, backed by Supabase (PostgreSQL + Auth + RPC + RLS)](https://assetmanager-backend.vercel.app)
 
 ---
 
@@ -539,5 +539,41 @@ All SQL migrations are in `db/migrations/v2/`. Run in order on a fresh Supabase 
 > If V2 tables were already applied, only re-run `03_views.sql` and `04_rls_policies.sql` to pick up the latest `fn_public_scan_asset` RPC and updated admin RLS policies.
 
 See `db/migrations/v2/README.md` and `STAGING_RUNBOOK.md` for detailed migration instructions and rollback steps.
+
+---
+
+## Vercel deployment
+
+- **Root directory:** `Server/` (this Python project).
+- **Entry:** `vercel.json` wires the serverless handler; local dev uses `uvicorn main:app` as documented above.
+
+### Production checklist (Vercel env)
+
+| Variable | Notes |
+| --- | --- |
+| `SUPABASE_URL` / `SUPABASE_KEY` | Service-role key only on the server; never expose in the browser. |
+| `FRONTEND_URL` | Full origin of the deployed client, **no trailing slash** (e.g. `https://ourassets.vercel.app`). Used inside QR images; if wrong, scans point at localhost. |
+| `ALLOWED_ORIGINS` | Comma-separated CORS origins; must include the same client origin (e.g. `https://ourassets.vercel.app`). |
+| `ENV` | Set to `production` for generic error messages and stricter API-key expectations. |
+| `BACKEND_API_KEY` | Set a strong secret in production so only callers with `x-api-key` or `Authorization: Bearer` can hit protected routes. |
+
+### API base URL for callers
+
+The backend **base URL** is the deployment origin only (e.g. `https://assetmanager-backend.vercel.app`). OpenAPI/Swagger lives at `{base}/docs` and ReDoc at `{base}/redoc` — those paths are for humans in a browser, not a substitute for the API root.
+
+---
+
+## Frontend integration note
+
+The React client talks to Supabase directly for almost all runtime operations. The FastAPI server is used for admin-style HTTP APIs and for QR generation when assets or logs are created through that API. For QR payloads to open the correct SPA route, `FRONTEND_URL` on the server must match the deployed client.
+
+---
+
+## Known issues / deployment checklist
+
+- [ ] `FRONTEND_URL` and `ALLOWED_ORIGINS` match production client origin.
+- [ ] `BACKEND_API_KEY` set when the API is exposed on the public internet.
+- [ ] Supabase Auth redirect URLs include the production client origin.
+- [ ] Migrations applied in order on the target Supabase project (`db/migrations/v2/`).
 
 ---

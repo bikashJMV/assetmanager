@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation } from 'rea
 import type { Session } from '@supabase/supabase-js'
 import Sidebar from './components/common/Sidebar'
 import { getSession, onAuthStateChange, signInWithGoogle } from './api'
+import { applyDocumentPreferences, applyStoredPreferences, getInitialDensity, getInitialFont, getInitialTheme } from './utils/theme'
 import { getUserFacingMessage, logDevError } from './utils/errors'
 import './index.css'
 
@@ -31,6 +32,21 @@ function AppRoutes() {
   const [session, setSession] = useState<Session | null>(null)
   const [authLoading, setAuthLoading] = useState(true)
   const [authError, setAuthError] = useState('')
+
+  useEffect(() => {
+    applyStoredPreferences()
+  }, [])
+
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (!event.key || !['ams-theme', 'ams-density', 'ams-font'].includes(event.key)) return
+      applyDocumentPreferences(getInitialTheme(), getInitialDensity(), getInitialFont())
+    }
+    window.addEventListener('storage', onStorage)
+    return () => {
+      window.removeEventListener('storage', onStorage)
+    }
+  }, [])
 
   useEffect(() => {
     let mounted = true
@@ -72,6 +88,7 @@ function AppRoutes() {
             <Route path="/" element={<Home isAuthenticated={Boolean(session)} />} />
             <Route path="/dashboard/home" element={<Home isAuthenticated={Boolean(session)} />} />
             <Route path="/scan/:id" element={<ScanPage />} />
+            <Route path="/guide" element={<Guide />} />
             <Route
               path="/login"
               element={
@@ -87,7 +104,6 @@ function AppRoutes() {
               <Route path="/assets" element={<AllAssets />} />
               <Route path="/assets/new" element={<NewAsset />} />
               <Route path="/assets/:id" element={<AssetDetail />} />
-              <Route path="/guide" element={<Guide />} />
               <Route path="/404" element={<PageNotFound />} />
               <Route path="/employee" element={<Employee />} />
               <Route path="/employee/new" element={<NewEmployee />} />

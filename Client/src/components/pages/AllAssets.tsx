@@ -35,7 +35,6 @@ export default function AllAssets() {
   const requestIdRef = useRef(0)
   const filtersRef = useRef<AssetFilters>({})
   const navigate = useNavigate()
-
   const applyScopeFilters = (base: AssetFilters): AssetFilters => {
     if (isAdmin) return { ...base, current_employee_id: undefined }
     return { ...base, current_employee_id: scopeEmployeeId || undefined }
@@ -159,6 +158,16 @@ export default function AllAssets() {
     }
   }
 
+  const handleDownloadQr = () => {
+    if (!qrModal) return
+    const link = document.createElement('a')
+    link.href = qrModal.qrCode
+    link.download = `${qrModal.assetTag}-qr.png`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+  }
+
   return (
     <main className="min-h-screen bg-app text-primary px-4 sm:px-6 py-6 sm:py-8">
       <div className="mb-6 flex flex-col gap-3 2xl:flex-row 2xl:items-center">
@@ -205,7 +214,7 @@ export default function AllAssets() {
               onChange={(e) => handleFilterChange({ hideHeldByInactive: e.target.checked || undefined })}
               className="accent-[color:var(--accent)]"
             />
-            Hide assets held by ERP-inactive employees
+            Hide ERP-inactive employees
           </label>
 
           <RefreshButton onClick={handleRefresh} loading={loading} label="Refresh" />
@@ -313,18 +322,29 @@ export default function AllAssets() {
 
       {qrModal && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 px-4">
-          <div className="bg-surface-2 border border-base rounded-2xl p-6 sm:p-8 text-center w-full max-w-sm">
-            <p className="text-subtle text-xs uppercase tracking-widest mb-1">Asset QR Code</p>
+          <div className="bg-app border border-base rounded-2xl p-6 sm:p-8 text-center w-full max-w-sm shadow-[0_20px_60px_rgba(0,0,0,0.22)]">
+            <p className="text-muted text-xs uppercase tracking-widest mb-1">Asset QR Code</p>
             <p className="text-accent font-bold text-lg mb-4">{qrModal.assetTag}</p>
-            <img src={qrModal.qrCode} alt="QR Code" className="mx-auto w-44 h-44 sm:w-48 sm:h-48 rounded-xl" />
-            <p className="text-subtle text-xs mt-4">Scan to view asset details</p>
-            <button
-              onClick={() => setQrModal(null)}
-              className="mt-6 bg-accent text-on-accent font-semibold px-6 py-2 rounded-lg hover:bg-accent-hover transition text-sm w-full shadow-accent"
-              type="button"
-            >
-              Close
-            </button>
+            <div className="mx-auto w-fit rounded-2xl border border-base bg-white p-3 sm:p-4 shadow-[0_10px_30px_rgba(0,0,0,0.08)]">
+              <img src={qrModal.qrCode} alt="QR Code" className="mx-auto w-44 h-44 sm:w-48 sm:h-48 rounded-xl" />
+            </div>
+            <p className="text-muted text-xs mt-4">Scan to view asset details</p>
+            <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <button
+                onClick={handleDownloadQr}
+                className="border border-base text-primary font-semibold px-6 py-2 rounded-lg hover:bg-surface-3 transition text-sm w-full"
+                type="button"
+              >
+                Download QR
+              </button>
+              <button
+                onClick={() => setQrModal(null)}
+                className="bg-accent text-on-accent font-semibold px-6 py-2 rounded-lg hover:bg-accent-hover transition text-sm w-full shadow-accent"
+                type="button"
+              >
+                Close
+              </button>
+            </div>
           </div>
         </div>
       )}

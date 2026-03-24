@@ -172,7 +172,7 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
             )}
             <video
               ref={videoRef}
-              className={`mt-3 w-full rounded-lg border border-base bg-black/40 ${scannerActive ? 'block' : 'hidden'}`}
+              className={`mt-3 w-full rounded-lg border border-base bg-surface ${scannerActive ? 'block' : 'hidden'}`}
               autoPlay
               muted
               playsInline

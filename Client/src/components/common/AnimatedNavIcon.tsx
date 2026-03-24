@@ -4,6 +4,7 @@ type IconName =
   | 'home'
   | 'guide'
   | 'boxes'
+  | 'scan'
   | 'users'
   | 'plus'
   | 'list-chevrons-up-down'
@@ -62,6 +63,18 @@ export default function AnimatedNavIcon({ name }: { name: IconName }) {
         <path className="ai-box-shell" d="M21 8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.7l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z" />
         <path className="ai-box-lid" d="m3.3 7 8.7 5 8.7-5" />
         <path className="ai-box-center" d="M12 22V12" />
+      </BaseIcon>
+    )
+  }
+
+  if (name === 'scan') {
+    return (
+      <BaseIcon>
+        <path d="M4 8V5h3" />
+        <path d="M20 8V5h-3" />
+        <path d="M4 16v3h3" />
+        <path d="M20 16v3h-3" />
+        <path d="M7 12h10" />
       </BaseIcon>
     )
   }

@@ -928,6 +928,16 @@ export async function getQrDataUriForAssetTag(assetTag: string): Promise<string>
   )?.qr_code
 
   if (storedQr) return storedQr.trim()
+
+  // Ensure each asset gets an individual persisted QR log, not only an in-memory fallback.
+  const created = await createLogForAsset(
+    asset.id,
+    asset.asset_tag || normalizedTag,
+    'Auto-generated individual QR for asset'
+  )
+  if (typeof created?.qr_code === 'string' && created.qr_code.trim().length > 0) {
+    return created.qr_code.trim()
+  }
   return buildAssetQrDataUri(asset.asset_tag || normalizedTag)
 }
 

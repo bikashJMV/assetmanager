@@ -2,7 +2,7 @@ export type SidebarNavItem = {
   id: string
   label: string
   to: string
-  icon: 'home' | 'boxes' | 'users' | 'plus'
+  icon: 'home' | 'boxes' | 'users' | 'plus' | 'scan'
   tone?: 'default' | 'accent'
   matchPrefix?: boolean
 }
@@ -26,7 +26,7 @@ export const sidebarSections: SidebarNavSection[] = [
     title: 'Assets',
     items: [
       { id: 'all-assets', label: 'All Assets', to: '/assets', icon: 'boxes', matchPrefix: true },
-      { id: 'scan-asset', label: 'Scan Asset', to: '/assets/scan', icon: 'boxes', matchPrefix: true },
+      { id: 'scan-asset', label: 'Scan Asset', to: '/assets/scan', icon: 'scan', matchPrefix: true },
       { id: 'new-asset', label: '+ New Asset', to: '/assets/new', icon: 'plus', tone: 'accent', matchPrefix: false },
     ],
   },

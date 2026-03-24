@@ -1,13 +1,36 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>client</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
-  </body>
+
+<head>
+  <meta charset="UTF-8" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>client</title>
+  <script>
+    (function () {
+      var root = document.documentElement
+      var storedTheme = localStorage.getItem('ams-theme')
+      var theme = (storedTheme === 'light' || storedTheme === 'dark')
+        ? storedTheme
+        : (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+      var storedDensity = localStorage.getItem('ams-density')
+      var density = (storedDensity === 'compact' || storedDensity === 'normal' || storedDensity === 'large' || storedDensity === 'spacious')
+        ? storedDensity
+        : 'normal'
+      var storedFont = localStorage.getItem('ams-font')
+      var font = (storedFont === 'claude' || storedFont === 'clean' || storedFont === 'mono' || storedFont === 'serif')
+        ? storedFont
+        : 'claude'
+      root.dataset.theme = theme
+      root.dataset.density = density
+      root.dataset.font = font
+    })()
+  </script>
+</head>
+
+<body>
+  <div id="root"></div>
+  <script type="module" src="/src/main.tsx"></script>
+</body>
+
 </html>

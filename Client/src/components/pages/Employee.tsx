@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
 import EmployeeForm from '../form/EmployeeForm'
 import Error from '../common/Error'
 import RefreshButton from '../common/RefreshButton'
 import {
   getCurrentEmployeeAssets,
+  getAssets,
+  getQrDataUriForAssetTag,
   hasActiveAdminAccess,
   listDepartments,
   listEmployees,
@@ -53,8 +54,6 @@ function toApiFilters(input: EmployeeFiltersInput): EmployeeListFilters {
 }
 
 export default function Employee() {
-  const navigate = useNavigate()
-
   const [employees, setEmployees] = useState<EmployeeRecord[]>([])
   const [departments, setDepartments] = useState<string[]>([])
   const [filtersInput, setFiltersInput] = useState<EmployeeFiltersInput>({
@@ -67,14 +66,13 @@ export default function Employee() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [errorDebug, setErrorDebug] = useState<string | undefined>(undefined)
-  const [passportAssets, setPassportAssets] = useState<{ asset_tag: string | null; model: string | null; status: string }[]>([])
-  const [passportNote, setPassportNote] = useState('')
   const [isAdmin, setIsAdmin] = useState(false)
   const [sessionEmployeeId, setSessionEmployeeId] = useState<string | null>(null)
   const [accessWarning, setAccessWarning] = useState('')
   const [adminToggleTarget, setAdminToggleTarget] = useState<EmployeeRecord | null>(null)
   const [adminToggleMode, setAdminToggleMode] = useState<'grant' | 'revoke' | null>(null)
   const [adminToggleLoading, setAdminToggleLoading] = useState(false)
+  const [bulkQrEmployeeId, setBulkQrEmployeeId] = useState<string | null>(null)
   const [successMessage, setSuccessMessage] = useState('')
 
   const requestIdRef = useRef(0)
@@ -124,19 +122,6 @@ export default function Employee() {
       setIsAdmin(effectiveAdmin)
       setSessionEmployeeId(passport.sessionEmployee?.id || null)
       setDepartments(departmentRows)
-      setPassportAssets(
-        passport.assets.map((asset) => ({
-          asset_tag: asset.asset_tag,
-          model: asset.model,
-          status: asset.status,
-        }))
-      )
-
-      if (passport.sessionEmployee && !passport.sessionEmployee.is_active) {
-        setPassportNote('Note: your ERP/HR profile is inactive. Asset visibility remains for audit context.')
-      } else {
-        setPassportNote('')
-      }
 
       if (profileAdmin && !adminAccess) {
         setAccessWarning(
@@ -252,6 +237,46 @@ export default function Employee() {
     }
   }
 
+  const triggerQrDownload = (assetTag: string, qrCode: string) => {
+    const link = document.createElement('a')
+    link.href = qrCode
+    link.download = `${assetTag}-qr.png`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+  }
+
+  const handleDownloadEmployeeQrs = async (employee: EmployeeRecord) => {
+    setBulkQrEmployeeId(employee.id)
+    setError('')
+    setErrorDebug(undefined)
+    setSuccessMessage('')
+    try {
+      const assets = await getAssets({ current_employee_id: employee.id })
+      const tags = assets
+        .map((asset) => asset.asset_tag?.trim() || '')
+        .filter((tag) => Boolean(tag))
+
+      if (!tags.length) {
+        setSuccessMessage(`No assigned assets found for ${employee.name}.`)
+        return
+      }
+
+      for (const tag of tags) {
+        const qrCode = await getQrDataUriForAssetTag(tag)
+        triggerQrDownload(tag, qrCode)
+      }
+
+      setSuccessMessage(`Downloaded ${tags.length} QR code(s) for ${employee.name}.`)
+    } catch (err) {
+      logDevError('employees.bulk_qr_download', err)
+      setError(getUserFacingMessage(err, 'Unable to download employee QR codes right now.'))
+      setErrorDebug(getErrorDebugDetail(err))
+    } finally {
+      setBulkQrEmployeeId(null)
+    }
+  }
+
   return (
     <main className="min-h-screen bg-app text-primary px-4 sm:px-6 py-6 sm:py-8">
       <div className="mb-6 flex flex-col gap-3 2xl:flex-row 2xl:items-center">
@@ -308,16 +333,6 @@ export default function Employee() {
           </select>
 
           <RefreshButton onClick={handleRefresh} loading={loading} label="Refresh" />
-
-          {isAdmin ? (
-            <button
-              onClick={() => navigate('/employee/new')}
-              className="bg-accent text-on-accent font-semibold px-5 py-2.5 rounded-lg hover:bg-accent-hover transition text-sm shadow-accent whitespace-nowrap"
-              type="button"
-            >
-              + Add New Employee
-            </button>
-          ) : null}
         </div>
       </div>
 
@@ -326,7 +341,7 @@ export default function Employee() {
           Read-only mode. Active admin access is required to add or edit employees.
         </p>
       )}
-
+      {/* 
       <section className="mb-5 bg-surface-2 border border-base rounded-xl p-4">
         <h2 className="text-sm font-semibold uppercase tracking-[0.16em] text-subtle mb-3">Employee Passport (Current Session)</h2>
         {passportNote && <p className="text-xs text-subtle mb-3">{passportNote}</p>}
@@ -344,7 +359,7 @@ export default function Employee() {
             ))}
           </div>
         )}
-      </section>
+      </section> */}
 
       {error ? (
         <div className="mb-4">
@@ -430,6 +445,17 @@ export default function Employee() {
                             Make Admin
                           </button>
                         )}
+                        <button
+                          onClick={() => {
+                            void handleDownloadEmployeeQrs(employee)
+                          }}
+                          disabled={bulkQrEmployeeId === employee.id}
+                          className="border border-base text-muted py-1.5 px-3 rounded-lg hover:bg-surface-3 transition text-xs disabled:opacity-60"
+                          type="button"
+                          title="Download QR codes for all assets assigned to this employee"
+                        >
+                          {bulkQrEmployeeId === employee.id ? 'Preparing QRs...' : 'Download QRs'}
+                        </button>
                       </div>
                     </td>
                   </tr>

@@ -4,30 +4,11 @@ import AnimatedNavIcon from './AnimatedNavIcon'
 import { sidebarSections, type SidebarNavItem } from './sidebarNav'
 import { getSessionEmployee, hasActiveAdminAccess, signOut } from '../../api'
 import { getUserFacingMessage, logDevError } from '../../utils/errors'
-
-const getInitialTheme = (): 'light' | 'dark' => {
-  if (typeof window === 'undefined') return 'dark'
-  const stored = localStorage.getItem('ams-theme')
-  if (stored === 'light' || stored === 'dark') return stored
-  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
-}
-
-const getInitialDensity = (): 'compact' | 'normal' | 'large' | 'spacious' => {
-  if (typeof window === 'undefined') return 'normal'
-  const stored = localStorage.getItem('ams-density')
-  if (stored === 'compact' || stored === 'normal' || stored === 'large' || stored === 'spacious') return stored
-  return 'normal'
-}
-
-const getInitialFont = (): 'claude' | 'clean' | 'mono' | 'serif' => {
-  if (typeof window === 'undefined') return 'claude'
-  const stored = localStorage.getItem('ams-font')
-  if (stored === 'claude' || stored === 'clean' || stored === 'mono' || stored === 'serif') return stored
-  return 'claude'
-}
+import { applyDocumentPreferences, getInitialDensity, getInitialFont, getInitialTheme } from '../../utils/theme'
 
 const isItemActive = (item: SidebarNavItem, pathname: string, search: URLSearchParams) => {
   if (item.id === 'all-assets' && pathname === '/assets/new') return false
+  if (item.id === 'all-assets' && pathname.startsWith('/assets/scan')) return false
   if (item.id === 'all-employees' && pathname === '/employee/new') return false
 
   const url = new URL(item.to, 'https://ams.local')
@@ -42,18 +23,6 @@ const isItemActive = (item: SidebarNavItem, pathname: string, search: URLSearchP
     if (search.get(key) !== value) return false
   }
   return true
-}
-
-function BrandMark({ compact = false }: { compact?: boolean }) {
-  return (
-    <div
-      className={`rounded-xl border border-[color:var(--accent-soft)] bg-accent text-on-accent font-black tracking-[0.14em] shadow-accent ${compact ? 'h-7 w-7 text-[8px]' : 'h-9 w-9 text-[10px]'
-        } flex items-center justify-center shrink-0`}
-      aria-hidden="true"
-    >
-      AMS
-    </div>
-  )
 }
 
 function SidebarLink({
@@ -80,10 +49,10 @@ function SidebarLink({
         title={item.label}
         aria-label={item.label}
         className={`group nav-item nav-item-compact h-9 w-9 rounded-lg flex items-center justify-center transition ${active
-            ? 'bg-accent text-on-accent shadow-accent'
-            : accentTone
-              ? 'bg-[color:var(--accent-soft)] text-accent hover:bg-accent hover:text-on-accent'
-              : 'text-muted hover:bg-surface-3 hover:text-primary'
+          ? 'bg-accent text-on-accent shadow-accent'
+          : accentTone
+            ? 'bg-[color:var(--accent-soft)] text-accent hover:bg-accent hover:text-on-accent'
+            : 'text-muted hover:bg-surface-3 hover:text-primary'
           }`}
       >
         <span
@@ -101,10 +70,10 @@ function SidebarLink({
       to={item.to}
       onClick={onNavigate}
       className={`group nav-item relative flex items-center gap-3 rounded-xl px-2.5 py-1.5 transition ${active
-          ? 'bg-surface-3 text-primary'
-          : accentTone
-            ? 'text-accent hover:bg-[color:var(--accent-soft)]'
-            : 'text-muted hover:bg-surface-3 hover:text-primary'
+        ? 'bg-surface-3 text-primary'
+        : accentTone
+          ? 'text-accent hover:bg-[color:var(--accent-soft)]'
+          : 'text-muted hover:bg-surface-3 hover:text-primary'
         }`}
     >
       <span className={`absolute left-0 top-1/2 -translate-y-1/2 h-6 w-0.5 rounded-r-full ${active ? 'bg-accent' : 'bg-transparent'}`} />
@@ -225,7 +194,7 @@ function SettingsPanel({
       </button>
 
       <div>
-        <p className="text-[11px] uppercase tracking-[0.16em] text-subtle mb-1.5">Theme</p>
+        <p className="text-[10px] uppercase tracking-[0.16em] text-subtle mb-1.5">Theme</p>
         <button
           onClick={onThemeToggle}
           className="group nav-item w-full rounded-lg border border-base bg-surface px-2.5 py-2 text-sm font-semibold text-primary hover:bg-surface-3 transition inline-flex items-center gap-2"
@@ -239,15 +208,18 @@ function SettingsPanel({
       </div>
 
       <div>
-        <p className="text-[11px] uppercase tracking-[0.16em] text-subtle mb-1.5">Text layout</p>
+        <p className="w-full truncate text-[10px] uppercase tracking-[0.16em] text-subtle mb-1">
+          Text layout
+        </p>
+
         <div className="grid grid-cols-4 gap-1">
           {(['compact', 'normal', 'large', 'spacious'] as const).map((option) => (
             <button
               key={option}
               onClick={() => onDensityChange(option)}
-              className={`rounded-lg border px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.08em] transition ${density === option
-                  ? 'border-accent-soft bg-accent text-on-accent'
-                  : 'border-base bg-surface text-muted hover:text-primary hover:bg-surface-3'
+              className={`rounded-lg border px-2 py-1 text-[8px] font-semibold text-ellipsis whitespace-nowrap uppercase tracking-[0.08em] transition ${density === option
+                ? 'border-accent-soft bg-accent text-on-accent'
+                : 'border-base bg-surface text-muted hover:text-primary hover:bg-surface-3'
                 }`}
               type="button"
             >
@@ -269,9 +241,9 @@ function SettingsPanel({
             <button
               key={option.key}
               onClick={() => onFontChange(option.key)}
-              className={`rounded-lg border px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.08em] transition ${font === option.key
-                  ? 'border-accent-soft bg-accent text-on-accent'
-                  : 'border-base bg-surface text-muted hover:text-primary hover:bg-surface-3'
+              className={`rounded-lg border px-2 py-1 text-[8px] font-semibold uppercase tracking-[0.08em] transition ${font === option.key
+                ? 'border-accent-soft bg-accent text-on-accent'
+                : 'border-base bg-surface text-muted hover:text-primary hover:bg-surface-3'
                 }`}
               type="button"
             >
@@ -323,22 +295,11 @@ export default function Sidebar() {
   }, [settingsOpen])
 
   useEffect(() => {
-    if (typeof document === 'undefined') return
-    document.documentElement.dataset.theme = theme
+    applyDocumentPreferences(theme, density, font)
     localStorage.setItem('ams-theme', theme)
-  }, [theme])
-
-  useEffect(() => {
-    if (typeof document === 'undefined') return
-    document.documentElement.dataset.density = density
     localStorage.setItem('ams-density', density)
-  }, [density])
-
-  useEffect(() => {
-    if (typeof document === 'undefined') return
-    document.documentElement.dataset.font = font
     localStorage.setItem('ams-font', font)
-  }, [font])
+  }, [theme, density, font])
 
   useEffect(() => {
     let mounted = true
@@ -409,12 +370,11 @@ export default function Sidebar() {
         Menu
       </button>
 
-      <aside className={`hidden sm:block shrink-0 transition-[width] duration-300 ease-in-out motion-reduce:transition-none ${collapsed ? 'w-[54px]' : 'w-[292px]'}`}>
-        <div className="sticky top-2 h-[calc(100vh-1rem)] rounded-2xl border border-base bg-surface shadow-[0_12px_40px_rgba(0,0,0,0.28)] overflow-visible flex flex-col transition-all duration-300 ease-in-out motion-reduce:transition-none">
+      <aside className={`hidden sm:block shrink-0 transition-[width] duration-300 ease-in-out motion-reduce:transition-none ${collapsed ? 'w-[50px]' : 'w-[270px]'}`}>
+        <div className="sticky top-0 h-[calc(100vh-1rem)] rounded-r-2xl border-r border-base bg-surface shadow-[0_12px_40px_rgba(0,0,0,0.28)] overflow-visible flex flex-col transition-all duration-300 ease-in-out motion-reduce:transition-none">
           <div className={`${collapsed ? 'px-1 py-1.5' : 'px-3.5 py-2.5'} border-b border-base bg-[linear-gradient(140deg,var(--accent-soft)_0%,transparent_65%)] transition-[padding] duration-300 ease-in-out motion-reduce:transition-none`}>
             {collapsed ? (
               <div className="flex flex-col items-center gap-1 transition-all duration-300 ease-in-out motion-reduce:transition-none">
-                <BrandMark compact />
                 <button
                   onClick={toggleCollapsed}
                   className="group nav-item h-7 w-7 rounded-lg border border-base bg-surface-2 text-muted hover:text-primary hover:bg-surface-3 transition flex items-center justify-center"
@@ -427,7 +387,6 @@ export default function Sidebar() {
             ) : (
               <div className="flex items-center justify-between transition-all duration-300 ease-in-out motion-reduce:transition-none">
                 <div className="flex items-center gap-3 min-w-0">
-                  <BrandMark />
                   <div className="min-w-0">
                     <p className="text-[11px] uppercase tracking-[0.16em] text-subtle">Workspace</p>
                     <p className="text-lg font-bold tracking-tight text-primary mt-0.5 truncate">Asset Management</p>
@@ -479,8 +438,8 @@ export default function Sidebar() {
                   onLogout={handleLogout}
                   notice={settingsNotice}
                   className={`settings-pop z-20 shadow-[0_16px_32px_rgba(0,0,0,0.35)] ${collapsed
-                      ? 'absolute bottom-0 left-[calc(100%+10px)] w-[264px]'
-                      : 'absolute bottom-full left-0 right-0 mb-2'
+                    ? 'absolute bottom-0 left-[calc(100%+10px)] w-[264px]'
+                    : 'absolute bottom-full left-0 right-0 mb-2'
                     }`}
                 />
               )}
@@ -492,11 +451,10 @@ export default function Sidebar() {
       {mobileOpen && (
         <div className="fixed inset-0 z-40 sm:hidden">
           <div className="absolute inset-0 bg-black/70" onClick={() => setMobileOpen(false)} />
-          <div className="relative w-[18rem] h-full bg-surface border-r border-base shadow-2xl shadow-black/40 p-2.5 flex flex-col">
-            <div className="rounded-2xl border border-base bg-surface-2 p-3">
+          <div className="relative w-[19rem] h-full bg-app border-r border-base shadow-2xl shadow-black/40 p-3 flex flex-col gap-2">
+            <div className="rounded-2xl border border-base bg-surface p-3.5">
               <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2.5">
-                  <BrandMark />
+                <div className="flex items-center gap-1">
                   <div>
                     <p className="text-[11px] uppercase tracking-[0.16em] text-subtle">Workspace</p>
                     <p className="text-lg font-bold tracking-tight">Asset Management</p>
@@ -512,7 +470,7 @@ export default function Sidebar() {
               </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto mt-2.5 px-1">
+            <div className="flex-1 overflow-y-auto px-1 py-1">
               <SidebarSections pathname={pathname} query={query} canManage={isAdmin} onNavigate={() => setMobileOpen(false)} />
             </div>
 

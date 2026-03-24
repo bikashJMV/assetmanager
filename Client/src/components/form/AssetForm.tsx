@@ -181,7 +181,7 @@ export default function AssetForm({ prefill = {}, onClose, onSuccess, variant = 
   }
 
   const content = (
-    <div className={`bg-app border border-base rounded-2xl shadow-[0_18px_48px_var(--accent-shadow)] w-full ${isPanel ? '' : 'max-w-3xl'}`}>
+    <div className={`bg-app border border-base shadow-[0_18px_48px_var(--accent-shadow)] w-full ${isPanel ? '' : 'max-w-7xl'}`}>
       <div className="flex items-center justify-between px-4 sm:px-6 py-4 border-b border-base bg-surface rounded-t-2xl">
         <h2 className="font-semibold text-primary text-sm sm:text-base">
           {isEditing ? `Edit Asset ${prefill.asset_tag}` : 'Add New Asset'}
@@ -202,8 +202,9 @@ export default function AssetForm({ prefill = {}, onClose, onSuccess, variant = 
             />
 
             <div>
-              <label className="block text-muted text-xs mb-1">Category *</label>
+            <label htmlFor="asset-form-category" className="block text-muted text-xs mb-1">Category *</label>
               <select
+              id="asset-form-category"
                 value={form.category_slug}
                 onChange={(e) => setForm((current) => ({ ...current, category_slug: e.target.value }))}
                 className="w-full bg-app border border-base rounded-lg px-3 py-2.5 text-primary text-sm outline-none focus:border-[color:var(--accent)] focus:ring-2 focus:ring-[color:var(--accent-soft)] transition"
@@ -255,8 +256,9 @@ export default function AssetForm({ prefill = {}, onClose, onSuccess, variant = 
             />
 
             <div>
-              <label className="block text-muted text-xs mb-1">Inventory Status</label>
+            <label htmlFor="asset-form-status" className="block text-muted text-xs mb-1">Inventory Status</label>
               <select
+              id="asset-form-status"
                 value={form.status}
                 onChange={(e) => setForm((current) => ({ ...current, status: e.target.value }))}
                 className="w-full bg-app border border-base rounded-lg px-3 py-2.5 text-primary text-sm outline-none focus:border-[color:var(--accent)] focus:ring-2 focus:ring-[color:var(--accent-soft)] transition"
@@ -318,7 +320,6 @@ export default function AssetForm({ prefill = {}, onClose, onSuccess, variant = 
           <button
             type="submit"
             disabled={loading}
-            aria-busy={loading}
             className="flex-1 bg-accent text-on-accent font-semibold py-2.5 rounded-lg hover:bg-accent-hover transition text-sm disabled:opacity-60 shadow-accent"
           >
             {loading ? 'Saving...' : isEditing ? 'Save Changes' : 'Create Asset'}
@@ -411,13 +412,13 @@ function DynamicField({
       </label>
 
       {field.data_type === 'boolean' ? (
-        <select value={value} onChange={(e) => onChange(e.target.value)} className={commonClass}>
+        <select aria-label={field.label} value={value} onChange={(e) => onChange(e.target.value)} className={commonClass}>
           <option value="">Select</option>
           <option value="true">True</option>
           <option value="false">False</option>
         </select>
       ) : field.data_type === 'select' && Array.isArray(field.options) && field.options.length > 0 ? (
-        <select value={value} onChange={(e) => onChange(e.target.value)} className={commonClass}>
+        <select aria-label={field.label} value={value} onChange={(e) => onChange(e.target.value)} className={commonClass}>
           <option value="">Select</option>
           {field.options.map((option) => (
             <option key={String(option)} value={String(option)}>{String(option)}</option>
@@ -425,6 +426,7 @@ function DynamicField({
         </select>
       ) : (
         <input
+          aria-label={field.label}
           type={field.data_type === 'date' ? 'date' : field.data_type === 'number' ? 'number' : 'text'}
           value={value}
           onChange={(e) => onChange(e.target.value)}

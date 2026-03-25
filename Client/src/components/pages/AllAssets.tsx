@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import {
   getAssets,
   getQrDataUriForAssetTag,
+  regenerateQrDataUriForAssetTag,
   getSessionEmployee,
   hasActiveAdminAccess,
   listCategories,
@@ -330,6 +331,25 @@ export default function AllAssets() {
             </div>
             <p className="text-muted text-xs mt-4">Scan to view asset details</p>
             <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <button
+                onClick={async () => {
+                  setQrLoading(true)
+                  try {
+                    const newQrCode = await regenerateQrDataUriForAssetTag(qrModal.assetTag)
+                    setQrModal({ assetTag: qrModal.assetTag, qrCode: newQrCode })
+                  } catch (err) {
+                    logDevError('assets.qr.regenerate', err)
+                    setError(getUserFacingMessage(err, 'Unable to regenerate QR right now.'))
+                  } finally {
+                    setQrLoading(false)
+                  }
+                }}
+                disabled={qrLoading}
+                className="border border-[color:var(--accent-soft)] text-primary font-semibold px-6 py-2 rounded-lg hover:bg-surface-3 transition text-sm w-full"
+                type="button"
+              >
+                {qrLoading ? 'Regenerating...' : 'Regenerate QR'}
+              </button>
               <button
                 onClick={handleDownloadQr}
                 className="border border-base text-primary font-semibold px-6 py-2 rounded-lg hover:bg-surface-3 transition text-sm w-full"

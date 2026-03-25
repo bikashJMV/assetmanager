@@ -482,10 +482,8 @@ begin
     where employee_code = trim(p_actor_employee_code);
   end if;
 
-  v_asset_tag := nullif(trim(coalesce(p_asset_tag, '')), '');
-  if v_asset_tag is null then
-    v_asset_tag := fn_next_asset_tag();
-  end if;
+  -- System-enforced asset tag generation (no manual tags).
+  v_asset_tag := fn_next_asset_tag();
 
   insert into assets (
     asset_tag,

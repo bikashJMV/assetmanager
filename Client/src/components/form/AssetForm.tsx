@@ -147,7 +147,7 @@ export default function AssetForm({ prefill = {}, onClose, onSuccess, variant = 
       )
 
       const payload: AssetWriteInput = {
-        asset_tag: form.asset_tag.trim() || undefined,
+        asset_tag: isEditing ? form.asset_tag.trim() || undefined : undefined,
         category_slug: form.category_slug,
         manufacturer_name: form.manufacturer_name.trim() || undefined,
         model: form.model.trim() || undefined,
@@ -195,10 +195,10 @@ export default function AssetForm({ prefill = {}, onClose, onSuccess, variant = 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <Field
               label="Asset Tag"
-              value={form.asset_tag}
-              placeholder="AST-00001"
+              value={isEditing ? form.asset_tag : ''}
+              placeholder={isEditing ? 'AST-00001' : 'Auto-generated on save'}
               onChange={(value) => setForm((current) => ({ ...current, asset_tag: value }))}
-              disabled={isEditing}
+              disabled={true}
             />
 
             <div>

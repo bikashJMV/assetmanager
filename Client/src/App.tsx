@@ -77,7 +77,9 @@ function AppRoutes() {
   }, [])
 
   const showSidebar = Boolean(session) && !isPublicScan && !isLogin
-  const loginReturnPath = getReturnPathFromState(location.state)
+  const nextFromQuery = new URLSearchParams(location.search).get('next')
+  const loginReturnPath =
+    typeof nextFromQuery === 'string' && nextFromQuery.trim().startsWith('/') ? nextFromQuery.trim() : '/'
 
   return (
     <div className="min-h-screen bg-app text-primary flex">
@@ -113,9 +115,12 @@ function AppRoutes() {
               path="*"
               element={
                 <Navigate
-                  to={session ? '/404' : '/login'}
+                  to={
+                    session
+                      ? '/404'
+                      : `/login?next=${encodeURIComponent(`${location.pathname}${location.search}${location.hash}`)}`
+                  }
                   replace
-                  state={session ? undefined : { from: location }}
                 />
               }
             />
@@ -134,25 +139,11 @@ function RequireAuth({ session, authLoading }: { session: Session | null; authLo
   }
 
   if (!session) {
-    return <Navigate to="/login" replace state={{ from: location }} />
+    const next = `${location.pathname}${location.search}${location.hash}`
+    return <Navigate to={`/login?next=${encodeURIComponent(next)}`} replace />
   }
 
   return <Outlet />
-}
-
-function getReturnPathFromState(state: unknown): string {
-  if (!state || typeof state !== 'object') return '/'
-
-  const from = (state as {
-    from?: { pathname?: string; search?: string; hash?: string }
-  }).from
-
-  const pathname = typeof from?.pathname === 'string' ? from.pathname : '/'
-  const search = typeof from?.search === 'string' ? from.search : ''
-  const hash = typeof from?.hash === 'string' ? from.hash : ''
-  const target = `${pathname}${search}${hash}`
-
-  return target && target !== '/login' ? target : '/'
 }
 
 function AuthLoadingScreen() {
@@ -166,12 +157,17 @@ function AuthLoadingScreen() {
 function SignInScreen({ error }: { error: string }) {
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState('')
+  const location = useLocation()
 
   const handleSignIn = async () => {
     setLoading(true)
     setMessage('')
     try {
-      await signInWithGoogle()
+      const nextFromQuery = new URLSearchParams(location.search).get('next')
+      const nextPath =
+        typeof nextFromQuery === 'string' && nextFromQuery.trim().startsWith('/') ? nextFromQuery.trim() : '/'
+
+      await signInWithGoogle(nextPath)
     } catch (err) {
       logDevError('app.signin', err)
       setMessage(getUserFacingMessage(err, 'Google sign-in failed. Please try again.'))

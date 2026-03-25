@@ -239,7 +239,10 @@ def create_asset(asset: AssetCreate, db=Depends(get_db)):
         if not category_slug:
             raise HTTPException(status_code=400, detail="category_slug is required")
 
-        desired_asset_tag = (asset.asset_tag or "").strip() or next_asset_tag(db)
+        if (asset.asset_tag or "").strip():
+            raise HTTPException(status_code=400, detail="asset_tag is system-generated and cannot be provided by clients")
+
+        desired_asset_tag = next_asset_tag(db)
         qr_code = qr_service.generate_asset_qr(desired_asset_tag)
 
         payload = {

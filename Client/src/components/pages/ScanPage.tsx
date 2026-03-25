@@ -55,7 +55,8 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
       return
     }
     setScannerError('')
-    void navigate(`/assets/scan/${encodeURIComponent(resolved)}`)
+    const target = protectedRoute ? `/assets/scan/${encodeURIComponent(resolved)}` : `/scan/${encodeURIComponent(resolved)}`
+    void navigate(target)
   }
 
   const stopScanner = () => {
@@ -88,7 +89,8 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
         const resolved = extractAssetTagFromScanValue(rawValue)
         if (resolved) {
           stopScanner()
-          void navigate(`/assets/scan/${encodeURIComponent(resolved)}`)
+          const target = protectedRoute ? `/assets/scan/${encodeURIComponent(resolved)}` : `/scan/${encodeURIComponent(resolved)}`
+          void navigate(target)
           return
         }
       }
@@ -255,6 +257,21 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
           Holder ERP/HR inactive flag is an admin audit signal.
         </p>
       )}
+
+      {!protectedRoute && asset.asset_tag ? (
+        <div className="flex justify-center mt-8">
+          <button
+            type="button"
+            onClick={() => {
+              const next = `/assets/${asset.asset_tag}`
+              navigate(`/login?next=${encodeURIComponent(next)}`)
+            }}
+            className="bg-accent text-on-accent font-semibold px-6 py-2.5 rounded-lg hover:bg-accent-hover transition text-sm shadow-accent"
+          >
+            See more
+          </button>
+        </div>
+      ) : null}
 
       <p className="text-center text-subtle text-xs mt-10">Powered by AMS</p>
     </main>

@@ -286,11 +286,18 @@ export function onAuthStateChange(callback: (session: Session | null) => void) {
   }
 }
 
-export async function signInWithGoogle() {
+export async function signInWithGoogle(nextPath?: string) {
+  const normalizedNextPath =
+    typeof nextPath === 'string' && nextPath.trim() && nextPath.trim().startsWith('/')
+      ? nextPath.trim()
+      : '/'
+
+  const redirectTo = `${window.location.origin}${normalizedNextPath}`
+
   const { error } = await supabase.auth.signInWithOAuth({
     provider: 'google',
     options: {
-      redirectTo: window.location.origin,
+      redirectTo,
       queryParams: {
         prompt: 'select_account',
       },
@@ -941,6 +948,22 @@ export async function getQrDataUriForAssetTag(assetTag: string): Promise<string>
   return buildAssetQrDataUri(asset.asset_tag || normalizedTag)
 }
 
+export async function regenerateQrDataUriForAssetTag(assetTag: string): Promise<string> {
+  const normalizedTag = assetTag.trim()
+  if (!normalizedTag) {
+    throw new Error('Asset tag is required to generate QR')
+  }
+
+  const asset = await getAssetIdentityByTag(normalizedTag)
+  const created = await createLogForAsset(asset.id, asset.asset_tag, 'Regenerated individual QR for asset')
+
+  if (typeof created?.qr_code === 'string' && created.qr_code.trim().length > 0) {
+    return created.qr_code.trim()
+  }
+
+  return buildAssetQrDataUri(asset.asset_tag || normalizedTag)
+}
+
 export async function createLog(assetTag: string, note: string) {
   const asset = await getAssetIdentityByTag(assetTag)
   return createLogForAsset(asset.id, asset.asset_tag, note)
@@ -972,7 +995,7 @@ async function createLogForAsset(assetId: string, assetTag: string, note: string
 
 async function buildAssetQrDataUri(assetTag: string): Promise<string> {
   const baseOrigin = typeof window !== 'undefined' ? window.location.origin : ''
-  const scanUrl = `${baseOrigin}/assets/scan/${encodeURIComponent(assetTag)}`
+  const scanUrl = `${baseOrigin}/scan/${encodeURIComponent(assetTag)}`
   return QRCode.toDataURL(scanUrl, { margin: 2, width: 320 })
 }
 

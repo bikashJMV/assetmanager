@@ -1,4 +1,4 @@
-# [Asset Management System](https://ourassets.vercel.app)
+# [Asset Management System](https://web-assetmanager.vercel.app)
 
 Centralized platform for tracking, managing, and auditing digital and physical assets — with ERP-aware employee profiles, RPC-driven assignment lifecycle, and QR-based asset scanning.
 
@@ -23,7 +23,7 @@ flowchart TD
     SupaAuth -->|"Session token"| Browser
 
     Browser -->|"Read/Write data\n(anon key + RLS)"| SupaDB["Supabase PostgREST\n(tables, views)"]
-    Browser -->|"fn_assign_asset\nfn_return_asset\nfn_is_admin\nfn_public_scan_asset\netc."| SupaRPC["Supabase RPC\n(PostgreSQL functions)"]
+    Browser -->|"fn_assign_asset\nfn_return_asset\nfn_is_admin_or_it_ops\nfn_set_employee_role\nfn_public_scan_asset\netc."| SupaRPC["Supabase RPC\n(PostgreSQL functions)"]
     Browser -->|"INSERT/UPDATE events\n(dashboard counters)"| SupaRT["Supabase Realtime"]
 
     Browser -. "NOT called at runtime" .-> Server["FastAPI Server\n(Vercel Python)"]
@@ -38,6 +38,10 @@ flowchart TD
         SupaRT
     end
 ```
+
+## Roles & database
+
+Employees have a canonical `employees.role`: `employee`, `admin`, or `it_ops` (highest). RLS and RPCs enforce permissions; privileged role changes go through audited SQL (`fn_set_employee_role` / legacy wrapper). Apply migrations through `08_it_ops_rbac.sql` after the earlier V2 files — see [Server/db/migrations/v2/README.md](./Server/db/migrations/v2/README.md).
 
 ## Detailed documentation
 
@@ -65,11 +69,11 @@ These are the live deployments for this fork; replace with your own domains if y
 
 | Surface | URL | Notes |
 | --- | --- | --- |
-| Frontend (Vite) | `https://ourassets.vercel.app` | Set as `FRONTEND_URL` on the server and in Supabase Auth redirect allowlist |
+| Frontend (Vite) | `https://web-assetmanager.vercel.app` | Set as `FRONTEND_URL` on the server and in Supabase Auth redirect allowlist |
 | Backend (FastAPI) | `https://assetmanager-backend.vercel.app` | API root; Swagger UI is at `/docs` — do **not** use `/docs` as the API base URL |
 
 ### Environment alignment
 
 - **Client Vercel:** `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` only (see [Client/CLIENT_README.md](./Client/CLIENT_README.md)).
 - **Server Vercel:** `SUPABASE_URL`, `SUPABASE_KEY` (service role), `FRONTEND_URL` (must match the deployed client origin), `ALLOWED_ORIGINS` (comma-separated, include the client origin), `ENV=production`, and a non-empty `BACKEND_API_KEY` for internet-facing APIs (see [Server/SERVER_README.md](./Server/SERVER_README.md)).
-- **Supabase:** Under Authentication → URL configuration, add the production site URL and redirect URLs for your client origin (e.g. `https://ourassets.vercel.app` and `https://ourassets.vercel.app/**` as needed).
+- **Supabase:** Under Authentication → URL configuration, add the production site URL and redirect URLs for your client origin (e.g. `https://web-assetmanager.vercel.app` and `https://web-assetmanager.vercel.app/**` as needed).

@@ -28,7 +28,6 @@ export default function App() {
 function AppRoutes() {
   const location = useLocation()
   const isPublicScan = location.pathname.startsWith('/scan/')
-  const isLogin = location.pathname === '/login'
   const [session, setSession] = useState<Session | null>(null)
   const [authLoading, setAuthLoading] = useState(true)
   const [authError, setAuthError] = useState('')
@@ -76,14 +75,14 @@ function AppRoutes() {
     }
   }, [])
 
-  const showSidebar = Boolean(session) && !isPublicScan && !isLogin
+  const showSidebar = !isPublicScan
   const nextFromQuery = new URLSearchParams(location.search).get('next')
   const loginReturnPath =
     typeof nextFromQuery === 'string' && nextFromQuery.trim().startsWith('/') ? nextFromQuery.trim() : '/'
 
   return (
     <div className="min-h-screen bg-app text-primary flex">
-      {showSidebar && <Sidebar />}
+      {showSidebar && <Sidebar isAuthenticated={Boolean(session)} />}
       <div className={`flex-1 overflow-y-auto ${showSidebar ? 'pt-16 sm:pt-0' : ''}`}>
         <Suspense fallback={<AuthLoadingScreen />}>
           <Routes>

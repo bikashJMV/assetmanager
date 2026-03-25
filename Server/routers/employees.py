@@ -3,6 +3,7 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
+from core.auth import require_it_ops_access, require_manage_platform_access
 from core.deps import get_db
 from core.errors import handle_supabase_error
 from schemas.employee import EmployeeCreate, EmployeeOut, EmployeeUpdate
@@ -16,8 +17,8 @@ def sanitize_search(query: str) -> str:
 
 def normalize_role_input(raw: Optional[str]) -> str:
     value = str(raw or 'employee').strip().lower()
-    if value not in {'employee', 'admin'}:
-        raise HTTPException(status_code=400, detail='role must be either employee or admin')
+    if value not in {'employee', 'admin', 'it_ops'}:
+        raise HTTPException(status_code=400, detail='role must be employee, admin, or it_ops')
     return value
 
 
@@ -31,8 +32,9 @@ def normalize_employee_row(row: dict[str, Any]) -> dict[str, Any]:
     if isinstance(department, dict):
         department_name = department.get('name')
 
-    role = metadata.get('role') if isinstance(metadata, dict) else None
-    normalized_role = 'admin' if isinstance(role, str) and role.strip().lower() == 'admin' else 'employee'
+    direct_role = row.get('role')
+    role = direct_role if isinstance(direct_role, str) and direct_role.strip() else (metadata.get('role') if isinstance(metadata, dict) else None)
+    normalized_role = normalize_role_input(role if isinstance(role, str) else 'employee')
 
     return {
         'id': row.get('id'),
@@ -72,7 +74,7 @@ def list_employees(
 ):
     try:
         query = db.table('employees').select(
-            'id,employee_code,name,email,department_id,is_active,metadata,created_at,updated_at,department:departments(name)'
+            'id,employee_code,name,email,department_id,is_active,role,metadata,created_at,updated_at,department:departments(name)'
         ).order('name')
 
         if search:
@@ -99,7 +101,7 @@ def get_employee_by_email(
             raise HTTPException(status_code=400, detail='email is required')
 
         response = db.table('employees').select(
-            'id,employee_code,name,email,department_id,is_active,metadata,created_at,updated_at,department:departments(name)'
+            'id,employee_code,name,email,department_id,is_active,role,metadata,created_at,updated_at,department:departments(name)'
         ).eq('email', normalized_email).limit(1).execute()
 
         if not response.data:
@@ -116,7 +118,7 @@ def get_employee_by_email(
 def get_employee(employee_code: str, db=Depends(get_db)):
     try:
         response = db.table('employees').select(
-            'id,employee_code,name,email,department_id,is_active,metadata,created_at,updated_at,department:departments(name)'
+            'id,employee_code,name,email,department_id,is_active,role,metadata,created_at,updated_at,department:departments(name)'
         ).eq('employee_code', employee_code).limit(1).execute()
 
         if not response.data:
@@ -130,10 +132,17 @@ def get_employee(employee_code: str, db=Depends(get_db)):
 
 
 @router.post('', response_model=EmployeeOut, status_code=status.HTTP_201_CREATED)
-def create_employee(payload: EmployeeCreate, db=Depends(get_db)):
+def create_employee(
+    payload: EmployeeCreate,
+    db=Depends(get_db),
+    _=Depends(require_manage_platform_access),
+):
     try:
+        requested_role = normalize_role_input(payload.role)
+        if requested_role != 'employee':
+            raise HTTPException(status_code=403, detail='Privileged roles must be managed through audited role RPC.')
         metadata = dict(payload.metadata or {})
-        metadata['role'] = normalize_role_input(payload.role)
+        metadata['role'] = requested_role
 
         department_id = str(payload.department_id) if payload.department_id else resolve_department_id(db, payload.department_name)
 
@@ -143,13 +152,14 @@ def create_employee(payload: EmployeeCreate, db=Depends(get_db)):
             'email': payload.email.strip() if payload.email else None,
             'department_id': department_id,
             'is_active': payload.is_active,
+            'role': requested_role,
             'metadata': metadata,
         }
 
         db.table('employees').upsert(upsert_data, on_conflict='employee_code').execute()
 
         fetch = db.table('employees').select(
-            'id,employee_code,name,email,department_id,is_active,metadata,created_at,updated_at,department:departments(name)'
+            'id,employee_code,name,email,department_id,is_active,role,metadata,created_at,updated_at,department:departments(name)'
         ).eq('employee_code', payload.employee_code.strip()).limit(1).execute()
 
         if not fetch.data:
@@ -163,9 +173,14 @@ def create_employee(payload: EmployeeCreate, db=Depends(get_db)):
 
 
 @router.put('/{employee_code}', response_model=EmployeeOut)
-def update_employee(employee_code: str, payload: EmployeeUpdate, db=Depends(get_db)):
+def update_employee(
+    employee_code: str,
+    payload: EmployeeUpdate,
+    db=Depends(get_db),
+    _=Depends(require_manage_platform_access),
+):
     try:
-        exists = db.table('employees').select('id,metadata').eq('employee_code', employee_code).limit(1).execute()
+        exists = db.table('employees').select('id,metadata,role').eq('employee_code', employee_code).limit(1).execute()
         if not exists.data:
             raise HTTPException(status_code=404, detail=f'Employee {employee_code} not found')
 
@@ -181,11 +196,17 @@ def update_employee(employee_code: str, payload: EmployeeUpdate, db=Depends(get_
         role = update_data.pop('role', None)
         metadata = update_data.pop('metadata', None)
 
+        if role is not None:
+            requested_role = normalize_role_input(str(role))
+            if requested_role != 'employee':
+                raise HTTPException(status_code=403, detail='Privileged roles must be managed through audited role RPC.')
+            update_data['role'] = requested_role
+
         merged_metadata = dict(current_metadata) if isinstance(current_metadata, dict) else {}
         if isinstance(metadata, dict):
             merged_metadata.update(metadata)
         if role is not None:
-            merged_metadata['role'] = normalize_role_input(str(role))
+            merged_metadata['role'] = 'employee'
 
         if merged_metadata:
             update_data['metadata'] = merged_metadata
@@ -201,7 +222,7 @@ def update_employee(employee_code: str, payload: EmployeeUpdate, db=Depends(get_
         db.table('employees').update(update_data).eq('employee_code', employee_code).execute()
 
         fetch = db.table('employees').select(
-            'id,employee_code,name,email,department_id,is_active,metadata,created_at,updated_at,department:departments(name)'
+            'id,employee_code,name,email,department_id,is_active,role,metadata,created_at,updated_at,department:departments(name)'
         ).eq('employee_code', employee_code).limit(1).execute()
 
         if not fetch.data:
@@ -211,4 +232,32 @@ def update_employee(employee_code: str, payload: EmployeeUpdate, db=Depends(get_
     except Exception as e:
         if isinstance(e, HTTPException):
             raise e
+        handle_supabase_error(e)
+
+
+@router.post('/{employee_id}/role', response_model=dict)
+def set_employee_role(
+    employee_id: str,
+    role: str = Query(..., description='Role to set: employee | admin | it_ops'),
+    db=Depends(get_db),
+    _=Depends(require_it_ops_access),
+):
+    try:
+        payload = db.rpc(
+            'fn_set_employee_role',
+            {
+                'p_target_employee_id': employee_id,
+                'p_new_role': normalize_role_input(role),
+                'p_metadata': {'source': 'server.employees.set_employee_role'},
+            },
+        ).execute()
+        data = payload.data[0] if isinstance(payload.data, list) and payload.data else payload.data
+        if not isinstance(data, dict):
+            raise HTTPException(status_code=500, detail='Unexpected role update response')
+        if data.get('ok') is not True:
+            raise HTTPException(status_code=400, detail=str(data.get('message') or 'Role update failed'))
+        return data
+    except HTTPException:
+        raise
+    except Exception as e:
         handle_supabase_error(e)

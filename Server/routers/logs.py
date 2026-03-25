@@ -3,6 +3,7 @@ from typing import Any, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
+from core.auth import require_manage_platform_access
 from core.deps import get_db
 from core.errors import handle_supabase_error
 from schemas.log import AssetLogCreate, AssetLogOut
@@ -121,7 +122,7 @@ def get_logs_for_asset(asset_ref: str, db=Depends(get_db)):
 
 
 @router.post("", response_model=AssetLogOut, status_code=status.HTTP_201_CREATED)
-def create_log(log_data: AssetLogCreate, db=Depends(get_db)):
+def create_log(log_data: AssetLogCreate, db=Depends(get_db), _=Depends(require_manage_platform_access)):
     """Create a new log entry and generate a QR code."""
     try:
         asset_ref = log_data.resolved_asset_ref()

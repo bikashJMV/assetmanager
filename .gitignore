@@ -1,0 +1,12 @@
+.env
+Notes/
+*.pdf
+./context.md    
+sheet.xlsx
+Client/node_modules
+Client/.env 
+Server/.env
+.cursor/
+.cursor/mcp.json
+Context.md
+note.txt

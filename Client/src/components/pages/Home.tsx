@@ -72,7 +72,7 @@ export default function Home({ isAuthenticated = false }: { isAuthenticated?: bo
       <main className="min-h-screen bg-app text-primary">
         <section className="px-4 sm:px-6 pt-16 sm:pt-20 pb-12 sm:pb-16 text-center">
           <h1 className="text-3xl sm:text-4xl md:text-6xl font-bold tracking-tight">
-            Asset Management <span className="text-accent">System</span>
+            Asset  <span className="text-accent">Manager</span>
           </h1>
           <p className="mt-4 text-muted text-base sm:text-lg max-w-2xl mx-auto">
             Live inventory with Supabase Auth, RLS, realtime updates, and RPC-driven assignment lifecycle.

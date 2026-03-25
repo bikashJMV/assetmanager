@@ -1,6 +1,6 @@
 # AMS Client
 
-[React 19 + Vite 7 + TypeScript frontend for the Asset Management](https://ourassets.vercel.app)
+[React 19 + Vite 7 + TypeScript frontend for the Asset Management](https://web-assetmanager.vercel.app)
 ---
 
 ## Table of Contents
@@ -41,7 +41,7 @@
 15. [Styles (`styles/`)](#styles-styles)
     - [theme.css](#themecss)
     - [global.css](#globalcss)
-16. [Admin Access Model](#admin-access-model)
+16. [Privileged access](#privileged-access)
 17. [QR Code Behavior](#qr-code-behavior)
 18. [Realtime & Dashboard Stats](#realtime--dashboard-stats)
 19. [Vercel Deployment](#vercel-deployment)
@@ -58,14 +58,14 @@ Browser
   │     ├─ Auth (Google OAuth)
   │     ├─ Tables (employees, assets, assignments, etc.)
   │     ├─ Views (v_asset_inventory)
-  │     └─ RPC (fn_public_scan_asset, fn_assign_asset, fn_return_asset, fn_is_admin, etc.)
+  │     └─ RPC (fn_public_scan_asset, fn_assign_asset, fn_return_asset, fn_is_admin_or_it_ops, fn_set_employee_role, etc.)
   │
   └─► FastAPI Server (optional at runtime)
         └─ Used when integrations call the REST API; QR in DB may be produced server-side with `FRONTEND_URL`
 ```
 
 - The SPA **does not use `fetch` to the FastAPI base URL** for normal screens: lists, detail, assign/return, and auth all go through Supabase (anon key + RLS + RPC). The FastAPI server still matters for server-side QR embedding and for any tooling that uses the HTTP API.
-- Admin privilege is checked via `fn_is_admin()` RPC (backed by `employees.metadata.role = 'admin'` for the signed-in `auth_user_id`).
+- Privileged UI actions use `hasActiveAdminAccess()` (RPC `fn_is_admin_or_it_ops`, aligned with `employees.role`). IT Ops-only flows use `setEmployeeRole` → `fn_set_employee_role`.
 
 ---
 
@@ -95,9 +95,9 @@ Client/
     │   │   ├── Home.tsx            # Dashboard landing page
     │   │   ├── AllAssets.tsx       # Asset list with filters and QR modal
     │   │   ├── AssetDetail.tsx     # Asset detail, edit, assign/return
-    │   │   ├── NewAsset.tsx        # Create asset page (admin only)
+    │   │   ├── NewAsset.tsx        # Create asset (requires privileged access)
     │   │   ├── Employee.tsx        # Employee list, passport, admin toggle
-    │   │   ├── NewEmployee.tsx     # Create employee page (admin only)
+    │   │   ├── NewEmployee.tsx     # Create employee (requires privileged access)
     │   │   └── ScanPage.tsx        # Public QR scan page
     │   │
     │   ├── common/
@@ -164,7 +164,7 @@ All Vite env vars must be prefixed with `VITE_` to be available in browser code 
 
 For Vercel deployment, set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` in the **Client Vercel project** dashboard. The local `.env` file is NOT used during Vercel builds.
 
-**Production example:** `VITE_SUPABASE_*` values come from the same Supabase project as the server’s `SUPABASE_URL` / service key. The deployed app URL (e.g. `https://ourassets.vercel.app`) must be allowed in Supabase Auth → URL configuration (site URL + redirect URLs).
+**Production example:** `VITE_SUPABASE_*` values come from the same Supabase project as the server’s `SUPABASE_URL` / service key. The deployed app URL (e.g. `https://web-assetmanager.vercel.app`) must be allowed in Supabase Auth → URL configuration (site URL + redirect URLs).
 
 ---
 
@@ -218,7 +218,7 @@ App starts at `http://localhost:5173`.
 App
 └── BrowserRouter
     └── AppRoutes
-        ├── Sidebar (shown only when: session exists AND not /scan/* AND not /login)
+        ├── Sidebar (shown when path is not public `/scan/*`; signed-out users still see shell; login page included)
         └── Routes
             ├── /                   → <Home isAuthenticated={...} /> (public)
             ├── /dashboard/home     → same Home (public alias)
@@ -242,8 +242,8 @@ App
 | Phase | State | UI |
 |---|---|---|
 | Loading | `authLoading=true` | `<AuthLoadingScreen>` ("Checking session...") |
-| Unauthenticated | `session=null` | `<SignInScreen>` at `/login` |
-| Authenticated | `session` set | `<Sidebar>` + protected routes |
+| Unauthenticated | `session=null` | Public routes (e.g. `/`, `/guide`) with sidebar; `/login` shows `<SignInScreen>`; protected paths redirect to `/login` |
+| Authenticated | `session` set | Same layout; `<RequireAuth>` children render on protected routes |
 
 **Session lifecycle:**
 1. On mount: `getSession()` called asynchronously.
@@ -275,7 +275,7 @@ App
 
 ## API Layer (`api.ts`)
 
-`api.ts` (1039+ lines) is the sole interface between the UI and Supabase. All Supabase calls are here — no component imports `supabase` directly.
+`api.ts` is the sole interface between the UI and Supabase. All Supabase calls are here — no component imports `supabase` directly.
 
 ### Types exported
 
@@ -284,7 +284,7 @@ App
 | `SessionEmployee` | Signed-in user's employee profile |
 | `EmployeeRecord` | Full employee row including department and role |
 | `EmployeeListFilters` | `search`, `is_active`, `department`, `role` |
-| `EmployeeRole` | `'admin' \| 'employee'` |
+| `EmployeeRole` | `'employee' \| 'admin' \| 'it_ops'` |
 | `CategoryRecord` | `id`, `slug`, `name` |
 | `CustomFieldDefinition` | Schema for per-category dynamic fields |
 | `AssetInventoryRecord` | Denormalized view row from `v_asset_inventory` |
@@ -305,7 +305,7 @@ App
 | `normalizeLocationCode(value)` | Trim, uppercase, replace non-alphanumeric with `-` |
 | `extractRpcScalarString(data, keys)` | Extracts a string from RPC's flexible return types |
 | `extractRpcScalarBoolean(data, keys)` | Same for booleans |
-| `normalizeRole(metadata, directRole?)` | Derives `'admin' \| 'employee'` from metadata or column |
+| `normalizeRole(metadata, directRole?)` | Derives role from `employees.role` or metadata |
 | `normalizeEmployeeRoleInput(value)` | Validates and normalizes role string |
 | `normalizeEmployeeRow(row)` | Flattens joined `department:departments(name)` and resolves role |
 | `ensureNoSupabaseError(error, fallback)` | Throws `Error` if Supabase error is truthy |
@@ -325,11 +325,12 @@ App
 | Function | Description |
 |---|---|
 | `getSessionEmployee(user?)` | Fetches the current user's employee profile. Primary lookup by `auth_user_id`, fallback by email. Returns `null` if no match |
-| `hasActiveAdminAccess()` | Checks admin via `fn_is_admin()` RPC, with fallback to profile role check + `fn_claim_employee_auth_link()` |
+| `hasActiveAdminAccess()` | RPC `fn_is_admin_or_it_ops` + profile hint + optional `fn_claim_employee_auth_link()` |
 | `listEmployees(filters?)` | Lists employees with search/is_active/department filtering. Resolves department by name if filter provided |
 | `listDepartments()` | Returns distinct department names from active departments |
-| `upsertEmployee(input)` | Creates/updates employee by `employee_code`. Asserts admin access. Merges metadata |
-| `setEmployeeAdminStatus(target, makeAdmin)` | Calls `fn_set_employee_admin_status` RPC. Blocks self-revoke |
+| `upsertEmployee(input)` | Upsert by `employee_code`; does not set privileged roles via metadata (use role RPC) |
+| `setEmployeeAdminStatus(target, makeAdmin)` | Admin grant/revoke path; server RPC enforces rules |
+| `setEmployeeRole(target, role)` | IT Ops only → `fn_set_employee_role` |
 | `getCurrentEmployeeAssets()` | Returns `{ sessionEmployee, assets[] }` for the current user |
 | `getDashboardStats()` | Returns `{ totalAssets, assignedAssets, inStockAssets, activeEmployees, totalEmployees }` |
 | `subscribeDashboardRealtime(callback)` | Subscribes to INSERT/UPDATE on `assets` and `employees` Realtime channels; calls `callback` on any event. Returns unsubscribe fn |
@@ -393,9 +394,9 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
 - **Filters:** inventory status (dropdown), category slug (dropdown), "Hide assets held by ERP-inactive employees" (checkbox).
 - **Admin vs employee scope:** non-admins only see their own assigned assets (scoped by `current_employee_id`). Admins see all.
 - **Race condition protection:** `requestIdRef` ensures stale responses from concurrent fetches are ignored.
-- **QR modal:** "View QR" button (admin only) calls `getQrDataUriForAssetTag()`, shows QR image in a backdrop modal.
+- **QR modal:** "View QR" (privileged) calls `getQrDataUriForAssetTag()`, modal backdrop.
 - Clicking a row navigates to `/assets/{asset_tag}`.
-- "Edit" button (admin only) also navigates to asset detail.
+- "Edit" navigates to asset detail when privileged.
 
 **State:**
 - `isAdmin`, `scopeEmployeeId`, `accessResolved` gate whether to fetch and how to scope.
@@ -408,7 +409,7 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
 **Route:** `/assets/:id` | **Auth:** Protected
 
 **Sections:**
-1. **Header bar** — asset tag, category badge, "Edit Asset" button (admin only).
+1. **Header bar** — asset tag, category badge, "Edit Asset" when privileged.
 2. **Hero card** — inventory status badge, holder ERP status badge, title (manufacturer + model), location.
 3. **Assign / Return panel** — employee code input, optional notes, Assign and Return buttons. Disabled for non-admins. Calls `assignAsset()` / `returnAsset()` RPC. Return button disabled if no open assignment.
 4. **Assignment Summary** — current holder name/code, assigned_at, open assignment flag.
@@ -427,11 +428,10 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
 
 ### NewAsset
 
-**Route:** `/assets/new` | **Auth:** Protected (admin check in-page)
+**Route:** `/assets/new` | **Auth:** Protected (`hasActiveAdminAccess`)
 
-- On mount: checks `hasActiveAdminAccess()`.
 - `accessState`: `'loading'` → `'allowed'` or `'denied'`.
-- If denied: shows "Admin Access Required" message with back button.
+- If denied: "Admin Access Required" and back.
 - If allowed: renders `<AssetForm variant="panel" prefill={{ status: 'in_stock', category_slug: 'laptop' }}>`. On close/success: navigates to `/assets`.
 
 ---
@@ -443,22 +443,22 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
 **Features:**
 - Lists all employees in a card grid via `listEmployees()`.
 - **Debounced search** (300ms) across `employee_code`, `name`, `email`.
-- **Filters:** ERP status (`all/active/inactive`), department (select from `listDepartments()`), role (`all/admin/employee`).
+- **Filters:** ERP status (`all/active/inactive`), department (select from `listDepartments()`), role (`all` / `employee` / `admin` / `it_ops`).
 - **Filter-to-API mapping:** `toApiFilters()` translates UI filter state (`EmployeeFiltersInput`) to API filter shape (`EmployeeListFilters`).
 - **Employee Passport** — top section shows the signed-in user's own currently assigned assets from `getCurrentEmployeeAssets()`. Includes ERP-inactive note if applicable.
-- **Admin mode:** "Add New Employee" button, "Edit Employee" button per card, "Make Admin" / "Revoke Admin" buttons.
-- **Admin toggle flow:** confirm dialog modal → `setEmployeeAdminStatus()` RPC → refresh list. Self-revoke is disabled (button disabled if `employee.id === sessionEmployeeId`).
-- **Edit flow:** `editEmployee` state renders `<EmployeeForm>` in a backdrop modal overlay.
-- **Access warning:** shown if profile says admin but `fn_is_admin()` RPC fails (RLS not applied yet).
-- `successMessage` shown inline after successful save or admin toggle.
+- **Privileged mode:** add/edit employees; "Make Admin" / "Revoke Admin" (`setEmployeeAdminStatus`); IT Ops can set role to IT Ops (`setEmployeeRole`) — admins cannot assign IT Ops.
+- **Admin toggle flow:** confirm → RPC → refresh. Self-revoke admin is blocked in UI.
+- **Edit flow:** `editEmployee` opens `<EmployeeForm>` in a modal.
+- **Access warning:** profile role disagrees with `fn_is_admin_or_it_ops` (e.g. migration or RLS mismatch).
+- `successMessage` after save or role changes.
 
 ---
 
 ### NewEmployee
 
-**Route:** `/employee/new` | **Auth:** Protected (admin check in-page)
+**Route:** `/employee/new` | **Auth:** Protected (same privileged gate as `NewAsset`)
 
-- Same admin gate pattern as `NewAsset`.
+- Same gate pattern as `NewAsset`.
 - If allowed: renders `<EmployeeForm onSubmit={handleCreate}>`. On success: navigates to `/employee`.
 - `handleCreate` calls `upsertEmployee()` then navigates. Errors bubble up to `EmployeeForm`.
 
@@ -482,9 +482,9 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
 
 ### Sidebar
 
-**File:** `Sidebar.tsx` (551 lines)
+**File:** `Sidebar.tsx`
 
-Adaptive navigation sidebar with user settings. Shown only when a session exists and not on public `/scan/*` (path prefix `/scan/`) or `/login`. Authenticated users can also open **Scan Asset** from the sidebar (`/assets/scan`), which keeps the sidebar visible.
+Navigation + settings. Rendered for all routes except public QR prefix `/scan/*`. When signed in, loads profile once (shared `getSessionEmployee` + `hasActiveAdminAccess` in one effect): nav privileges, optional “First name | Role” strip above **Settings** (hidden on desktop while collapsed), and mobile drawer. Clears profile on sign-out or fetch error (`logDevError` only). Settings panel unchanged.
 
 **Layout variants:**
 - **Desktop (≥sm):** Fixed-width sidebar (`292px` expanded, `54px` collapsed). Toggled by collapse button.
@@ -495,10 +495,10 @@ Adaptive navigation sidebar with user settings. Shown only when a session exists
 | Feature | Detail |
 |---|---|
 | Theme toggle | `dark` / `light`, synced to `localStorage['ams-theme']`, applied as `[data-theme]` on `<html>` |
-| Density | `compact / normal / large / spacious`, stored in `localStorage['ams-density']`, applied as `[data-density]` on `<html>` |
+| Density | Values `compact` / `normal` / `large` / `spacious` (labels **Tight / Usual / Big / Airy**), `localStorage['ams-density']`, `[data-density]` on `<html>` |
 | Font | `claude / clean / mono / serif`, stored in `localStorage['ams-font']`, applied as `[data-font]` on `<html>` |
 | Settings panel | Popover above footer button; click-outside closes it |
-| Admin visibility | `new-asset` and `new-employee` nav items filtered out for non-admins |
+| Privileged nav | `new-asset` / `new-employee` hidden unless `hasActiveAdminAccess()` (admin or IT Ops) |
 | Logout | Calls `signOut()`, navigates to `/` |
 | Guide link | Navigates to `/guide` |
 
@@ -723,37 +723,17 @@ Theme switching:
 
 ---
 
-## Admin Access Model
+## Privileged access
 
-Admin privileges cascade through two parallel paths (both must be consistent):
+Canonical role is `employees.role` (`employee` | `admin` | `it_ops`). `hasActiveAdminAccess()` uses RPC `fn_is_admin_or_it_ops`, with profile hint and optional `fn_claim_employee_auth_link()`.
 
-```
-1. Supabase DB: employees.metadata.role = 'admin'
-   │
-   └─► fn_is_admin() RPC ← used by client to check permissions
-        └─► also backed by auth_user_id → employee lookup
+**Admin and IT Ops** (that gate): asset CRUD, assign/return, QR, employee create/edit, full asset list, privileged sidebar links.
 
-2. Client-side check: hasActiveAdminAccess()
-   ├─ Calls fn_is_admin() RPC
-   ├─ Fallback: loads employee profile and checks profile.role === 'admin'
-   └─ Runs fn_claim_employee_auth_link() to auto-link auth_user_id on first login
-```
+**Admin only:** grant/revoke admin (`setEmployeeAdminStatus`).
 
-**What admins can do (unavailable to employees):**
-- Create assets (`/assets/new`)
-- Edit assets (`AssetForm` via `/assets/:id`)
-- Assign and return assets (AssetDetail)
-- View QR codes (AllAssets)
-- Create employees (`/employee/new`)
-- Edit employees (Employee page)
-- Grant / revoke admin privileges (Employee page)
-- See all assets (not just their own assigned assets)
+**IT Ops only:** assign IT Ops (`setEmployeeRole` → `fn_set_employee_role`). Admins cannot elevate to IT Ops.
 
-**Non-admins:**
-- See only their own assigned assets on AllAssets.
-- Read-only view on Employee page.
-- Assignment and edit controls are hidden or disabled.
-- "New Asset" and "New Employee" sidebar links are hidden.
+**Employees:** own assignments on AllAssets; Employee page read-only where enforced; no privileged sidebar items.
 
 ---
 
@@ -813,7 +793,7 @@ VITE_SUPABASE_ANON_KEY=<anon-public-key>
 
 | Item | Value |
 | --- | --- |
-| Client | `https://ourassets.vercel.app` |
+| Client | `https://web-assetmanager.vercel.app` |
 | Server (API root, not `/docs`) | `https://assetmanager-backend.vercel.app` |
 
 Ensure the server Vercel project sets `FRONTEND_URL` and `ALLOWED_ORIGINS` to the client origin above so CORS and server-generated QR links stay correct.

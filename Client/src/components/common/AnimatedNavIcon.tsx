@@ -70,11 +70,11 @@ export default function AnimatedNavIcon({ name }: { name: IconName }) {
   if (name === 'scan') {
     return (
       <BaseIcon>
-        <path d="M4 8V5h3" />
-        <path d="M20 8V5h-3" />
-        <path d="M4 16v3h3" />
-        <path d="M20 16v3h-3" />
-        <path d="M7 12h10" />
+        <path className="ai-scan-tl" d="M4 8V5h3" />
+        <path className="ai-scan-tr" d="M20 8V5h-3" />
+        <path className="ai-scan-bl" d="M4 16v3h3" />
+        <path className="ai-scan-br" d="M20 16v3h-3" />
+        <path className="ai-scan-line" d="M7 12h10" />
       </BaseIcon>
     )
   }

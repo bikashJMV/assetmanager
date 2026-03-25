@@ -31,7 +31,7 @@ export type EmployeeListFilters = {
   role?: string
 }
 
-export type EmployeeRole = 'admin' | 'employee'
+export type EmployeeRole = 'it_ops' | 'admin' | 'employee'
 
 export type CategoryRecord = {
   id: string
@@ -206,22 +206,29 @@ function extractRpcScalarBoolean(data: unknown, keys: string[]): boolean | null 
 function normalizeRole(
   metadata: Record<string, unknown> | null | undefined,
   directRole?: unknown,
-) {
+) : EmployeeRole {
   const roleFromColumn = typeof directRole === 'string' ? directRole.trim() : ''
   if (roleFromColumn) {
-    return roleFromColumn.toLowerCase() === 'admin' ? 'admin' : 'employee'
+    const normalized = roleFromColumn.toLowerCase()
+    if (normalized === 'it_ops') return 'it_ops'
+    if (normalized === 'admin') return 'admin'
+    return 'employee'
   }
 
   const roleFromMetadata = typeof metadata?.role === 'string' ? metadata.role.trim() : ''
   if (!roleFromMetadata) return 'employee'
-  return roleFromMetadata.toLowerCase() === 'admin' ? 'admin' : 'employee'
+  const normalized = roleFromMetadata.toLowerCase()
+  if (normalized === 'it_ops') return 'it_ops'
+  if (normalized === 'admin') return 'admin'
+  return 'employee'
 }
 
 function normalizeEmployeeRoleInput(value: string | null | undefined): EmployeeRole {
   const normalized = (value || 'employee').trim().toLowerCase()
+  if (normalized === 'it_ops') return 'it_ops'
   if (normalized === 'admin') return 'admin'
   if (normalized === 'employee') return 'employee'
-  throw new Error('Role must be either admin or employee')
+  throw new Error('Role must be employee, admin, or it_ops')
 }
 
 function normalizeEmployeeRow(row: any): EmployeeRecord {
@@ -343,17 +350,17 @@ async function getActiveAdminAccessState(): Promise<{ allowed: boolean; reason?:
   }
 
   const profile = await getSessionEmployee(session.user)
-  if (profile && profile.role === 'admin' && profile.is_active) {
+  if (profile && profile.role !== 'employee' && profile.is_active) {
     return { allowed: true }
   }
 
   const linkIssue = await claimCurrentEmployeeAuthLink()
-  const { data, error } = await supabase.rpc('fn_is_admin')
-  if (error && !isMissingRpcError(error, 'fn_is_admin')) {
-    ensureNoSupabaseError(error, 'Unable to verify admin access')
+  const { data, error } = await supabase.rpc('fn_is_admin_or_it_ops')
+  if (error && !isMissingRpcError(error, 'fn_is_admin_or_it_ops')) {
+    ensureNoSupabaseError(error, 'Unable to verify access')
   }
 
-  const allowed = error ? false : (extractRpcScalarBoolean(data, ['fn_is_admin']) ?? false)
+  const allowed = error ? false : (extractRpcScalarBoolean(data, ['fn_is_admin_or_it_ops']) ?? false)
   if (allowed) {
     return { allowed: true }
   }
@@ -364,7 +371,7 @@ async function getActiveAdminAccessState(): Promise<{ allowed: boolean; reason?:
 
   return {
     allowed: false,
-    reason: 'Signed-in account must be linked to an active admin employee record.',
+    reason: 'Signed-in account must be linked to an active admin/IT Ops employee record.',
   }
 }
 
@@ -376,7 +383,20 @@ export async function hasActiveAdminAccess(): Promise<boolean> {
 async function assertActiveAdminAccess() {
   const state = await getActiveAdminAccessState()
   if (!state.allowed) {
-    throw new Error(state.reason || 'Signed-in account must be linked to an active admin employee record.')
+    throw new Error(state.reason || 'Signed-in account must be linked to an active admin/IT Ops employee record.')
+  }
+}
+
+async function assertActiveItOpsAccess() {
+  const profile = await getSessionEmployee()
+  if (profile?.is_active && profile.role === 'it_ops') return
+  const { data, error } = await supabase.rpc('fn_is_it_ops')
+  if (error && !isMissingRpcError(error, 'fn_is_it_ops')) {
+    ensureNoSupabaseError(error, 'Unable to verify IT Ops access')
+  }
+  const allowed = error ? false : (extractRpcScalarBoolean(data, ['fn_is_it_ops']) ?? false)
+  if (!allowed) {
+    throw new Error('Signed-in account must be linked to an active IT Ops employee record.')
   }
 }
 
@@ -384,7 +404,7 @@ export async function getSessionEmployee(user?: User | null): Promise<SessionEmp
   const activeUser = user ?? (await getSession())?.user
   if (!activeUser) return null
 
-  const columns = 'id,employee_code,name,email,is_active,metadata,resolved_role:metadata->>role,department:departments(name)'
+  const columns = 'id,employee_code,name,email,is_active,role,metadata,department:departments(name)'
   let data: any = null
 
   // Primary lookup by auth_user_id is more reliable than email matching.
@@ -452,7 +472,7 @@ export async function listDepartments(): Promise<string[]> {
 export async function listEmployees(filters: EmployeeListFilters = {}): Promise<EmployeeRecord[]> {
   let query = supabase
     .from('employees')
-    .select('id,employee_code,name,email,is_active,metadata,department:departments(name)')
+    .select('id,employee_code,name,email,is_active,role,metadata,department:departments(name)')
     .order('name', { ascending: true })
 
   if (filters.search?.trim()) {
@@ -537,10 +557,7 @@ export async function upsertEmployee(input: EmployeeUpsertInput) {
     email: input.email?.trim() || null,
     department_id: departmentId,
     is_active: input.is_active,
-    metadata: {
-      ...existingMetadata,
-      role: normalizeEmployeeRoleInput(input.role),
-    },
+    metadata: existingMetadata,
   }
 
   if (input.id) payload.id = input.id
@@ -573,6 +590,34 @@ export async function setEmployeeAdminStatus(
   if ((payload as { ok?: boolean }).ok === false) {
     const message = (payload as { message?: unknown }).message
     throw new Error(typeof message === 'string' && message.trim() ? message.trim() : 'Unable to update admin privileges')
+  }
+}
+
+export async function setEmployeeRole(
+  targetEmployee: Pick<EmployeeRecord, 'id' | 'employee_code'>,
+  role: EmployeeRole,
+) {
+  await assertActiveItOpsAccess()
+  const normalizedRole = normalizeEmployeeRoleInput(role)
+
+  const { data, error } = await supabase.rpc('fn_set_employee_role', {
+    p_target_employee_id: targetEmployee.id,
+    p_new_role: normalizedRole,
+    p_metadata: {
+      source: 'employee-page',
+      target_employee_code: targetEmployee.employee_code,
+    },
+  })
+  ensureNoSupabaseError(error, 'Unable to update employee role')
+
+  const payload = Array.isArray(data) ? data[0] : data
+  if (!payload || typeof payload !== 'object') {
+    throw new Error('Unexpected response while updating employee role')
+  }
+
+  if ((payload as { ok?: boolean }).ok === false) {
+    const message = (payload as { message?: unknown }).message
+    throw new Error(typeof message === 'string' && message.trim() ? message.trim() : 'Unable to update employee role')
   }
 }
 

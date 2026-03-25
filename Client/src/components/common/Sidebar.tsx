@@ -2,9 +2,28 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import AnimatedNavIcon from './AnimatedNavIcon'
 import { sidebarSections, type SidebarNavItem } from './sidebarNav'
-import { getSessionEmployee, hasActiveAdminAccess, signOut } from '../../api'
+import {
+  getSessionEmployee,
+  hasActiveAdminAccess,
+  signInWithGoogle,
+  signOut,
+  type SessionEmployee,
+} from '../../api'
 import { getUserFacingMessage, logDevError } from '../../utils/errors'
 import { applyDocumentPreferences, getInitialDensity, getInitialFont, getInitialTheme } from '../../utils/theme'
+
+function sidebarFirstName(name: string): string {
+  const trimmed = name.trim()
+  if (!trimmed) return ''
+  return trimmed.split(/\s+/)[0] ?? trimmed
+}
+
+function sidebarRoleLabel(role: string): string {
+  const normalized = role.trim().toLowerCase()
+  if (normalized === 'it_ops') return 'IT Ops'
+  if (normalized === 'admin') return 'Admin'
+  return 'Employee'
+}
 
 const isItemActive = (item: SidebarNavItem, pathname: string, search: URLSearchParams) => {
   if (item.id === 'all-assets' && pathname === '/assets/new') return false
@@ -49,6 +68,8 @@ function SidebarLink({
         title={item.label}
         aria-label={item.label}
         className={`group nav-item nav-item-compact h-9 w-9 rounded-lg flex items-center justify-center transition ${active
+          ? 'nav-item-active '
+          : ''}${active
           ? 'bg-accent text-on-accent shadow-accent'
           : accentTone
             ? 'bg-[color:var(--accent-soft)] text-accent hover:bg-accent hover:text-on-accent'
@@ -70,6 +91,8 @@ function SidebarLink({
       to={item.to}
       onClick={onNavigate}
       className={`group nav-item relative flex items-center gap-3 rounded-xl px-2.5 py-1.5 transition ${active
+        ? 'nav-item-active '
+        : ''}${active
         ? 'bg-surface-3 text-primary'
         : accentTone
           ? 'text-accent hover:bg-[color:var(--accent-soft)]'
@@ -148,6 +171,8 @@ function SidebarSections({
 }
 
 function SettingsPanel({
+  isAuthenticated,
+  signInLoading,
   theme,
   density,
   font,
@@ -156,9 +181,12 @@ function SettingsPanel({
   onFontChange,
   onGuide,
   onLogout,
+  onSignIn,
   notice,
   className = '',
 }: {
+  isAuthenticated: boolean
+  signInLoading: boolean
   theme: 'light' | 'dark'
   density: 'compact' | 'normal' | 'large' | 'spacious'
   font: 'claude' | 'clean' | 'mono' | 'serif'
@@ -167,6 +195,7 @@ function SettingsPanel({
   onFontChange: (font: 'claude' | 'clean' | 'mono' | 'serif') => void
   onGuide: () => void
   onLogout: () => void
+  onSignIn: () => void
   notice: string
   className?: string
 }) {
@@ -182,16 +211,30 @@ function SettingsPanel({
         </span>
         <span>Guide</span>
       </button>
-      <button
-        onClick={onLogout}
-        className="group nav-item w-full rounded-lg border border-base bg-surface px-2.5 py-2 text-left text-sm font-medium text-primary hover:bg-surface-3 transition inline-flex items-center gap-2"
-        type="button"
-      >
-        <span className="h-5 w-5 rounded-md border border-base flex items-center justify-center shrink-0">
-          <AnimatedNavIcon name="logout" />
-        </span>
-        <span>Logout</span>
-      </button>
+      {isAuthenticated ? (
+        <button
+          onClick={onLogout}
+          className="group nav-item w-full rounded-lg border border-base bg-surface px-2.5 py-2 text-left text-sm font-medium text-primary hover:bg-surface-3 transition inline-flex items-center gap-2"
+          type="button"
+        >
+          <span className="h-5 w-5 rounded-md border border-base flex items-center justify-center shrink-0">
+            <AnimatedNavIcon name="logout" />
+          </span>
+          <span>Logout</span>
+        </button>
+      ) : (
+        <button
+          onClick={onSignIn}
+          disabled={signInLoading}
+          className="group nav-item w-full rounded-lg border border-base bg-surface px-2.5 py-2 text-left text-sm font-medium text-primary hover:bg-surface-3 transition inline-flex items-center gap-2"
+          type="button"
+        >
+          <span className="h-5 w-5 rounded-md border border-base flex items-center justify-center shrink-0">
+            <AnimatedNavIcon name="users" />
+          </span>
+          <span>{signInLoading ? 'Redirecting...' : 'Sign in'}</span>
+        </button>
+      )}
 
       <div>
         <p className="text-[10px] uppercase tracking-[0.16em] text-subtle mb-1.5">Theme</p>
@@ -213,17 +256,24 @@ function SettingsPanel({
         </p>
 
         <div className="grid grid-cols-4 gap-1">
-          {(['compact', 'normal', 'large', 'spacious'] as const).map((option) => (
+          {(
+            [
+              { value: 'compact', label: 'Tight' },
+              { value: 'normal', label: 'Usual' },
+              { value: 'large', label: 'Big' },
+              { value: 'spacious', label: 'Airy' },
+            ] as const
+          ).map((option) => (
             <button
-              key={option}
-              onClick={() => onDensityChange(option)}
-              className={`rounded-lg border px-2 py-1 text-[8px] font-semibold text-ellipsis whitespace-nowrap uppercase tracking-[0.08em] transition ${density === option
+              key={option.value}
+              onClick={() => onDensityChange(option.value)}
+              className={`rounded-lg border px-2 py-1 text-[8px] font-semibold text-ellipsis whitespace-nowrap uppercase tracking-[0.08em] transition ${density === option.value
                 ? 'border-accent-soft bg-accent text-on-accent'
                 : 'border-base bg-surface text-muted hover:text-primary hover:bg-surface-3'
                 }`}
               type="button"
             >
-              {option}
+              {option.label}
             </button>
           ))}
         </div>
@@ -258,17 +308,19 @@ function SettingsPanel({
   )
 }
 
-export default function Sidebar() {
-  const { pathname, search } = useLocation()
+export default function Sidebar({ isAuthenticated }: { isAuthenticated: boolean }) {
+  const { pathname, search, hash } = useLocation()
   const navigate = useNavigate()
   const [mobileOpen, setMobileOpen] = useState(false)
   const [collapsed, setCollapsed] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settingsNotice, setSettingsNotice] = useState('')
+  const [signInLoading, setSignInLoading] = useState(false)
   const [theme, setTheme] = useState<'light' | 'dark'>(getInitialTheme)
   const [density, setDensity] = useState<'compact' | 'normal' | 'large' | 'spacious'>(getInitialDensity)
   const [font, setFont] = useState<'claude' | 'clean' | 'mono' | 'serif'>(getInitialFont)
   const [isAdmin, setIsAdmin] = useState(false)
+  const [sessionProfile, setSessionProfile] = useState<SessionEmployee | null>(null)
   const query = useMemo(() => new URLSearchParams(search), [search])
   const settingsHostRef = useRef<HTMLDivElement | null>(null)
 
@@ -302,6 +354,11 @@ export default function Sidebar() {
   }, [theme, density, font])
 
   useEffect(() => {
+    if (!isAuthenticated) {
+      setIsAdmin(false)
+      setSessionProfile(null)
+      return
+    }
     let mounted = true
     void (async () => {
       try {
@@ -309,24 +366,28 @@ export default function Sidebar() {
           hasActiveAdminAccess(),
           getSessionEmployee(),
         ])
-        const profileAdmin = Boolean(profile?.is_active && profile?.role === 'admin')
+        const profileAdmin = Boolean(profile?.is_active && profile?.role !== 'employee')
         if (!mounted) return
         setIsAdmin(allowed || profileAdmin)
+        setSessionProfile(profile ?? null)
       } catch (err) {
-        logDevError('sidebar.role', err)
+        logDevError('sidebar.session_profile', err)
         if (!mounted) return
         setIsAdmin(false)
+        setSessionProfile(null)
       }
     })()
 
     return () => {
       mounted = false
     }
-  }, [])
+  }, [isAuthenticated])
 
   const handleLogout = async () => {
     try {
       await signOut()
+      setSessionProfile(null)
+      setIsAdmin(false)
       const nextTheme = getInitialTheme()
       const nextDensity = getInitialDensity()
       const nextFont = getInitialFont()
@@ -346,6 +407,22 @@ export default function Sidebar() {
     setSettingsOpen(false)
     setMobileOpen(false)
     navigate('/guide')
+  }
+
+  const handleSignIn = async () => {
+    setSettingsOpen(false)
+    setMobileOpen(false)
+    setSettingsNotice('')
+    setSignInLoading(true)
+
+    try {
+      const next = `${pathname}${search}${hash}`
+      await signInWithGoogle(next)
+    } catch (err) {
+      logDevError('sidebar.signin', err)
+      setSettingsNotice(getUserFacingMessage(err, 'Google sign-in failed. Please try again.'))
+      setSignInLoading(false)
+    }
   }
 
   const toggleCollapsed = () => {
@@ -406,10 +483,22 @@ export default function Sidebar() {
           </div>
 
           <div className={`flex-1 overflow-y-auto ${collapsed ? 'px-0.5 py-1' : 'px-2.5 py-2'} transition-[padding] duration-300 ease-in-out motion-reduce:transition-none`}>
-            <SidebarSections pathname={pathname} query={query} canManage={isAdmin} compact={collapsed} />
+            <SidebarSections pathname={pathname} query={query} canManage={isAdmin && isAuthenticated} compact={collapsed} />
           </div>
 
           <div className={`${collapsed ? 'px-0.5 py-1' : 'px-2.5 py-2'} border-t border-base transition-[padding] duration-300 ease-in-out motion-reduce:transition-none`}>
+            {isAuthenticated && sessionProfile && !collapsed && (
+              <div className="mb-2 rounded-lg border border-base bg-surface-2 px-2.5 py-2 min-w-0">
+                <p
+                  className="text-sm font-medium text-primary truncate"
+                  title={`${sessionProfile.name} · ${sidebarRoleLabel(sessionProfile.role)}`}
+                >
+                  {sidebarFirstName(sessionProfile.name) || sessionProfile.name}
+                  <span className="text-muted font-normal"> | </span>
+                  {sidebarRoleLabel(sessionProfile.role)}
+                </p>
+              </div>
+            )}
             <div className="relative" ref={settingsHostRef}>
               <button
                 onClick={() => {
@@ -428,6 +517,8 @@ export default function Sidebar() {
 
               {settingsOpen && (
                 <SettingsPanel
+                  isAuthenticated={isAuthenticated}
+                  signInLoading={signInLoading}
                   theme={theme}
                   density={density}
                   font={font}
@@ -436,6 +527,7 @@ export default function Sidebar() {
                   onFontChange={setFont}
                   onGuide={handleGuide}
                   onLogout={handleLogout}
+                  onSignIn={handleSignIn}
                   notice={settingsNotice}
                   className={`settings-pop z-20 shadow-[0_16px_32px_rgba(0,0,0,0.35)] ${collapsed
                     ? 'absolute bottom-0 left-[calc(100%+10px)] w-[264px]'
@@ -471,8 +563,21 @@ export default function Sidebar() {
             </div>
 
             <div className="flex-1 overflow-y-auto px-1 py-1">
-              <SidebarSections pathname={pathname} query={query} canManage={isAdmin} onNavigate={() => setMobileOpen(false)} />
+              <SidebarSections pathname={pathname} query={query} canManage={isAdmin && isAuthenticated} onNavigate={() => setMobileOpen(false)} />
             </div>
+
+            {isAuthenticated && sessionProfile && (
+              <div className="rounded-lg border border-base bg-surface-2 px-3 py-2 min-w-0 shrink-0">
+                <p
+                  className="text-sm font-medium text-primary truncate"
+                  title={`${sessionProfile.name} · ${sidebarRoleLabel(sessionProfile.role)}`}
+                >
+                  {sidebarFirstName(sessionProfile.name) || sessionProfile.name}
+                  <span className="text-muted font-normal"> | </span>
+                  {sidebarRoleLabel(sessionProfile.role)}
+                </p>
+              </div>
+            )}
 
             <button
               onClick={() => setSettingsOpen((value) => !value)}
@@ -488,6 +593,8 @@ export default function Sidebar() {
 
             {settingsOpen && (
               <SettingsPanel
+                isAuthenticated={isAuthenticated}
+                signInLoading={signInLoading}
                 theme={theme}
                 density={density}
                 font={font}
@@ -496,6 +603,7 @@ export default function Sidebar() {
                 onFontChange={setFont}
                 onGuide={handleGuide}
                 onLogout={handleLogout}
+                onSignIn={handleSignIn}
                 notice={settingsNotice}
                 className="settings-pop mt-2 shadow-[0_16px_32px_rgba(0,0,0,0.35)]"
               />

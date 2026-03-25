@@ -55,7 +55,7 @@ Client (Vite React)
 
 - The **FastAPI server** uses Supabase's **service-role key** — it bypasses RLS and is trusted.
 - The **client** uses Supabase's **anon key** and relies on RLS policies for data access control.
-- Admin privilege in both paths is stored in `employees.metadata.role = 'admin'` for the `auth_user_id` tied to the signed-in user.
+- Employee privilege is stored in `employees.role` (`employee` | `admin` | `it_ops`), with `metadata.role` kept aligned after migration `08_it_ops_rbac.sql`.
 
 ---
 
@@ -104,6 +104,7 @@ Server/
 │           ├── 05_storage_realtime_auth.sql
 │           ├── 06_seed.sql
 │           ├── 07_admin_audit.sql
+│           ├── 08_it_ops_rbac.sql
 │           ├── README.md
 │           └── STAGING_RUNBOOK.md
 │
@@ -237,21 +238,12 @@ Used in every router via `db=Depends(get_db)`.
 
 ### `auth.py`
 
-```python
-def require_backend_api_key(x_api_key, authorization)
-```
-
-Optional route guard. Behavior:
-
-- If `BACKEND_API_KEY` is **empty** → returns immediately (open access).
-- If `BACKEND_API_KEY` is **set** → checks either:
-  - Header `x-api-key: <key>`, **or**
-  - Header `Authorization: Bearer <key>`
-- On failure → `HTTP 401 Unauthorized`.
-
-Applied to all routes except `GET /` and `GET /health` via `main.py`'s `protected_dependencies`.
+- **`require_backend_api_key`** — optional shared secret (`x-api-key` or `Authorization: Bearer <BACKEND_API_KEY>`). Empty key = no check.
+- **`require_manage_platform_access`** — requires `Authorization: Bearer <Supabase user JWT>` and an active employee with role `admin` or `it_ops` (used on selected write routes).
+- **`require_it_ops_access`** — same bearer pattern; role must be `it_ops` (e.g. `POST /employees/{id}/role`).
 
 ---
+
 
 ### `errors.py`
 
@@ -320,9 +312,9 @@ All protected routers use `db=Depends(get_db)` and `_=Depends(require_backend_ap
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/assets` | List all assets from `v_asset_inventory`. Supports `search`, `department`, `type` (category slug), `status`, `start_date`, `end_date` query params |
-| `POST` | `/assets` | Create asset. Auto-generates `asset_tag` via `fn_next_asset_tag()` if not provided. Generates QR via `qr_service`. Calls `fn_create_asset_with_log` RPC |
+| `POST` | `/assets` | Create asset (requires `require_manage_platform_access`). Auto-generates tag, QR via `qr_service`, `fn_create_asset_with_log` |
 | `GET` | `/assets/{asset_ref}` | Fetch single asset by `asset_tag` or UUID. Resolves and attaches `latest_qr_code` from `asset_logs` |
-| `PUT` | `/assets/{asset_ref}` | Partial update. Only fields explicitly provided in body are written. Resolves category/manufacturer/location IDs from names |
+| `PUT` | `/assets/{asset_ref}` | Partial update (`require_manage_platform_access`) |
 | `GET` | `/assets/scan/{asset_ref}` | Alias for `GET /assets/{asset_ref}` — used for QR redirect targets |
 | `GET` | `/scan/{asset_ref}` | Root-level alias (defined in `main.py`) — for direct QR navigation compat |
 
@@ -337,8 +329,8 @@ All protected routers use `db=Depends(get_db)` and `_=Depends(require_backend_ap
 | Helper | Purpose |
 |---|---|
 | `sanitize_search(query)` | Strips `,()"` for Supabase `or_()` filters |
-| `normalize_role_input(raw)` | Validates and normalizes to `'admin'` or `'employee'` |
-| `normalize_employee_row(row)` | Flattens joined `department:departments(name)` and resolves role from `metadata.role` |
+| `normalize_role_input(raw)` | Validates to `'employee'`, `'admin'`, or `'it_ops'` |
+| `normalize_employee_row(row)` | Flattens department join; resolves role from `employees.role` with metadata fallback |
 | `resolve_department_id(db, name)` | Upserts into `departments`, returns `id` |
 
 #### Endpoints
@@ -348,8 +340,9 @@ All protected routers use `db=Depends(get_db)` and `_=Depends(require_backend_ap
 | `GET` | `/employees` | List employees. Supports `search` (code/name/email ilike) and `is_active` filter. Joins `departments` table |
 | `GET` | `/employees/by-email` | Look up a single employee by exact email. Returns `404` if not found |
 | `GET` | `/employees/{employee_code}` | Fetch single employee by `employee_code`. Returns `404` if not found |
-| `POST` | `/employees` | Create or upsert employee (conflict on `employee_code`). Accepts `department_id` or `department_name` (auto-resolved). Stores `role` inside `metadata.role` |
-| `PUT` | `/employees/{employee_code}` | Partial update. Merges `metadata` instead of replacing (preserves other metadata keys). Resolves `department_name` → `department_id` if provided |
+| `POST` | `/employees` | Create/upsert. Requires bearer JWT with admin/it_ops. Only `role: employee` allowed here; privileged roles use RPC / role endpoint |
+| `PUT` | `/employees/{employee_code}` | Partial update (same bearer rule). Merges `metadata`. Elevated roles cannot be set via this route |
+| `POST` | `/employees/{employee_id}/role?role=…` | Set role via DB `fn_set_employee_role`. Requires bearer JWT with `it_ops` |
 
 ---
 
@@ -411,12 +404,12 @@ Both endpoints return `HTTP 400` if the RPC returns `ok: false`, with the RPC's 
 
 | Class | Used for | Key fields |
 |---|---|---|
-| `EmployeeBase` | Base | `employee_code` (required), `name` (required), `email`, `department_id`, `department_name`, `is_active`, `role` (`admin`\|`employee`), `metadata` |
+| `EmployeeBase` | Base | `employee_code` (required), `name` (required), `email`, `department_id`, `department_name`, `is_active`, `role` (`it_ops`\|`admin`\|`employee`), `metadata` |
 | `EmployeeCreate` | `POST /employees` body | Inherits `EmployeeBase` |
 | `EmployeeUpdate` | `PUT /employees/{code}` body | All optional; metadata is **merged** not replaced |
 | `EmployeeOut` | All response bodies | `id` (UUID), all employee fields, `created_at`, `updated_at` |
 
-Role is stored in `employees.metadata.role` in the database. `EmployeeOut.role` is derived from `metadata.role` at normalize time.
+`EmployeeOut.role` prefers `employees.role`; legacy rows fall back to `metadata.role` until backfilled.
 
 ---
 
@@ -467,21 +460,22 @@ QRService.generate_asset_qr(asset_id: str) → str
 
 ```
 GET    /assets                     — List assets (filters: search, department, type, status, start_date, end_date)
-POST   /assets                     — Create asset
+POST   /assets                     — Create asset (admin/it_ops bearer JWT when enabled)
 GET    /assets/{asset_ref}         — Get asset by asset_tag or UUID
-PUT    /assets/{asset_ref}         — Update asset
+PUT    /assets/{asset_ref}         — Update asset (admin/it_ops bearer JWT when enabled)
 GET    /assets/scan/{asset_ref}    — QR scan alias for GET /assets/{asset_ref}
 GET    /scan/{asset_ref}           — Root-level QR alias
 GET    /logs                       — List 50 most recent logs
 GET    /logs/{asset_ref}           — Latest log for an asset
-POST   /logs                       — Create log entry
+POST   /logs                       — Create log entry (requires admin/it_ops bearer JWT when enabled)
 GET    /employees                  — List employees (filters: search, is_active)
 GET    /employees/by-email         — Get employee by email
 GET    /employees/{employee_code}  — Get employee by code
-POST   /employees                  — Create/upsert employee
+POST   /employees                  — Create/upsert employee (admin/it_ops JWT + API key as configured)
 PUT    /employees/{employee_code}  — Update employee
-POST   /assignments/assign         — Assign asset to employee
-POST   /assignments/return         — Return asset from employee
+POST   /employees/{employee_id}/role — Set role (it_ops JWT only)
+POST   /assignments/assign         — Assign (admin/it_ops bearer JWT when enabled)
+POST   /assignments/return         — Return (admin/it_ops bearer JWT when enabled)
 ```
 
 ### Unprotected Endpoints
@@ -495,16 +489,9 @@ GET    /health    — {"api": "running", "database": "connected|error: ..."}
 
 ## Authentication & Route Protection
 
-Two layers:
-
-1. **`BACKEND_API_KEY`** (server-level, optional):
-   - If set, all routes except `/` and `/health` require the key via `x-api-key` header or `Authorization: Bearer` header.
-   - If unset, all routes are publicly accessible. This is acceptable for private/internal networks, but risky for internet-facing deployments.
-
-2. **Supabase RLS** (DB-level):
-   - The server uses the **service-role key** which bypasses RLS entirely.
-   - RLS is enforced only for the client (anon key path).
-   - Admin authorization in the server is implicit — any caller that passes the `BACKEND_API_KEY` check is trusted to perform any operation.
+1. **`BACKEND_API_KEY`** — optional; if set, required on protected routes alongside normal usage.
+2. **Supabase RLS** — enforced for the browser (anon key). The server uses the service-role key and bypasses RLS.
+3. **Bearer user JWT + `employees.role`** — selected writes (`POST/PUT` assets, POST logs, POST employees, POST assignments, etc.) require `Authorization: Bearer` with a valid Supabase session access token and an active employee row with `admin` or `it_ops`. IT Ops-only endpoints use `it_ops` only.
 
 ---
 
@@ -529,12 +516,13 @@ All SQL migrations are in `db/migrations/v2/`. Run in order on a fresh Supabase 
 | File | Contents |
 |---|---|
 | `01_tables.sql` | Creates all tables: `employees`, `departments`, `asset_categories`, `manufacturers`, `locations`, `assets`, `asset_assignments`, `asset_logs`, `asset_components`, `custom_field_definitions` |
-| `02_functions.sql` | All Supabase RPC functions: `fn_next_asset_tag`, `fn_create_asset_with_log`, `fn_assign_asset`, `fn_return_asset`, `fn_public_scan_asset`, `fn_is_admin`, `fn_claim_employee_auth_link`, `fn_set_employee_admin_status` |
+| `02_functions.sql` | Core RPCs: `fn_next_asset_tag`, `fn_create_asset_with_log`, `fn_assign_asset`, `fn_return_asset`, `fn_public_scan_asset`, `fn_claim_employee_auth_link`, etc. |
+| `08_it_ops_rbac.sql` | `employees.role`, `fn_is_admin_or_it_ops`, `fn_is_it_ops`, `fn_set_employee_role`, scoped reads, admin/it_ops policies; legacy `fn_is_admin` / `fn_set_employee_admin_status` wrappers |
 | `03_views.sql` | `v_asset_inventory` — denormalized view joining assets, categories, manufacturers, locations, active assignments, and current employee info |
 | `04_rls_policies.sql` | Row-level security policies for all tables; admin vs employee vs anon access |
 | `05_storage_realtime_auth.sql` | Supabase Storage bucket config + Realtime publication setup + Auth hooks |
 | `06_seed.sql` | Initial seed data (departments, categories, etc.) |
-| `07_admin_audit.sql` | Admin role audit log table and trigger |
+| `07_admin_audit.sql` | Legacy admin audit + `fn_set_employee_admin_status` (layered with `08` after migrate) |
 
 > If V2 tables were already applied, only re-run `03_views.sql` and `04_rls_policies.sql` to pick up the latest `fn_public_scan_asset` RPC and updated admin RLS policies.
 
@@ -552,8 +540,8 @@ See `db/migrations/v2/README.md` and `STAGING_RUNBOOK.md` for detailed migration
 | Variable | Notes |
 | --- | --- |
 | `SUPABASE_URL` / `SUPABASE_KEY` | Service-role key only on the server; never expose in the browser. |
-| `FRONTEND_URL` | Full origin of the deployed client, **no trailing slash** (e.g. `https://ourassets.vercel.app`). Used inside QR images; if wrong, scans point at localhost. |
-| `ALLOWED_ORIGINS` | Comma-separated CORS origins; must include the same client origin (e.g. `https://ourassets.vercel.app`). |
+| `FRONTEND_URL` | Full origin of the deployed client, **no trailing slash** (e.g. `https://web-assetmanager.vercel.app`). Used inside QR images; if wrong, scans point at localhost. |
+| `ALLOWED_ORIGINS` | Comma-separated CORS origins; must include the same client origin (e.g. `https://web-assetmanager.vercel.app`). |
 | `ENV` | Set to `production` for generic error messages and stricter API-key expectations. |
 | `BACKEND_API_KEY` | Set a strong secret in production so only callers with `x-api-key` or `Authorization: Bearer` can hit protected routes. |
 

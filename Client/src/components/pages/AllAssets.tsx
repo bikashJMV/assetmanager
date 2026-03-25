@@ -82,7 +82,7 @@ export default function AllAssets() {
           getSessionEmployee(),
         ])
         if (!mounted) return
-        const profileAdmin = Boolean(profile?.is_active && profile?.role === 'admin')
+        const profileAdmin = Boolean(profile?.is_active && profile?.role !== 'employee')
         const effectiveAdmin = adminAllowed || profileAdmin
         setCategories(rows)
         setIsAdmin(effectiveAdmin)

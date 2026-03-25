@@ -5,6 +5,9 @@ type Props = {
   loading?: boolean
   className?: string
   label?: string
+  iconOnly?: boolean
+  ariaLabel?: string
+  title?: string
 }
 
 export default function RefreshButton({
@@ -12,20 +15,28 @@ export default function RefreshButton({
   loading = false,
   className = '',
   label = 'Refresh',
+  iconOnly = false,
+  ariaLabel,
+  title,
 }: Props) {
+  const resolvedLabel = loading ? 'Refreshing...' : label
+  const resolvedAriaLabel = ariaLabel || (loading ? 'Refreshing data' : 'Refresh data')
+  const resolvedTitle = title || (loading ? 'Refreshing...' : 'Refresh')
+
   return (
     <button
       onClick={onClick}
       disabled={loading}
-      className={`group nav-item inline-flex items-center gap-2 rounded-lg border border-base bg-surface px-3 py-2.5 text-sm font-semibold text-primary hover:bg-surface-3 transition disabled:opacity-60 disabled:cursor-not-allowed ${className}`}
-      aria-label={loading ? 'Refreshing data' : 'Refresh data'}
-      title={loading ? 'Refreshing...' : 'Refresh'}
+      className={`group nav-item inline-flex items-center rounded-lg border border-base bg-surface text-sm font-semibold text-primary hover:bg-surface-3 transition disabled:opacity-60 disabled:cursor-not-allowed ${iconOnly ? 'h-10 w-10 justify-center px-0' : 'gap-2 px-3 py-2.5'
+        } ${className}`}
+      aria-label={resolvedAriaLabel}
+      title={resolvedTitle}
       type="button"
     >
       <span className={`h-4 w-4 flex items-center justify-center ${loading ? 'refresh-spin' : ''}`}>
         <AnimatedNavIcon name="refresh-cw" />
       </span>
-      <span>{loading ? 'Refreshing...' : label}</span>
+      {!iconOnly && <span>{resolvedLabel}</span>}
     </button>
   )
 }

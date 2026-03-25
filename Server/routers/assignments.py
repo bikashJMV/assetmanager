@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 
+from core.auth import require_manage_platform_access
 from core.deps import get_db
 from core.errors import handle_supabase_error
 from schemas.assignment import AssignAssetRequest, AssignmentRPCResult, ReturnAssetRequest
@@ -8,7 +9,7 @@ router = APIRouter(prefix="/assignments", tags=["Assignments"])
 
 
 @router.post("/assign", response_model=AssignmentRPCResult, status_code=status.HTTP_200_OK)
-def assign_asset(payload: AssignAssetRequest, db=Depends(get_db)):
+def assign_asset(payload: AssignAssetRequest, db=Depends(get_db), _=Depends(require_manage_platform_access)):
     """
     Runtime assignment flow must go through DB RPC `fn_assign_asset`.
     Business rules are centralized in SQL for DRY/KISS consistency.
@@ -38,7 +39,7 @@ def assign_asset(payload: AssignAssetRequest, db=Depends(get_db)):
 
 
 @router.post("/return", response_model=AssignmentRPCResult, status_code=status.HTTP_200_OK)
-def return_asset(payload: ReturnAssetRequest, db=Depends(get_db)):
+def return_asset(payload: ReturnAssetRequest, db=Depends(get_db), _=Depends(require_manage_platform_access)):
     """
     Runtime return flow must go through DB RPC `fn_return_asset`.
     Business rules are centralized in SQL for DRY/KISS consistency.

@@ -190,6 +190,37 @@
   transform: scaleY(1.06);
 }
 
+.nav-item:hover .ai-scan-tl,
+.nav-item:focus-visible .ai-scan-tl,
+.nav-item.nav-item-active .ai-scan-tl {
+  transform: translate(-0.9px, -0.9px);
+}
+
+.nav-item:hover .ai-scan-tr,
+.nav-item:focus-visible .ai-scan-tr,
+.nav-item.nav-item-active .ai-scan-tr {
+  transform: translate(0.9px, -0.9px);
+}
+
+.nav-item:hover .ai-scan-bl,
+.nav-item:focus-visible .ai-scan-bl,
+.nav-item.nav-item-active .ai-scan-bl {
+  transform: translate(-0.9px, 0.9px);
+}
+
+.nav-item:hover .ai-scan-br,
+.nav-item:focus-visible .ai-scan-br,
+.nav-item.nav-item-active .ai-scan-br {
+  transform: translate(0.9px, 0.9px);
+}
+
+.nav-item:hover .ai-scan-line,
+.nav-item:focus-visible .ai-scan-line,
+.nav-item.nav-item-active .ai-scan-line {
+  transform: scaleX(1.08);
+  opacity: 0.72;
+}
+
 .nav-item:hover .ai-user-head,
 .nav-item:focus-visible .ai-user-head,
 .nav-item.nav-item-active .ai-user-head {

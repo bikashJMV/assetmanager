@@ -5,6 +5,7 @@ from typing import Any, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
+from core.auth import require_manage_platform_access
 from core.deps import get_db
 from core.errors import handle_supabase_error
 from schemas.asset import AssetCreate, AssetOut, AssetUpdate
@@ -233,7 +234,7 @@ def get_assets(
 
 
 @router.post("", response_model=AssetOut, status_code=status.HTTP_201_CREATED)
-def create_asset(asset: AssetCreate, db=Depends(get_db)):
+def create_asset(asset: AssetCreate, db=Depends(get_db), _=Depends(require_manage_platform_access)):
     try:
         category_slug = slugify(asset.category_slug)
         if not category_slug:
@@ -303,7 +304,7 @@ def get_asset(asset_ref: str, db=Depends(get_db)):
 
 
 @router.put("/{asset_ref}", response_model=AssetOut)
-def update_asset(asset_ref: str, asset: AssetUpdate, db=Depends(get_db)):
+def update_asset(asset_ref: str, asset: AssetUpdate, db=Depends(get_db), _=Depends(require_manage_platform_access)):
     """Update mutable fields of an existing asset."""
     try:
         existing = resolve_asset_inventory_row(db, asset_ref)

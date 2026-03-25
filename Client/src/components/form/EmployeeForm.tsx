@@ -46,13 +46,14 @@ export default function EmployeeForm({ prefill, onClose, onSubmit }: Props) {
     setError('')
 
     try {
+      const normalizedRole = form.role ? (form.role as EmployeeRole) : 'employee'
       await onSubmit({
         ...form,
         employee_code: form.employee_code.trim(),
         name: form.name.trim(),
         email: form.email?.trim() || null,
         department: form.department?.trim() || null,
-        role: form.role === 'admin' ? 'admin' : 'employee',
+        role: normalizedRole,
       })
     } catch (err) {
       logDevError('employeeForm.submit', err)
@@ -105,6 +106,7 @@ export default function EmployeeForm({ prefill, onClose, onSubmit }: Props) {
               options={[
                 { value: 'employee', label: 'Employee' },
                 { value: 'admin', label: 'Admin' },
+                { value: 'it_ops', label: 'IT Ops' },
               ]}
             />
             <div>

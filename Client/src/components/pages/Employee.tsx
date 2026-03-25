@@ -10,6 +10,8 @@ import {
   listDepartments,
   listEmployees,
   setEmployeeAdminStatus,
+  setEmployeeRole,
+  type EmployeeRole,
   type EmployeeListFilters,
   type EmployeeRecord,
   type EmployeeUpsertInput,
@@ -19,14 +21,38 @@ import { getErrorDebugDetail, getUserFacingMessage, logDevError } from '../../ut
 import { formatDisplay } from '../../utils/formatDisplay'
 
 const SEARCH_DEBOUNCE_MS = 300
-const ERP_STATUS_ALL = 'all'
-const ROLE_ALL = 'all'
+const ERP_STATUS_ALL = 'all' as const
+const ROLE_ALL = 'all' as const
 
 type EmployeeFiltersInput = {
   search: string
   erpStatus: 'all' | 'active' | 'inactive'
   department: string
   role: string
+}
+
+type EmployeeViewMode = 'table' | 'grid'
+
+const EMPLOYEE_VIEW_MODE_STORAGE_KEY = 'ams-employee-view-mode'
+
+function getInitialEmployeeViewMode(): EmployeeViewMode {
+  if (typeof window === 'undefined') return 'table'
+  return window.localStorage.getItem(EMPLOYEE_VIEW_MODE_STORAGE_KEY) === 'grid' ? 'grid' : 'table'
+}
+
+function getActiveAdvancedFilterCount(input: EmployeeFiltersInput): number {
+  let count = 0
+  if (input.erpStatus !== ERP_STATUS_ALL) count += 1
+  if (input.department.trim()) count += 1
+  if (input.role.trim() && input.role !== ROLE_ALL) count += 1
+  return count
+}
+
+function formatRoleLabel(role: string): string {
+  const normalized = role.trim().toLowerCase()
+  if (normalized === 'it_ops') return 'IT Ops'
+  if (normalized === 'admin') return 'Admin'
+  return 'Employee'
 }
 
 function toApiFilters(input: EmployeeFiltersInput): EmployeeListFilters {
@@ -66,13 +92,17 @@ export default function Employee() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [errorDebug, setErrorDebug] = useState<string | undefined>(undefined)
+  const [accessResolved, setAccessResolved] = useState(false)
   const [isAdmin, setIsAdmin] = useState(false)
+  const [isItOps, setIsItOps] = useState(false)
   const [sessionEmployeeId, setSessionEmployeeId] = useState<string | null>(null)
   const [accessWarning, setAccessWarning] = useState('')
-  const [adminToggleTarget, setAdminToggleTarget] = useState<EmployeeRecord | null>(null)
-  const [adminToggleMode, setAdminToggleMode] = useState<'grant' | 'revoke' | null>(null)
-  const [adminToggleLoading, setAdminToggleLoading] = useState(false)
+  const [roleChangeTarget, setRoleChangeTarget] = useState<EmployeeRecord | null>(null)
+  const [roleChangeTargetRole, setRoleChangeTargetRole] = useState<EmployeeRole | null>(null)
+  const [roleChangeLoading, setRoleChangeLoading] = useState(false)
   const [bulkQrEmployeeId, setBulkQrEmployeeId] = useState<string | null>(null)
+  const [filtersOpen, setFiltersOpen] = useState(false)
+  const [viewMode, setViewMode] = useState<EmployeeViewMode>(getInitialEmployeeViewMode)
   const [successMessage, setSuccessMessage] = useState('')
 
   const requestIdRef = useRef(0)
@@ -83,6 +113,8 @@ export default function Employee() {
     department: '',
     role: ROLE_ALL,
   }))
+  const canManageEmployees = accessResolved && isAdmin
+  const activeAdvancedFilterCount = getActiveAdvancedFilterCount(filtersInput)
 
   const fetchEmployees = async (filters: EmployeeListFilters) => {
     const requestId = ++requestIdRef.current
@@ -115,8 +147,9 @@ export default function Employee() {
       ])
 
       const profileAdmin = Boolean(
-        passport.sessionEmployee?.is_active && passport.sessionEmployee?.role === 'admin'
+        passport.sessionEmployee?.is_active && passport.sessionEmployee?.role !== 'employee'
       )
+      setIsItOps(Boolean(passport.sessionEmployee?.is_active && passport.sessionEmployee?.role === 'it_ops'))
       const effectiveAdmin = adminAccess || profileAdmin
 
       setIsAdmin(effectiveAdmin)
@@ -125,7 +158,7 @@ export default function Employee() {
 
       if (profileAdmin && !adminAccess) {
         setAccessWarning(
-          'Admin profile detected, but DB admin policy check is failing. Employee list may be scoped to your own row until RLS policies are re-applied.'
+          'Privileged profile detected, but DB access policy check is failing. Employee list may be scoped to your own row until RLS policies are re-applied.'
         )
       } else {
         setAccessWarning('')
@@ -133,6 +166,8 @@ export default function Employee() {
     } catch (err) {
       logDevError('employees.passport_or_departments', err)
       setAccessWarning('Unable to verify admin visibility scope right now. Reload after confirming session and RLS policies.')
+    } finally {
+      setAccessResolved(true)
     }
   }
 
@@ -145,6 +180,10 @@ export default function Employee() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  useEffect(() => {
+    window.localStorage.setItem(EMPLOYEE_VIEW_MODE_STORAGE_KEY, viewMode)
+  }, [viewMode])
 
   const handleSearchChange = (value: string) => {
     setFiltersInput((current) => {
@@ -175,6 +214,23 @@ export default function Employee() {
     })
   }
 
+  const handleResetAdvancedFilters = () => {
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+
+    setFiltersInput((current) => {
+      const nextInput = {
+        ...current,
+        erpStatus: ERP_STATUS_ALL,
+        department: '',
+        role: ROLE_ALL,
+      }
+      const nextFilters = toApiFilters(nextInput)
+      filtersRef.current = nextFilters
+      void fetchEmployees(nextFilters)
+      return nextInput
+    })
+  }
+
   const handleRefresh = () => {
     if (debounceRef.current) clearTimeout(debounceRef.current)
     setSuccessMessage('')
@@ -198,42 +254,62 @@ export default function Employee() {
     }
   }
 
-  const openAdminToggle = (employee: EmployeeRecord, mode: 'grant' | 'revoke') => {
-    setAdminToggleTarget(employee)
-    setAdminToggleMode(mode)
+  const handleGrantAdmin = async (employee: EmployeeRecord) => {
+    try {
+      await setEmployeeAdminStatus(employee, true)
+      setSuccessMessage(`${employee.name} is now an admin.`)
+      await fetchEmployees(filtersRef.current)
+    } catch (err) {
+      logDevError('employees.grant_admin', err)
+      setError(getUserFacingMessage(err, 'Unable to update admin privileges right now.'))
+      setErrorDebug(getErrorDebugDetail(err))
+    }
+  }
+
+  const handleRevokeAdmin = async (employee: EmployeeRecord) => {
+    try {
+      await setEmployeeAdminStatus(employee, false)
+      setSuccessMessage(`${employee.name} is now an employee.`)
+      await fetchEmployees(filtersRef.current)
+    } catch (err) {
+      logDevError('employees.revoke_admin', err)
+      setError(getUserFacingMessage(err, 'Unable to update admin privileges right now.'))
+      setErrorDebug(getErrorDebugDetail(err))
+    }
+  }
+
+  const openRoleChange = (employee: EmployeeRecord, role: EmployeeRole) => {
+    setRoleChangeTarget(employee)
+    setRoleChangeTargetRole(role)
     setSuccessMessage('')
     setError('')
     setErrorDebug(undefined)
   }
 
-  const closeAdminToggle = () => {
-    if (adminToggleLoading) return
-    setAdminToggleTarget(null)
-    setAdminToggleMode(null)
+  const closeRoleChange = () => {
+    if (roleChangeLoading) return
+    setRoleChangeTarget(null)
+    setRoleChangeTargetRole(null)
   }
 
-  const handleConfirmAdminToggle = async () => {
-    if (!adminToggleTarget || !adminToggleMode) return
+  const handleConfirmRoleChange = async () => {
+    if (!roleChangeTarget || !roleChangeTargetRole) return
 
-    setAdminToggleLoading(true)
+    setRoleChangeLoading(true)
     setError('')
     setErrorDebug(undefined)
     try {
-      await setEmployeeAdminStatus(adminToggleTarget, adminToggleMode === 'grant')
-      setSuccessMessage(
-        adminToggleMode === 'grant'
-          ? `${adminToggleTarget.name} is now an admin.`
-          : `${adminToggleTarget.name} is now an employee.`
-      )
-      setAdminToggleTarget(null)
-      setAdminToggleMode(null)
+      await setEmployeeRole(roleChangeTarget, roleChangeTargetRole)
+      setSuccessMessage(`${roleChangeTarget.name} role updated to ${roleChangeTargetRole.replace('_', ' ')}.`)
+      setRoleChangeTarget(null)
+      setRoleChangeTargetRole(null)
       await fetchEmployees(filtersRef.current)
     } catch (err) {
-      logDevError('employees.toggle_admin', err)
-      setError(getUserFacingMessage(err, 'Unable to update admin privileges right now.'))
+      logDevError('employees.set_role', err)
+      setError(getUserFacingMessage(err, 'Unable to update role right now.'))
       setErrorDebug(getErrorDebugDetail(err))
     } finally {
-      setAdminToggleLoading(false)
+      setRoleChangeLoading(false)
     }
   }
 
@@ -279,64 +355,139 @@ export default function Employee() {
 
   return (
     <main className="min-h-screen bg-app text-primary px-4 sm:px-6 py-6 sm:py-8">
-      <div className="mb-6 flex flex-col gap-3 2xl:flex-row 2xl:items-center">
-        <div className="w-full 2xl:flex-[1.2]">
-          <input
-            type="text"
-            aria-label="Search employees"
-            value={filtersInput.search}
-            onChange={(e) => handleSearchChange(e.target.value)}
-            placeholder="Search by code, name, email..."
-            className="w-full bg-surface border border-base text-primary placeholder:text-subtle rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[color:var(--accent)] transition"
-          />
+      <div className="mb-6 space-y-3">
+        <div className="flex flex-col gap-3 lg:flex-row lg:flex-nowrap lg:items-center">
+          <div className="min-w-0 lg:flex-[1_1_320px]">
+            <input
+              type="text"
+              aria-label="Search employees"
+              value={filtersInput.search}
+              onChange={(e) => handleSearchChange(e.target.value)}
+              placeholder="Search by code, name, email..."
+              className="w-full bg-surface border border-base text-primary placeholder:text-subtle rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[color:var(--accent)] transition"
+            />
+          </div>
+
+          <div className="flex items-center gap-2 lg:flex-nowrap lg:shrink-0">
+            <button
+              type="button"
+              onClick={() => setFiltersOpen((current) => !current)}
+              className={`inline-flex h-10 items-center gap-2 rounded-lg border px-3 text-sm font-medium transition ${filtersOpen || activeAdvancedFilterCount > 0
+                ? 'border-accent-soft bg-[color:var(--accent-soft)]/15 text-primary'
+                : 'border-base bg-surface text-muted hover:bg-surface-3 hover:text-primary'
+                }`}
+            >
+              <span className="h-4 w-4 shrink-0">
+                <FilterIcon />
+              </span>
+              <span>Filters</span>
+              {activeAdvancedFilterCount > 0 && (
+                <span className="inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-accent px-1.5 py-0.5 text-[11px] font-semibold text-on-accent">
+                  {activeAdvancedFilterCount}
+                </span>
+              )}
+            </button>
+
+            <RefreshButton
+              onClick={handleRefresh}
+              loading={loading}
+              iconOnly
+              ariaLabel="Refresh employees"
+              title={loading ? 'Refreshing employees' : 'Refresh employees'}
+              className="shrink-0"
+            />
+
+            <div className="inline-flex items-center rounded-lg border border-base bg-surface p-1">
+              <button
+                type="button"
+                aria-label="Show table layout"
+                title="Table layout"
+                onClick={() => setViewMode('table')}
+                className={`inline-flex h-8 w-8 items-center justify-center rounded-md transition ${viewMode === 'table'
+                  ? 'bg-accent text-on-accent'
+                  : 'text-muted hover:bg-surface-3 hover:text-primary'
+                  }`}
+              >
+                <TableViewIcon />
+              </button>
+              <button
+                type="button"
+                aria-label="Show grid layout"
+                title="Grid layout"
+                onClick={() => setViewMode('grid')}
+                className={`inline-flex h-8 w-8 items-center justify-center rounded-md transition ${viewMode === 'grid'
+                  ? 'bg-accent text-on-accent'
+                  : 'text-muted hover:bg-surface-3 hover:text-primary'
+                  }`}
+              >
+                <GridViewIcon />
+              </button>
+            </div>
+          </div>
         </div>
 
-        <div className="w-full 2xl:flex-[1.8] flex flex-wrap items-center gap-3">
-          <select
-            aria-label="Filter by ERP status"
-            value={filtersInput.erpStatus}
-            onChange={(e) =>
-              handleFilterChange({
-                erpStatus: (e.target.value || ERP_STATUS_ALL) as EmployeeFiltersInput['erpStatus'],
-              })
-            }
-            className="bg-surface border border-base text-primary text-sm rounded-lg px-3 py-2.5 min-w-[160px]"
-          >
-            <option value="all" className="bg-surface-2 text-primary">All</option>
-            <option value="active" className="bg-surface-2 text-primary">ERP Active</option>
-            <option value="inactive" className="bg-surface-2 text-primary">ERP Inactive</option>
-          </select>
+        {filtersOpen && (
+          <section className="rounded-xl border border-base bg-surface-2 p-4">
+            <div className="flex flex-col gap-3 xl:flex-row xl:items-end">
+              <div className="grid flex-1 grid-cols-1 gap-3 md:grid-cols-3">
+                <select
+                  aria-label="Filter by ERP status"
+                  value={filtersInput.erpStatus}
+                  onChange={(e) =>
+                    handleFilterChange({
+                      erpStatus: (e.target.value || ERP_STATUS_ALL) as EmployeeFiltersInput['erpStatus'],
+                    })
+                  }
+                  className="w-full bg-surface border border-base text-primary text-sm rounded-lg px-3 py-2.5"
+                >
+                  <option value="all" className="bg-surface-2 text-primary">All</option>
+                  <option value="active" className="bg-surface-2 text-primary">ERP Active</option>
+                  <option value="inactive" className="bg-surface-2 text-primary">ERP Inactive</option>
+                </select>
 
-          <select
-            aria-label="Filter by department"
-            value={filtersInput.department}
-            onChange={(e) => handleFilterChange({ department: e.target.value })}
-            className="bg-surface border border-base text-primary text-sm rounded-lg px-3 py-2.5 min-w-[160px]"
-          >
-            <option value="" className="bg-surface-2 text-primary">All Departments</option>
-            {departments.map((department) => (
-              <option key={department} value={department} className="bg-surface-2 text-primary">
-                {department}
-              </option>
-            ))}
-          </select>
+                <select
+                  aria-label="Filter by department"
+                  value={filtersInput.department}
+                  onChange={(e) => handleFilterChange({ department: e.target.value })}
+                  className="w-full bg-surface border border-base text-primary text-sm rounded-lg px-3 py-2.5"
+                >
+                  <option value="" className="bg-surface-2 text-primary">All Departments</option>
+                  {departments.map((department) => (
+                    <option key={department} value={department} className="bg-surface-2 text-primary">
+                      {department}
+                    </option>
+                  ))}
+                </select>
 
-          <select
-            aria-label="Filter by role"
-            value={filtersInput.role}
-            onChange={(e) => handleFilterChange({ role: e.target.value || ROLE_ALL })}
-            className="bg-surface border border-base text-primary text-sm rounded-lg px-3 py-2.5 min-w-[140px]"
-          >
-            <option value="all" className="bg-surface-2 text-primary">All Roles</option>
-            <option value="admin" className="bg-surface-2 text-primary">Admin</option>
-            <option value="employee" className="bg-surface-2 text-primary">Employee</option>
-          </select>
+                <select
+                  aria-label="Filter by role"
+                  value={filtersInput.role}
+                  onChange={(e) => handleFilterChange({ role: e.target.value || ROLE_ALL })}
+                  className="w-full bg-surface border border-base text-primary text-sm rounded-lg px-3 py-2.5"
+                >
+                  <option value="all" className="bg-surface-2 text-primary">All Roles</option>
+                  <option value="admin" className="bg-surface-2 text-primary">Admin</option>
+                  <option value="it_ops" className="bg-surface-2 text-primary">IT Ops</option>
+                  <option value="employee" className="bg-surface-2 text-primary">Employee</option>
+                </select>
+              </div>
 
-          <RefreshButton onClick={handleRefresh} loading={loading} label="Refresh" />
-        </div>
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={handleResetAdvancedFilters}
+                  disabled={activeAdvancedFilterCount === 0}
+                  className="inline-flex h-10 items-center rounded-lg border border-base bg-surface px-3 text-sm font-medium text-muted transition hover:bg-surface-3 hover:text-primary disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Clear
+                </button>
+              </div>
+            </div>
+          </section>
+        )}
       </div>
 
-      {!isAdmin && (
+      {accessResolved && !isAdmin && (
         <p className="text-xs text-subtle mb-4">
           Read-only mode. Active admin access is required to add or edit employees.
         </p>
@@ -387,10 +538,14 @@ export default function Employee() {
         </div>
       ) : null}
 
-      {loading && <p className="text-subtle text-sm mb-4">Loading employees...</p>}
+      {accessResolved && loading && <p className="text-subtle text-sm mb-4">Loading employees...</p>}
 
       <section className="min-w-0">
-        {isAdmin ? (
+        {!accessResolved ? (
+          <div className="rounded-xl border border-base bg-surface px-4 py-6 text-sm text-subtle">
+            Checking access...
+          </div>
+        ) : viewMode === 'table' ? (
           <div className="overflow-x-auto rounded-xl border border-base">
             <table className="w-full min-w-[980px] text-sm text-left">
               <thead className="bg-surface-2 text-subtle text-xs uppercase">
@@ -401,7 +556,7 @@ export default function Employee() {
                   <th className="px-4 py-3">Department</th>
                   <th className="px-4 py-3">Role</th>
                   <th className="px-4 py-3">ERP Status</th>
-                  <th className="px-4 py-3 text-right">Actions</th>
+                  {canManageEmployees && <th className="px-4 py-3 text-right">Actions</th>}
                 </tr>
               </thead>
               <tbody>
@@ -411,58 +566,33 @@ export default function Employee() {
                     <td className="px-4 py-3 text-muted">{formatDisplay(employee.email)}</td>
                     <td className="px-4 py-3 text-primary">{employee.employee_code}</td>
                     <td className="px-4 py-3 text-primary">{formatDisplay(employee.department)}</td>
-                    <td className="px-4 py-3 text-primary capitalize">{employee.role}</td>
+                    <td className="px-4 py-3 text-primary">{formatRoleLabel(employee.role)}</td>
                     <td className="px-4 py-3">
                       <span className={`text-xs px-2 py-1 rounded ${employee.is_active ? 'bg-accent text-on-accent' : 'bg-surface border border-base text-muted'}`}>
                         {employee.is_active ? 'ERP Active' : 'ERP Inactive'}
                       </span>
                     </td>
-                    <td className="px-4 py-3">
-                      <div className="flex justify-end gap-2">
-                        <button
-                          onClick={() => setEditEmployee(employee)}
-                          className="border border-base text-muted py-1.5 px-3 rounded-lg hover:bg-surface-3 transition text-xs"
-                          type="button"
-                        >
-                          Edit
-                        </button>
-                        {employee.role === 'admin' ? (
-                          <button
-                            onClick={() => openAdminToggle(employee, 'revoke')}
-                            disabled={employee.id === sessionEmployeeId}
-                            className="border border-base text-muted py-1.5 px-3 rounded-lg hover:bg-surface-3 transition text-xs disabled:opacity-50 disabled:cursor-not-allowed"
-                            type="button"
-                            title={employee.id === sessionEmployeeId ? 'You cannot revoke your own admin role.' : 'Revoke admin privileges'}
-                          >
-                            Revoke Admin
-                          </button>
-                        ) : (
-                          <button
-                            onClick={() => openAdminToggle(employee, 'grant')}
-                            className="bg-accent text-on-accent py-1.5 px-3 rounded-lg hover:bg-accent-hover transition text-xs"
-                            type="button"
-                          >
-                            Make Admin
-                          </button>
-                        )}
-                        <button
-                          onClick={() => {
-                            void handleDownloadEmployeeQrs(employee)
-                          }}
-                          disabled={bulkQrEmployeeId === employee.id}
-                          className="border border-base text-muted py-1.5 px-3 rounded-lg hover:bg-surface-3 transition text-xs disabled:opacity-60"
-                          type="button"
-                          title="Download QR codes for all assets assigned to this employee"
-                        >
-                          {bulkQrEmployeeId === employee.id ? 'Preparing QRs...' : 'Download QRs'}
-                        </button>
-                      </div>
-                    </td>
+                    {canManageEmployees && (
+                      <td className="px-4 py-3">
+                        <EmployeeActions
+                          employee={employee}
+                          isItOps={isItOps}
+                          sessionEmployeeId={sessionEmployeeId}
+                          bulkQrEmployeeId={bulkQrEmployeeId}
+                          onEdit={setEditEmployee}
+                          onSetRole={openRoleChange}
+                          onGrantAdmin={handleGrantAdmin}
+                          onRevokeAdmin={handleRevokeAdmin}
+                          onDownloadQrs={handleDownloadEmployeeQrs}
+                          align="end"
+                        />
+                      </td>
+                    )}
                   </tr>
                 ))}
                 {!loading && employees.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="text-center py-8 text-subtle">No employees found</td>
+                    <td colSpan={canManageEmployees ? 7 : 6} className="text-center py-8 text-subtle">No employees found</td>
                   </tr>
                 )}
               </tbody>
@@ -477,7 +607,7 @@ export default function Employee() {
                     <h2 className="text-lg font-semibold">{employee.name}</h2>
                     <p className="text-sm text-muted">{formatDisplay(employee.email)}</p>
                   </div>
-                  <span className="text-xs px-2 py-1 rounded bg-accent text-on-accent">
+                  <span className={`text-xs px-2 py-1 rounded ${employee.is_active ? 'bg-accent text-on-accent' : 'bg-surface border border-base text-muted'}`}>
                     {employee.is_active ? 'ERP Active' : 'ERP Inactive'}
                   </span>
                 </div>
@@ -487,8 +617,23 @@ export default function Employee() {
                   <p className="text-subtle uppercase tracking-[0.14em] text-[11px] mt-3">Department</p>
                   <p className="text-primary">{formatDisplay(employee.department)}</p>
                   <p className="text-subtle uppercase tracking-[0.14em] text-[11px] mt-3">Role</p>
-                  <p className="text-primary capitalize">{employee.role}</p>
+                  <p className="text-primary">{formatRoleLabel(employee.role)}</p>
                 </div>
+                {canManageEmployees && (
+                  <div className="mt-4 border-t border-base pt-4">
+                    <EmployeeActions
+                      employee={employee}
+                      isItOps={isItOps}
+                      sessionEmployeeId={sessionEmployeeId}
+                      bulkQrEmployeeId={bulkQrEmployeeId}
+                      onEdit={setEditEmployee}
+                      onSetRole={openRoleChange}
+                      onGrantAdmin={handleGrantAdmin}
+                      onRevokeAdmin={handleRevokeAdmin}
+                      onDownloadQrs={handleDownloadEmployeeQrs}
+                    />
+                  </div>
+                )}
               </article>
             ))}
 
@@ -521,39 +666,172 @@ export default function Employee() {
         </div>
       )}
 
-      {adminToggleTarget && adminToggleMode && (
+      {roleChangeTarget && roleChangeTargetRole && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 px-4">
           <div className="w-full max-w-md bg-surface-2 border border-base rounded-xl p-5">
             <h3 className="text-base font-semibold text-primary">
-              {adminToggleMode === 'grant' ? 'Confirm Admin Grant' : 'Confirm Admin Revoke'}
+              Confirm Role Change
             </h3>
             <p className="text-sm text-subtle mt-2">
-              {adminToggleMode === 'grant'
-                ? `Are you sure you want to grant admin privileges to ${adminToggleTarget.name}?`
-                : `Are you sure you want to revoke admin privileges from ${adminToggleTarget.name}?`}
+              {`Are you sure you want to set ${roleChangeTarget.name} as ${roleChangeTargetRole.replace('_', ' ')}?`}
             </p>
-            <p className="text-xs text-subtle mt-2">Employee Code: {adminToggleTarget.employee_code}</p>
+            <p className="text-xs text-subtle mt-2">Employee Code: {roleChangeTarget.employee_code}</p>
             <div className="mt-5 flex gap-2">
               <button
                 type="button"
-                onClick={closeAdminToggle}
-                disabled={adminToggleLoading}
+                onClick={closeRoleChange}
+                disabled={roleChangeLoading}
                 className="flex-1 border border-base text-muted py-2 rounded-lg hover:bg-surface-3 transition text-sm disabled:opacity-60"
               >
                 Cancel
               </button>
               <button
                 type="button"
-                onClick={() => void handleConfirmAdminToggle()}
-                disabled={adminToggleLoading}
+                onClick={() => void handleConfirmRoleChange()}
+                disabled={roleChangeLoading}
                 className="flex-1 bg-accent text-on-accent py-2 rounded-lg hover:bg-accent-hover transition text-sm disabled:opacity-60"
               >
-                {adminToggleLoading ? 'Updating...' : 'Confirm'}
+                {roleChangeLoading ? 'Updating...' : 'Confirm'}
               </button>
             </div>
           </div>
         </div>
       )}
     </main>
+  )
+}
+
+type EmployeeActionsProps = {
+  employee: EmployeeRecord
+  isItOps: boolean
+  sessionEmployeeId: string | null
+  bulkQrEmployeeId: string | null
+  align?: 'start' | 'end'
+  onEdit: (employee: EmployeeRecord) => void
+  onSetRole: (employee: EmployeeRecord, role: EmployeeRole) => void
+  onGrantAdmin: (employee: EmployeeRecord) => Promise<void>
+  onRevokeAdmin: (employee: EmployeeRecord) => Promise<void>
+  onDownloadQrs: (employee: EmployeeRecord) => Promise<void>
+}
+
+function EmployeeActions({
+  employee,
+  isItOps,
+  sessionEmployeeId,
+  bulkQrEmployeeId,
+  align = 'start',
+  onEdit,
+  onSetRole,
+  onGrantAdmin,
+  onRevokeAdmin,
+  onDownloadQrs,
+}: EmployeeActionsProps) {
+  const secondaryButtonClass = 'border border-base text-muted py-1.5 px-3 rounded-lg hover:bg-surface-3 transition text-xs disabled:opacity-50 disabled:cursor-not-allowed'
+  const primaryButtonClass = 'bg-accent text-on-accent py-1.5 px-3 rounded-lg hover:bg-accent-hover transition text-xs'
+
+  return (
+    <div className={`flex flex-wrap gap-2 ${align === 'end' ? 'justify-end' : 'justify-start'}`}>
+      <button
+        onClick={() => onEdit(employee)}
+        className={secondaryButtonClass}
+        type="button"
+      >
+        Edit
+      </button>
+      {isItOps && employee.role !== 'employee' && (
+        <button
+          onClick={() => onSetRole(employee, 'employee')}
+          disabled={employee.id === sessionEmployeeId && employee.role === 'it_ops'}
+          className={secondaryButtonClass}
+          type="button"
+        >
+          Set Employee
+        </button>
+      )}
+      {!isItOps && employee.role !== 'it_ops' && employee.role !== 'admin' && (
+        <button
+          onClick={() => {
+            void onGrantAdmin(employee)
+          }}
+          className={primaryButtonClass}
+          type="button"
+        >
+          Make Admin
+        </button>
+      )}
+      {!isItOps && employee.role === 'admin' && (
+        <button
+          onClick={() => {
+            void onRevokeAdmin(employee)
+          }}
+          disabled={employee.id === sessionEmployeeId}
+          className={secondaryButtonClass}
+          type="button"
+        >
+          Revoke Admin
+        </button>
+      )}
+      {isItOps && employee.role !== 'admin' && (
+        <button
+          onClick={() => onSetRole(employee, 'admin')}
+          className={primaryButtonClass}
+          type="button"
+        >
+          Set Admin
+        </button>
+      )}
+      {isItOps && employee.role !== 'it_ops' && (
+        <button
+          onClick={() => onSetRole(employee, 'it_ops')}
+          className={secondaryButtonClass}
+          type="button"
+        >
+          Set IT Ops
+        </button>
+      )}
+      <button
+        onClick={() => {
+          void onDownloadQrs(employee)
+        }}
+        disabled={bulkQrEmployeeId === employee.id}
+        className={`${secondaryButtonClass} disabled:opacity-60`}
+        type="button"
+        title="Download QR codes for all assets assigned to this employee"
+      >
+        {bulkQrEmployeeId === employee.id ? 'Preparing QRs...' : 'Download QRs'}
+      </button>
+    </div>
+  )
+}
+
+function FilterIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-full w-full" aria-hidden="true">
+      <path d="M4 6h16" />
+      <path d="M7 12h10" />
+      <path d="M10 18h4" />
+    </svg>
+  )
+}
+
+function TableViewIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden="true">
+      <rect x="3.5" y="5" width="17" height="14" rx="2" />
+      <path d="M3.5 10h17" />
+      <path d="M9 5v14" />
+      <path d="M15 5v14" />
+    </svg>
+  )
+}
+
+function GridViewIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden="true">
+      <rect x="4" y="4" width="6.5" height="6.5" rx="1.2" />
+      <rect x="13.5" y="4" width="6.5" height="6.5" rx="1.2" />
+      <rect x="4" y="13.5" width="6.5" height="6.5" rx="1.2" />
+      <rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.2" />
+    </svg>
   )
 }

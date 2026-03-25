@@ -11,7 +11,7 @@ class EmployeeBase(BaseModel):
     department_id: Optional[uuid.UUID] = None
     department_name: Optional[str] = None
     is_active: bool = True
-    role: Literal['admin', 'employee'] = 'employee'
+    role: Literal['it_ops', 'admin', 'employee'] = 'employee'
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -26,7 +26,7 @@ class EmployeeUpdate(BaseModel):
     department_id: Optional[uuid.UUID] = None
     department_name: Optional[str] = None
     is_active: Optional[bool] = None
-    role: Optional[Literal['admin', 'employee']] = None
+    role: Optional[Literal['it_ops', 'admin', 'employee']] = None
     metadata: Optional[dict[str, Any]] = None
 
 
@@ -38,7 +38,7 @@ class EmployeeOut(BaseModel):
     department_id: Optional[uuid.UUID] = None
     department_name: Optional[str] = None
     is_active: bool
-    role: Literal['admin', 'employee'] = 'employee'
+    role: Literal['it_ops', 'admin', 'employee'] = 'employee'
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None

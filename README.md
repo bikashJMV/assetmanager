@@ -1,4 +1,4 @@
-# [Asset Management System](https://web-assetmanager.vercel.app)
+# [Asset Manager](https://web-assetmanager.vercel.app)
 
 Centralized platform for tracking, managing, and auditing digital and physical assets — with ERP-aware employee profiles, RPC-driven assignment lifecycle, and QR-based asset scanning.
 

@@ -1,8 +1,8 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
-import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom'
+import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import type { Session } from '@supabase/supabase-js'
 import Sidebar from './components/common/Sidebar'
-import { getSession, onAuthStateChange, signInWithGoogle } from './api'
+import { getSession, onAuthStateChange, signInWithGoogle, signOut } from './api'
 import { applyDocumentPreferences, applyStoredPreferences, getInitialDensity, getInitialFont, getInitialTheme } from './utils/theme'
 import { getUserFacingMessage, logDevError } from './utils/errors'
 import './index.css'
@@ -14,6 +14,11 @@ const AssetDetail = lazy(() => import('./components/pages/AssetDetail'))
 const ScanPage = lazy(() => import('./components/pages/ScanPage'))
 const PageNotFound = lazy(() => import('./components/common/PageNotFound'))
 const Guide = lazy(() => import('./components/common/Guide'))
+const Analysis = lazy(() => import('./components/pages/Analysis'))
+const RecycleBin = lazy(() => import('./components/pages/RecycleBin'))
+const Notifications = lazy(() => import('./components/pages/Notifications'))
+const IdleWarningModal = lazy(() => import('./components/common/IdleWarningModal'))
+import { useIdleTimeout } from './hooks/useIdleTimeout'
 const Employee = lazy(() => import('./components/pages/Employee'))
 const NewEmployee = lazy(() => import('./components/pages/NewEmployee'))
 
@@ -27,6 +32,7 @@ export default function App() {
 
 function AppRoutes() {
   const location = useLocation()
+  const navigate = useNavigate()
   const isPublicScan = location.pathname.startsWith('/scan/')
   const [session, setSession] = useState<Session | null>(null)
   const [authLoading, setAuthLoading] = useState(true)
@@ -75,6 +81,22 @@ function AppRoutes() {
     }
   }, [])
 
+  const handleAutoLogout = async () => {
+    try {
+      await signOut()
+    } catch (err) {
+      logDevError('app.autologout', err)
+    } finally {
+      navigate('/login')
+    }
+  }
+
+  const { isWarning, stayLoggedIn, logoutNow } = useIdleTimeout({
+    isAuthenticated: Boolean(session),
+    onWarn: () => {},
+    onIdle: () => void handleAutoLogout(),
+  })
+
   const showSidebar = !isPublicScan
   const nextFromQuery = new URLSearchParams(location.search).get('next')
   const loginReturnPath =
@@ -82,6 +104,14 @@ function AppRoutes() {
 
   return (
     <div className="min-h-screen bg-app text-primary flex">
+      {isWarning && Boolean(session) && (
+        <Suspense fallback={null}>
+          <IdleWarningModal 
+            onStayLoggedIn={stayLoggedIn} 
+            onLogoutNow={logoutNow} 
+          />
+        </Suspense>
+      )}
       {showSidebar && <Sidebar isAuthenticated={Boolean(session)} />}
       <div className={`flex-1 overflow-y-auto ${showSidebar ? 'pt-16 sm:pt-0' : ''}`}>
         <Suspense fallback={<AuthLoadingScreen />}>
@@ -108,6 +138,9 @@ function AppRoutes() {
               <Route path="/404" element={<PageNotFound />} />
               <Route path="/employee" element={<Employee />} />
               <Route path="/employee/new" element={<NewEmployee />} />
+              <Route path="/analysis" element={<Analysis />} />
+              <Route path="/notifications" element={<Notifications />} />
+              <Route path="/recycle-bin" element={<RecycleBin />} />
             </Route>
 
             <Route

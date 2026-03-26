@@ -10,3 +10,5 @@ Server/.env
 .cursor/mcp.json
 Context.md
 note.txt
+./Notes/read_docx.py    
+./Notes/extract_clean.py    

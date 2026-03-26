@@ -115,6 +115,20 @@ export type PublicDashboardSummary = {
   categoryBreakdown: Array<{ category: string; count: number }>
 }
 
+export type WarrantyNotification = {
+  notification_id: string
+  asset_id: string
+  asset_tag: string | null
+  model: string | null
+  category_name: string | null
+  current_employee_id: string | null
+  current_employee_name: string | null
+  warranty_expiry: string
+  days_remaining: number
+  severity: 'expired' | 'due_soon'
+  message: string
+}
+
 export type AssetFilters = {
   search?: string
   status?: string
@@ -939,6 +953,29 @@ export async function getCurrentEmployeeAssets(user?: User | null) {
 
   ensureNoSupabaseError(error, 'Unable to load employee assets')
   return { sessionEmployee, assets: (data ?? []) as AssetInventoryRecord[] }
+}
+
+export async function listWarrantyNotifications(windowDays = 30): Promise<WarrantyNotification[]> {
+  const days = Number.isFinite(windowDays) ? Math.max(1, Math.floor(windowDays)) : 30
+  const { data, error } = await supabase.rpc('fn_list_warranty_notifications', {
+    p_days: days,
+  })
+  ensureNoSupabaseError(error, 'Unable to load warranty notifications')
+
+  const rows = Array.isArray(data) ? data : []
+  return rows.map((row: any) => ({
+    notification_id: String(row.notification_id),
+    asset_id: String(row.asset_id),
+    asset_tag: row.asset_tag ?? null,
+    model: row.model ?? null,
+    category_name: row.category_name ?? null,
+    current_employee_id: row.current_employee_id ?? null,
+    current_employee_name: row.current_employee_name ?? null,
+    warranty_expiry: String(row.warranty_expiry),
+    days_remaining: Number(row.days_remaining ?? 0),
+    severity: row.severity === 'expired' ? 'expired' : 'due_soon',
+    message: String(row.message ?? ''),
+  }))
 }
 
 export async function getLogForAsset(assetTag: string) {

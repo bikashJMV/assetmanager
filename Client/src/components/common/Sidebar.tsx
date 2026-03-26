@@ -1,7 +1,16 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import AnimatedNavIcon from './AnimatedNavIcon'
-import { sidebarSections, type SidebarNavItem } from './sidebarNav'
+import {
+  sidebarSections,
+  type SidebarNavAction,
+  type SidebarNavActionKind,
+  type SidebarNavEntry,
+  type SidebarNavGroup,
+  type SidebarNavLink,
+  type SidebarNavSection,
+  type SidebarNavVisibility,
+} from './sidebarNav'
 import {
   getSessionEmployee,
   hasActiveAdminAccess,
@@ -10,8 +19,28 @@ import {
   type SessionEmployee,
 } from '../../api'
 import { getUserFacingMessage, logDevError } from '../../utils/errors'
-import { applyDocumentPreferences, getInitialDensity, getInitialFont, getInitialTheme } from '../../utils/theme'
+import {
+  applyDocumentPreferences,
+  getInitialDensity,
+  getInitialFont,
+  getInitialTheme,
+} from '../../utils/theme'
 
+type DensityMode = 'compact' | 'normal' | 'large' | 'spacious'
+type FontMode = 'claude' | 'clean' | 'mono' | 'serif'
+type ThemeMode = 'light' | 'dark'
+
+function isNavActionActive(action: SidebarNavActionKind, density: DensityMode, font: FontMode) {
+  if (action === 'density-compact') return density === 'compact'
+  if (action === 'density-normal') return density === 'normal'
+  if (action === 'density-large') return density === 'large'
+  if (action === 'density-spacious') return density === 'spacious'
+  if (action === 'font-claude') return font === 'claude'
+  if (action === 'font-clean') return font === 'clean'
+  if (action === 'font-mono') return font === 'mono'
+  if (action === 'font-serif') return font === 'serif'
+  return false
+}
 function sidebarFirstName(name: string): string {
   const trimmed = name.trim()
   if (!trimmed) return ''
@@ -25,7 +54,48 @@ function sidebarRoleLabel(role: string): string {
   return 'Employee'
 }
 
-const isItemActive = (item: SidebarNavItem, pathname: string, search: URLSearchParams) => {
+function sidebarInitial(name: string): string {
+  const firstName = sidebarFirstName(name)
+  return (firstName[0] ?? name[0] ?? '?').toUpperCase()
+}
+
+function hasVisibilityAccess(
+  visibility: SidebarNavVisibility | undefined,
+  isAuthenticated: boolean,
+  canManage: boolean,
+) {
+  if (visibility === 'authenticated') return isAuthenticated
+  if (visibility === 'manage') return canManage
+  return true
+}
+
+function filterSidebarSections(
+  isAuthenticated: boolean,
+  canManage: boolean,
+): SidebarNavSection[] {
+  return sidebarSections
+    .map((section) => ({
+      ...section,
+      items: section.items
+        .map((item): SidebarNavEntry | null => {
+          if (item.type === 'group') {
+            if (!hasVisibilityAccess(item.visibility, isAuthenticated, canManage)) return null
+            const children = item.children.filter((child) =>
+              hasVisibilityAccess(child.visibility, isAuthenticated, canManage),
+            )
+            if (!children.length) return null
+            return { ...item, children }
+          }
+
+          return hasVisibilityAccess(item.visibility, isAuthenticated, canManage) ? item : null
+        })
+        .filter((item): item is SidebarNavEntry => item !== null),
+    }))
+    .filter((section) => section.items.length > 0)
+}
+
+const isLinkActive = (item: SidebarNavLink, pathname: string, search: URLSearchParams) => {
+  if (item.id === 'home' && (pathname === '/' || pathname === '/dashboard/home')) return true
   if (item.id === 'all-assets' && pathname === '/assets/new') return false
   if (item.id === 'all-assets' && pathname.startsWith('/assets/scan')) return false
   if (item.id === 'all-employees' && pathname === '/employee/new') return false
@@ -41,23 +111,66 @@ const isItemActive = (item: SidebarNavItem, pathname: string, search: URLSearchP
   for (const [key, value] of url.searchParams.entries()) {
     if (search.get(key) !== value) return false
   }
+
   return true
 }
 
-function SidebarLink({
+function isEntryActive(entry: SidebarNavEntry, pathname: string, search: URLSearchParams) {
+  if (entry.type === 'group') {
+    return entry.children.some((child) => child.type === 'link' && isLinkActive(child, pathname, search))
+  }
+  if (entry.type === 'link') return isLinkActive(entry, pathname, search)
+  return false
+}
+
+function getDefaultOpenGroups(sections: SidebarNavSection[]) {
+  return sections.reduce<Record<string, boolean>>((acc, section) => {
+    for (const item of section.items) {
+      if (item.type === 'group') {
+        acc[item.id] = item.defaultOpen ?? false
+      }
+    }
+    return acc
+  }, {})
+}
+
+function getActiveGroupIds(
+  sections: SidebarNavSection[],
+  pathname: string,
+  search: URLSearchParams,
+) {
+  return sections.flatMap((section) =>
+    section.items
+      .filter((item): item is SidebarNavGroup => item.type === 'group')
+      .filter((item) =>
+        item.children.some((child) => child.type === 'link' && isLinkActive(child, pathname, search)),
+      )
+      .map((item) => item.id),
+  )
+}
+
+function areOpenGroupsEqual(left: Record<string, boolean>, right: Record<string, boolean>) {
+  const keys = new Set([...Object.keys(left), ...Object.keys(right)])
+  for (const key of keys) {
+    if (left[key] !== right[key]) return false
+  }
+  return true
+}
+
+function MainNavLink({
   item,
   pathname,
   search,
   compact = false,
   onNavigate,
 }: {
-  item: SidebarNavItem
+  item: SidebarNavLink
   pathname: string
   search: URLSearchParams
   compact?: boolean
   onNavigate?: () => void
 }) {
-  const active = isItemActive(item, pathname, search)
+  const active = isLinkActive(item, pathname, search)
   const accentTone = item.tone === 'accent'
 
   if (compact) {
@@ -67,21 +180,15 @@ function SidebarLink({
         onClick={onNavigate}
         title={item.label}
         aria-label={item.label}
-        className={`group nav-item nav-item-compact h-9 w-9 rounded-lg flex items-center justify-center transition ${active
-          ? 'nav-item-active '
-          : ''}${active
-          ? 'bg-accent text-on-accent shadow-accent'
+        aria-current={active ? 'page' : undefined}
+        className={`group nav-item flex h-10 w-10 items-center justify-center rounded-xl border transition ${active
+          ? 'nav-item-active border-accent-soft bg-accent text-on-accent shadow-accent'
           : accentTone
-            ? 'bg-[color:var(--accent-soft)] text-accent hover:bg-accent hover:text-on-accent'
-            : 'text-muted hover:bg-surface-3 hover:text-primary'
+            ? 'border-accent-soft bg-[color:var(--accent-soft)] text-accent hover:bg-accent hover:text-on-accent'
+            : 'border-base bg-surface text-muted hover:bg-surface-3 hover:text-primary'
           }`}
       >
-        <span
-          className={`h-5 w-5 rounded-md border flex items-center justify-center ${active ? 'border-[color:var(--on-accent)]' : 'border-base'
-            }`}
-        >
-          <AnimatedNavIcon name={item.icon} />
-        </span>
+        <AnimatedNavIcon name={item.icon} />
       </Link>
     )
   }
@@ -90,220 +197,437 @@ function SidebarLink({
     <Link
       to={item.to}
       onClick={onNavigate}
-      className={`group nav-item relative flex items-center gap-3 rounded-xl px-2.5 py-1.5 transition ${active
-        ? 'nav-item-active '
-        : ''}${active
-        ? 'bg-surface-3 text-primary'
-        : accentTone
-          ? 'text-accent hover:bg-[color:var(--accent-soft)]'
-          : 'text-muted hover:bg-surface-3 hover:text-primary'
+      aria-current={active ? 'page' : undefined}
+      className={`group nav-item relative flex items-center gap-3 rounded-xl px-3 py-2.5 transition ${active ? 'nav-item-active bg-surface-3 text-primary' : ''
+        }${active
+          ? ''
+          : accentTone
+            ? ' text-accent hover:bg-[color:var(--accent-soft)]'
+            : ' text-muted hover:bg-surface-3 hover:text-primary'
         }`}
     >
-      <span className={`absolute left-0 top-1/2 -translate-y-1/2 h-6 w-0.5 rounded-r-full ${active ? 'bg-accent' : 'bg-transparent'}`} />
       <span
-        className={`h-7 w-7 rounded-lg border flex items-center justify-center shrink-0 ${active ? 'border-accent-soft text-accent' : 'border-base'
+        className={`absolute left-0 top-1/2 h-7 w-0.5 -translate-y-1/2 rounded-r-full ${active ? 'bg-accent' : 'bg-transparent'
+          }`}
+      />
+      <span
+        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border ${active
+          ? 'border-accent-soft bg-[color:var(--accent-soft)] text-accent'
+          : 'border-base bg-surface-2'
           }`}
       >
         <AnimatedNavIcon name={item.icon} />
       </span>
-      <span className={`text-sm ${active ? 'font-semibold' : 'font-medium'}`}>{item.label}</span>
+      <span className={`flex-1 text-sm ${active ? 'font-semibold' : 'font-medium'}`}>
+        {item.label}
+      </span>
     </Link>
   )
 }
 
-function SidebarSections({
-  pathname,
-  query,
-  canManage,
-  compact,
-  onNavigate,
+function MainNavAction({
+  item,
+  compact = false,
+  theme,
+  density,
+  font,
+  onAction,
 }: {
-  pathname: string
-  query: URLSearchParams
-  canManage: boolean
+  item: SidebarNavAction
   compact?: boolean
-  onNavigate?: () => void
+  theme: ThemeMode
+  density: DensityMode
+  font: FontMode
+  onAction: (action: SidebarNavActionKind) => void
 }) {
-  const filteredSections = sidebarSections
-    .map((section) => ({
-      ...section,
-      items: section.items.filter((item) => canManage || (item.id !== 'new-asset' && item.id !== 'new-employee')),
-    }))
-    .filter((section) => section.items.length > 0)
+  const isThemeAction = item.action === 'toggle-theme'
+  const actionLabel =
+    isThemeAction ? (theme === 'dark' ? 'Switch to Light' : 'Switch to Dark') : item.label
+  const actionIcon = isThemeAction ? (theme === 'dark' ? 'sun' : 'moon') : item.icon
+  const active = isNavActionActive(item.action, density, font)
 
   if (compact) {
     return (
-      <div className="space-y-1 flex flex-col items-center">
-        {filteredSections.flatMap((section) => section.items).map((item) => (
-          <SidebarLink
-            key={item.id}
-            item={item}
-            pathname={pathname}
-            search={query}
-            compact
-            onNavigate={onNavigate}
-          />
-        ))}
-      </div>
+      <button
+        type="button"
+        onClick={() => onAction(item.action)}
+        title={actionLabel}
+        aria-label={actionLabel}
+        className={`group nav-item flex h-10 w-10 items-center justify-center rounded-xl border transition ${active
+          ? 'nav-item-active border-accent-soft bg-accent text-on-accent shadow-accent'
+          : 'border-base bg-surface text-muted hover:bg-surface-3 hover:text-primary'
+          }`}
+      >
+        <AnimatedNavIcon name={actionIcon} />
+      </button>
     )
   }
 
   return (
-    <div className="space-y-2">
-      {filteredSections.map((section) => (
-        <section key={section.id}>
-          <p className="px-2 pb-0.5 text-[11px] uppercase tracking-[0.18em] text-subtle">{section.title}</p>
-          <div className="space-y-0.5">
-            {section.items.map((item) => (
-              <SidebarLink
-                key={item.id}
-                item={item}
+    <button
+      type="button"
+      onClick={() => onAction(item.action)}
+      className={`group nav-item relative flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition ${active ? 'nav-item-active bg-surface-3 text-primary' : 'text-muted hover:bg-surface-3 hover:text-primary'
+        }`}
+    >
+      <span
+        className={`absolute left-0 top-1/2 h-7 w-0.5 -translate-y-1/2 rounded-r-full ${active ? 'bg-accent' : 'bg-transparent'
+          }`}
+      />
+      <span
+        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border ${active
+          ? 'border-accent-soft bg-[color:var(--accent-soft)] text-accent'
+          : 'border-base bg-surface-2'
+          }`}
+      >
+        <AnimatedNavIcon name={actionIcon} />
+      </span>
+      <span className={`flex-1 text-sm ${active ? 'font-semibold' : 'font-medium'}`}>{actionLabel}</span>
+    </button>
+  )
+}
+
+function SubNavLink({
+  item,
+  pathname,
+  search,
+  onNavigate,
+}: {
+  item: SidebarNavLink
+  pathname: string
+  search: URLSearchParams
+  onNavigate?: () => void
+}) {
+  const active = isLinkActive(item, pathname, search)
+  const accentTone = item.tone === 'accent'
+
+  return (
+    <Link
+      to={item.to}
+      onClick={onNavigate}
+      aria-current={active ? 'page' : undefined}
+      className={`group nav-item flex items-center gap-3 rounded-lg py-1.5 pl-12 pr-2.5 text-sm transition ${active ? 'nav-item-active bg-surface-3 text-primary' : ''
+        }${active
+          ? ''
+          : accentTone
+            ? ' text-accent hover:bg-[color:var(--accent-soft)]'
+            : ' text-muted hover:bg-surface-3 hover:text-primary'
+        }`}
+    >
+      <span
+        className={`h-1.5 w-1.5 shrink-0 rounded-sm ${active
+          ? 'bg-accent'
+          : accentTone
+            ? 'bg-[color:var(--accent-soft)]'
+            : 'bg-[color:var(--border)]'
+          }`}
+      />
+      <span className={`truncate ${active ? 'font-semibold' : 'font-medium'}`}>
+        {item.label}
+      </span>
+    </Link>
+  )
+}
+
+function SubNavAction({
+  item,
+  theme,
+  density,
+  font,
+  onAction,
+}: {
+  item: SidebarNavAction
+  theme: ThemeMode
+  density: DensityMode
+  font: FontMode
+  onAction: (action: SidebarNavActionKind) => void
+}) {
+  const isThemeAction = item.action === 'toggle-theme'
+  const actionLabel =
+    isThemeAction ? (theme === 'dark' ? 'Switch to Light' : 'Switch to Dark') : item.label
+  const actionIcon = isThemeAction ? (theme === 'dark' ? 'sun' : 'moon') : item.icon
+  const active = isNavActionActive(item.action, density, font)
+
+  return (
+    <button
+      type="button"
+      onClick={() => onAction(item.action)}
+      className={`group nav-item flex w-full items-center gap-3 rounded-lg py-1.5 pl-12 pr-2.5 text-sm transition ${active ? 'nav-item-active bg-surface-3 text-primary' : 'text-muted hover:bg-surface-3 hover:text-primary'
+        }`}
+    >
+      <span className={`flex h-4 w-4 shrink-0 items-center justify-center ${active ? 'text-accent' : 'text-subtle'}`}>
+        <AnimatedNavIcon name={actionIcon} />
+      </span>
+      <span className={`truncate ${active ? 'font-semibold' : 'font-medium'}`}>{actionLabel}</span>
+    </button>
+  )
+}
+
+function GroupNavItem({
+  item,
+  pathname,
+  search,
+  compact = false,
+  open,
+  theme,
+  density,
+  font,
+  onToggle,
+  onExpandFromCompact,
+  onAction,
+  onNavigate,
+}: {
+  item: SidebarNavGroup
+  pathname: string
+  search: URLSearchParams
+  compact?: boolean
+  open: boolean
+  theme: ThemeMode
+  density: DensityMode
+  font: FontMode
+  onToggle: (id: string) => void
+  onExpandFromCompact: (id: string) => void
+  onAction: (action: SidebarNavActionKind) => void
+  onNavigate?: () => void
+}) {
+  const active = isEntryActive(item, pathname, search)
+  const emphasizeGroup = compact && active
+
+  if (compact) {
+    return (
+      <button
+        type="button"
+        onClick={() => onExpandFromCompact(item.id)}
+        title={item.label}
+        aria-label={`Expand ${item.label}`}
+        aria-expanded={open}
+        className={`group nav-item flex h-10 w-10 items-center justify-center rounded-xl border transition ${active || open
+          ? 'nav-item-active border-accent-soft bg-surface-3 text-accent'
+          : 'border-base bg-surface text-muted hover:bg-surface-3 hover:text-primary'
+          }`}
+      >
+        <AnimatedNavIcon name={item.icon} />
+      </button>
+    )
+  }
+
+  return (
+    <div className="space-y-1">
+      <button
+        type="button"
+        onClick={() => onToggle(item.id)}
+        aria-expanded={open}
+        className={`group nav-item relative flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition ${emphasizeGroup ? 'nav-item-active bg-surface-2 text-primary' : open ? 'bg-surface-2 text-primary' : 'text-muted hover:bg-surface-3 hover:text-primary'
+          }`}
+      >
+        <span
+          className={`absolute left-0 top-1/2 h-7 w-0.5 -translate-y-1/2 rounded-r-full ${emphasizeGroup ? 'bg-accent' : 'bg-transparent'
+            }`}
+        />
+        <span
+          className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border ${emphasizeGroup
+            ? 'border-accent-soft bg-[color:var(--accent-soft)] text-accent'
+            : 'border-base bg-surface-2'
+            }`}
+        >
+          <AnimatedNavIcon name={item.icon} />
+        </span>
+        <span className="flex-1 text-sm font-semibold">{item.label}</span>
+        <svg
+          viewBox="0 0 20 20"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className={`h-4 w-4 shrink-0 transition-transform ${open ? `rotate-180 ${emphasizeGroup ? 'text-accent' : 'text-subtle'}` : 'text-subtle'}`}
+          aria-hidden="true"
+        >
+          <path d="m5 8 5 5 5-5" />
+        </svg>
+      </button>
+
+      {open ? (
+        <div className="space-y-0.5">
+          {item.children.map((child) => (
+            child.type === 'link' ? (
+              <SubNavLink
+                key={child.id}
+                item={child}
                 pathname={pathname}
-                search={query}
+                search={search}
                 onNavigate={onNavigate}
               />
-            ))}
+            ) : (
+              <SubNavAction key={child.id} item={child} theme={theme} density={density} font={font} onAction={onAction} />
+            )
+          ))}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function SidebarNavigation({
+  sections,
+  pathname,
+  search,
+  compact = false,
+  openGroups,
+  theme,
+  density,
+  font,
+  onToggleGroup,
+  onExpandGroup,
+  onAction,
+  onNavigate,
+}: {
+  sections: SidebarNavSection[]
+  pathname: string
+  search: URLSearchParams
+  compact?: boolean
+  openGroups: Record<string, boolean>
+  theme: ThemeMode
+  density: DensityMode
+  font: FontMode
+  onToggleGroup: (id: string) => void
+  onExpandGroup: (id: string) => void
+  onAction: (action: SidebarNavActionKind) => void
+  onNavigate?: () => void
+}) {
+  return (
+    <div className={`${compact ? 'space-y-4' : 'space-y-5'}`}>
+      {sections.map((section, index) => (
+        <section key={section.id} className={`${compact ? 'flex flex-col items-center gap-2' : 'space-y-1.5'}`}>
+          {!compact && section.title ? (
+            <p className="px-3 text-[11px] uppercase tracking-[0.18em] text-subtle">
+              {section.title}
+            </p>
+          ) : null}
+
+          <div className={`${compact ? 'flex flex-col items-center gap-2' : 'space-y-1'}`}>
+            {section.items.map((item) =>
+              item.type === 'group' ? (
+                <GroupNavItem
+                  key={item.id}
+                  item={item}
+                  pathname={pathname}
+                  search={search}
+                  compact={compact}
+                  open={Boolean(openGroups[item.id])}
+                  theme={theme}
+                  density={density}
+                  font={font}
+                  onToggle={onToggleGroup}
+                  onExpandFromCompact={onExpandGroup}
+                  onAction={onAction}
+                  onNavigate={onNavigate}
+                />
+              ) : item.type === 'link' ? (
+                <MainNavLink
+                  key={item.id}
+                  item={item}
+                  pathname={pathname}
+                  search={search}
+                  compact={compact}
+                  onNavigate={onNavigate}
+                />
+              ) : (
+                <MainNavAction
+                  key={item.id}
+                  item={item}
+                  compact={compact}
+                  theme={theme}
+                  density={density}
+                  font={font}
+                  onAction={onAction}
+                />
+              ),
+            )}
           </div>
+
+          {compact && index < sections.length - 1 ? (
+            <div className="h-px w-6 bg-[color:var(--border)]" aria-hidden="true" />
+          ) : null}
         </section>
       ))}
     </div>
   )
 }
 
-function SettingsPanel({
+function SidebarFooter({
   isAuthenticated,
   signInLoading,
-  theme,
-  density,
-  font,
-  onThemeToggle,
-  onDensityChange,
-  onFontChange,
-  onGuide,
-  onLogout,
-  onSignIn,
+  sessionProfile,
+  compact = false,
+  onAuthAction,
   notice,
-  className = '',
 }: {
   isAuthenticated: boolean
   signInLoading: boolean
-  theme: 'light' | 'dark'
-  density: 'compact' | 'normal' | 'large' | 'spacious'
-  font: 'claude' | 'clean' | 'mono' | 'serif'
-  onThemeToggle: () => void
-  onDensityChange: (density: 'compact' | 'normal' | 'large' | 'spacious') => void
-  onFontChange: (font: 'claude' | 'clean' | 'mono' | 'serif') => void
-  onGuide: () => void
-  onLogout: () => void
-  onSignIn: () => void
+  sessionProfile: SessionEmployee | null
+  compact?: boolean
+  onAuthAction: () => void
   notice: string
-  className?: string
 }) {
+  const authLabel = isAuthenticated ? 'Sign out' : signInLoading ? 'Redirecting...' : 'Sign in'
+  const authIcon = isAuthenticated ? 'logout' : 'log-in'
+
   return (
-    <div className={`rounded-xl border border-base bg-app p-2.5 space-y-2.5 max-h-[72vh] overflow-y-auto ${className}`}>
-      <button
-        onClick={onGuide}
-        className="group nav-item w-full rounded-lg border border-base bg-surface px-2.5 py-2 text-left text-sm font-medium text-primary hover:bg-surface-3 transition inline-flex items-center gap-2"
-        type="button"
-      >
-        <span className="h-5 w-5 rounded-md border border-base flex items-center justify-center shrink-0">
-          <AnimatedNavIcon name="guide" />
-        </span>
-        <span>Guide</span>
-      </button>
-      {isAuthenticated ? (
-        <button
-          onClick={onLogout}
-          className="group nav-item w-full rounded-lg border border-base bg-surface px-2.5 py-2 text-left text-sm font-medium text-primary hover:bg-surface-3 transition inline-flex items-center gap-2"
-          type="button"
-        >
-          <span className="h-5 w-5 rounded-md border border-base flex items-center justify-center shrink-0">
-            <AnimatedNavIcon name="logout" />
-          </span>
-          <span>Logout</span>
-        </button>
-      ) : (
-        <button
-          onClick={onSignIn}
-          disabled={signInLoading}
-          className="group nav-item w-full rounded-lg border border-base bg-surface px-2.5 py-2 text-left text-sm font-medium text-primary hover:bg-surface-3 transition inline-flex items-center gap-2"
-          type="button"
-        >
-          <span className="h-5 w-5 rounded-md border border-base flex items-center justify-center shrink-0">
-            <AnimatedNavIcon name="users" />
-          </span>
-          <span>{signInLoading ? 'Redirecting...' : 'Sign in'}</span>
-        </button>
-      )}
-
-      <div>
-        <p className="text-[10px] uppercase tracking-[0.16em] text-subtle mb-1.5">Theme</p>
-        <button
-          onClick={onThemeToggle}
-          className="group nav-item w-full rounded-lg border border-base bg-surface px-2.5 py-2 text-sm font-semibold text-primary hover:bg-surface-3 transition inline-flex items-center gap-2"
-          type="button"
-        >
-          <span className="h-5 w-5 rounded-md border border-base flex items-center justify-center shrink-0">
-            <AnimatedNavIcon name={theme === 'dark' ? 'sun' : 'moon'} />
-          </span>
-          <span>{theme === 'dark' ? 'Switch to Light' : 'Switch to Dark'}</span>
-        </button>
-      </div>
-
-      <div>
-        <p className="w-full truncate text-[10px] uppercase tracking-[0.16em] text-subtle mb-1">
-          Text layout
-        </p>
-
-        <div className="grid grid-cols-4 gap-1">
-          {(
-            [
-              { value: 'compact', label: 'Tight' },
-              { value: 'normal', label: 'Usual' },
-              { value: 'large', label: 'Big' },
-              { value: 'spacious', label: 'Airy' },
-            ] as const
-          ).map((option) => (
-            <button
-              key={option.value}
-              onClick={() => onDensityChange(option.value)}
-              className={`rounded-lg border px-2 py-1 text-[8px] font-semibold text-ellipsis whitespace-nowrap uppercase tracking-[0.08em] transition ${density === option.value
-                ? 'border-accent-soft bg-accent text-on-accent'
-                : 'border-base bg-surface text-muted hover:text-primary hover:bg-surface-3'
-                }`}
-              type="button"
+    <div
+      className={`${compact ? 'px-2 py-3' : 'px-3 py-3.5'} border-t border-base bg-[linear-gradient(0deg,var(--accent-soft)_-30%,transparent_70%)]`}
+    >
+      {sessionProfile ? (
+        compact ? (
+          <div className="mb-3 flex justify-center">
+            <div
+              title={`${sidebarFirstName(sessionProfile.name)}\n${sidebarRoleLabel(sessionProfile.role)}`}
+              className="flex h-10 w-10 items-center justify-center rounded-2xl border border-accent-soft bg-[color:var(--accent-soft)] text-sm font-black text-accent"
             >
-              {option.label}
-            </button>
-          ))}
-        </div>
-      </div>
+              {sidebarInitial(sessionProfile.name)}
+            </div>
+          </div>
+        ) : (
+          <div className="mb-3 rounded-2xl border border-base bg-surface-2 p-3 min-w-0">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-accent-soft bg-[color:var(--accent-soft)] text-sm font-black text-accent">
+                {sidebarInitial(sessionProfile.name)}
+              </div>
+              <div className="min-w-0 flex-1 flex items-center justify-between gap-2">
+                <p className="truncate text-sm font-semibold text-primary">
+                  {(sidebarFirstName(sessionProfile.name) || sessionProfile.name) + ' | ' + sidebarRoleLabel(sessionProfile.role)}
+                </p>
+                <span
+                  className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border border-base bg-surface text-subtle"
+                  title={isAuthenticated ? 'Signed in' : 'Signed out'}
+                  aria-label={isAuthenticated ? 'Signed in' : 'Signed out'}
+                >
+                  <AnimatedNavIcon name={isAuthenticated ? 'logout' : 'log-in'} />
+                </span>
+              </div>
+            </div>
+          </div>
+        )
+      ) : null}
 
-      <div>
-        <p className="text-[10px] uppercase tracking-[0.16em] text-subtle mb-1.5">Text font</p>
-        <div className="grid grid-cols-4 gap-1">
-          {([
-            { key: 'claude', label: 'Claude' },
-            { key: 'clean', label: 'Clean' },
-            { key: 'mono', label: 'Mono' },
-            { key: 'serif', label: 'Serif' },
-          ] as const).map((option) => (
-            <button
-              key={option.key}
-              onClick={() => onFontChange(option.key)}
-              className={`rounded-lg border px-2 py-1 text-[8px] font-semibold uppercase tracking-[0.08em] transition ${font === option.key
-                ? 'border-accent-soft bg-accent text-on-accent'
-                : 'border-base bg-surface text-muted hover:text-primary hover:bg-surface-3'
-                }`}
-              type="button"
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
-      </div>
+      <div className={compact ? 'space-y-2' : 'space-y-2.5'}>
+        <button
+          onClick={onAuthAction}
+          disabled={!isAuthenticated && signInLoading}
+          className={`group nav-item rounded-xl border border-base bg-surface-2 font-semibold transition hover:bg-surface-3 disabled:opacity-60 ${compact ? 'mx-auto flex h-10 w-10 items-center justify-center' : 'w-full px-3 py-2.5 text-sm'
+            } flex items-center justify-center gap-2`}
+          type="button"
+          aria-label={authLabel}
+          title={compact ? authLabel : undefined}
+        >
+          <span className="flex h-5 w-5 items-center justify-center rounded-md border border-base shrink-0">
+            <AnimatedNavIcon name={authIcon} />
+          </span>
+          {!compact ? <span>{authLabel}</span> : null}
+        </button>
 
-      {notice && <p className="text-[11px] text-subtle">{notice}</p>}
+        {notice ? <p className="text-[11px] text-subtle">{notice}</p> : null}
+      </div>
     </div>
   )
 }
@@ -313,38 +637,41 @@ export default function Sidebar({ isAuthenticated }: { isAuthenticated: boolean 
   const navigate = useNavigate()
   const [mobileOpen, setMobileOpen] = useState(false)
   const [collapsed, setCollapsed] = useState(false)
-  const [settingsOpen, setSettingsOpen] = useState(false)
   const [settingsNotice, setSettingsNotice] = useState('')
   const [signInLoading, setSignInLoading] = useState(false)
-  const [theme, setTheme] = useState<'light' | 'dark'>(getInitialTheme)
-  const [density, setDensity] = useState<'compact' | 'normal' | 'large' | 'spacious'>(getInitialDensity)
-  const [font, setFont] = useState<'claude' | 'clean' | 'mono' | 'serif'>(getInitialFont)
+  const [theme, setTheme] = useState<ThemeMode>(getInitialTheme)
+  const [density, setDensity] = useState<DensityMode>(getInitialDensity)
+  const [font, setFont] = useState<FontMode>(getInitialFont)
   const [isAdmin, setIsAdmin] = useState(false)
   const [sessionProfile, setSessionProfile] = useState<SessionEmployee | null>(null)
   const query = useMemo(() => new URLSearchParams(search), [search])
-  const settingsHostRef = useRef<HTMLDivElement | null>(null)
+
+  const canManage = isAuthenticated && isAdmin
+  const visibleSections = useMemo(
+    () => filterSidebarSections(isAuthenticated, canManage),
+    [isAuthenticated, canManage],
+  )
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() =>
+    getDefaultOpenGroups(sidebarSections),
+  )
 
   useEffect(() => {
     setMobileOpen(false)
-    setSettingsOpen(false)
     setSettingsNotice('')
   }, [pathname, search])
 
   useEffect(() => {
-    if (!settingsOpen) return
-    const onPointerDown = (event: MouseEvent) => {
-      const host = settingsHostRef.current
-      const target = event.target as Node | null
-      if (!host || !target) return
-      if (host.contains(target)) return
-      setSettingsOpen(false)
-    }
+    const defaults = getDefaultOpenGroups(visibleSections)
+    const activeGroupIds = getActiveGroupIds(visibleSections, pathname, query)
 
-    document.addEventListener('mousedown', onPointerDown)
-    return () => {
-      document.removeEventListener('mousedown', onPointerDown)
-    }
-  }, [settingsOpen])
+    setOpenGroups((current) => {
+      const next = { ...defaults, ...current }
+      for (const groupId of activeGroupIds) {
+        next[groupId] = true
+      }
+      return areOpenGroupsEqual(current, next) ? current : next
+    })
+  }, [visibleSections, pathname, query])
 
   useEffect(() => {
     applyDocumentPreferences(theme, density, font)
@@ -359,7 +686,9 @@ export default function Sidebar({ isAuthenticated }: { isAuthenticated: boolean 
       setSessionProfile(null)
       return
     }
+
     let mounted = true
+
     void (async () => {
       try {
         const [allowed, profile] = await Promise.all([
@@ -388,30 +717,18 @@ export default function Sidebar({ isAuthenticated }: { isAuthenticated: boolean 
       await signOut()
       setSessionProfile(null)
       setIsAdmin(false)
-      const nextTheme = getInitialTheme()
-      const nextDensity = getInitialDensity()
-      const nextFont = getInitialFont()
-      setTheme(nextTheme)
-      setDensity(nextDensity)
-      setFont(nextFont)
       setSettingsNotice('')
-      setSettingsOpen(false)
+      setTheme(getInitialTheme())
+      setDensity(getInitialDensity())
+      setFont(getInitialFont())
       navigate('/')
     } catch (err) {
       logDevError('sidebar.logout', err)
-      setSettingsNotice(getUserFacingMessage(err, 'Logout failed. Please try again.'))
+      setSettingsNotice(getUserFacingMessage(err, 'Sign out failed. Please try again.'))
     }
   }
 
-  const handleGuide = () => {
-    setSettingsOpen(false)
-    setMobileOpen(false)
-    navigate('/guide')
-  }
-
   const handleSignIn = async () => {
-    setSettingsOpen(false)
-    setMobileOpen(false)
     setSettingsNotice('')
     setSignInLoading(true)
 
@@ -425,16 +742,58 @@ export default function Sidebar({ isAuthenticated }: { isAuthenticated: boolean 
     }
   }
 
+  const handleAuthAction = () => {
+    if (isAuthenticated) {
+      void handleLogout()
+      return
+    }
+    void handleSignIn()
+  }
+
+  const closeMobileNav = () => {
+    setMobileOpen(false)
+  }
+
   const toggleCollapsed = () => {
-    setCollapsed((value) => {
-      const next = !value
-      if (next) setSettingsOpen(false)
-      return next
-    })
+    setCollapsed((value) => !value)
   }
 
   const toggleTheme = () => {
     setTheme((value) => (value === 'dark' ? 'light' : 'dark'))
+  }
+
+  const toggleGroup = (id: string) => {
+    setOpenGroups((current) => ({
+      ...current,
+      [id]: !current[id],
+    }))
+  }
+
+  const expandGroupFromCompact = (id: string) => {
+    setCollapsed(false)
+    setOpenGroups((current) => ({
+      ...current,
+      [id]: true,
+    }))
+  }
+
+  const handleNavAction = (action: SidebarNavActionKind) => {
+    if (action === 'toggle-theme') {
+      toggleTheme()
+      return
+    }
+    if (action === 'density-compact') return setDensity('compact')
+    if (action === 'density-normal') return setDensity('normal')
+    if (action === 'density-large') return setDensity('large')
+    if (action === 'density-spacious') return setDensity('spacious')
+    if (action === 'font-claude') return setFont('claude')
+    if (action === 'font-clean') return setFont('clean')
+    if (action === 'font-mono') return setFont('mono')
+    if (action === 'font-serif') return setFont('serif')
+  }
+
+  const handleMobileNavigate = () => {
+    closeMobileNav()
   }
 
   return (
@@ -447,34 +806,42 @@ export default function Sidebar({ isAuthenticated }: { isAuthenticated: boolean 
         Menu
       </button>
 
-      <aside className={`hidden sm:block shrink-0 transition-[width] duration-300 ease-in-out motion-reduce:transition-none ${collapsed ? 'w-[50px]' : 'w-[270px]'}`}>
-        <div className="sticky top-0 h-[calc(100vh-1rem)] rounded-r-2xl border-r border-base bg-surface shadow-[0_12px_40px_rgba(0,0,0,0.28)] overflow-visible flex flex-col transition-all duration-300 ease-in-out motion-reduce:transition-none">
-          <div className={`${collapsed ? 'px-1 py-1.5' : 'px-3.5 py-2.5'} border-b border-base bg-[linear-gradient(140deg,var(--accent-soft)_0%,transparent_65%)] transition-[padding] duration-300 ease-in-out motion-reduce:transition-none`}>
+      <aside
+        className={`hidden sm:block shrink-0 transition-[width] duration-300 ease-in-out motion-reduce:transition-none ${collapsed ? 'w-[76px]' : 'w-[292px]'
+          }`}
+      >
+        <div className="sticky top-0 flex h-screen flex-col overflow-x-visible overflow-y-hidden border-r border-base bg-surface shadow-[0_18px_40px_rgba(0,0,0,0.22)]">
+          <div
+            className={`${collapsed ? 'px-2 py-3' : 'px-4 py-4'} border-b border-base bg-[linear-gradient(160deg,var(--accent-soft)_0%,transparent_72%)] transition-[padding] duration-300 ease-in-out motion-reduce:transition-none`}
+          >
             {collapsed ? (
-              <div className="flex flex-col items-center gap-1 transition-all duration-300 ease-in-out motion-reduce:transition-none">
+              <div className="flex flex-col items-center gap-2">
+
                 <button
                   onClick={toggleCollapsed}
-                  className="group nav-item h-7 w-7 rounded-lg border border-base bg-surface-2 text-muted hover:text-primary hover:bg-surface-3 transition flex items-center justify-center"
+                  className="group nav-item flex h-9 w-9 items-center justify-center rounded-xl border border-base bg-surface-2 text-muted hover:text-primary hover:bg-surface-3 transition"
                   aria-label="Expand sidebar"
                   title="Expand sidebar"
+                  type="button"
                 >
                   <AnimatedNavIcon name="list-chevrons-up-down" />
                 </button>
               </div>
             ) : (
-              <div className="flex items-center justify-between transition-all duration-300 ease-in-out motion-reduce:transition-none">
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="min-w-0">
-                    <p className="text-[11px] uppercase tracking-[0.16em] text-subtle">Workspace</p>
-                    <p className="text-lg font-bold tracking-tight text-primary mt-0.5 truncate">Asset Management</p>
-                  </div>
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-[11px] uppercase tracking-[0.18em] text-subtle">Workspace</p>
+                  <p className="mt-1 text-xl font-bold tracking-tight text-primary truncate">
+                    Asset Manager
+                  </p>
                 </div>
 
                 <button
                   onClick={toggleCollapsed}
-                  className="group nav-item h-8 w-8 rounded-lg border border-base bg-surface-2 text-muted hover:text-primary hover:bg-surface-3 transition flex items-center justify-center shrink-0"
+                  className="group nav-item flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-base bg-surface-2 text-muted hover:text-primary hover:bg-surface-3 transition"
                   aria-label="Collapse sidebar"
                   title="Collapse sidebar"
+                  type="button"
                 >
                   <AnimatedNavIcon name="list-chevrons-up-down" />
                 </button>
@@ -482,135 +849,91 @@ export default function Sidebar({ isAuthenticated }: { isAuthenticated: boolean 
             )}
           </div>
 
-          <div className={`flex-1 overflow-y-auto ${collapsed ? 'px-0.5 py-1' : 'px-2.5 py-2'} transition-[padding] duration-300 ease-in-out motion-reduce:transition-none`}>
-            <SidebarSections pathname={pathname} query={query} canManage={isAdmin && isAuthenticated} compact={collapsed} />
+          <div
+            className={`flex-1 overflow-y-auto ${collapsed ? 'px-2 py-3' : 'px-3 py-4'} transition-[padding] duration-300 ease-in-out motion-reduce:transition-none`}
+          >
+            <SidebarNavigation
+              sections={visibleSections}
+              pathname={pathname}
+              search={query}
+              compact={collapsed}
+              openGroups={openGroups}
+              theme={theme}
+              density={density}
+              font={font}
+              onToggleGroup={toggleGroup}
+              onExpandGroup={expandGroupFromCompact}
+              onAction={handleNavAction}
+              onNavigate={undefined}
+            />
           </div>
 
-          <div className={`${collapsed ? 'px-0.5 py-1' : 'px-2.5 py-2'} border-t border-base transition-[padding] duration-300 ease-in-out motion-reduce:transition-none`}>
-            {isAuthenticated && sessionProfile && !collapsed && (
-              <div className="mb-2 rounded-lg border border-base bg-surface-2 px-2.5 py-2 min-w-0">
-                <p
-                  className="text-sm font-medium text-primary truncate"
-                  title={`${sessionProfile.name} · ${sidebarRoleLabel(sessionProfile.role)}`}
-                >
-                  {sidebarFirstName(sessionProfile.name) || sessionProfile.name}
-                  <span className="text-muted font-normal"> | </span>
-                  {sidebarRoleLabel(sessionProfile.role)}
-                </p>
-              </div>
-            )}
-            <div className="relative" ref={settingsHostRef}>
-              <button
-                onClick={() => {
-                  setSettingsOpen((value) => !value)
-                }}
-                className={`rounded-xl border border-base bg-surface-2 font-semibold transition hover:bg-surface-3 ${collapsed ? 'h-9 w-9 mx-auto' : 'w-full px-3 py-2.5 text-sm'
-                  } flex items-center justify-center gap-2`}
-                aria-label="Open settings"
-                type="button"
-              >
-                <span className="group nav-item h-5 w-5 rounded-md border border-base flex items-center justify-center">
-                  <AnimatedNavIcon name="settings" />
-                </span>
-                {!collapsed && <span>Settings</span>}
-              </button>
-
-              {settingsOpen && (
-                <SettingsPanel
-                  isAuthenticated={isAuthenticated}
-                  signInLoading={signInLoading}
-                  theme={theme}
-                  density={density}
-                  font={font}
-                  onThemeToggle={toggleTheme}
-                  onDensityChange={setDensity}
-                  onFontChange={setFont}
-                  onGuide={handleGuide}
-                  onLogout={handleLogout}
-                  onSignIn={handleSignIn}
-                  notice={settingsNotice}
-                  className={`settings-pop z-20 shadow-[0_16px_32px_rgba(0,0,0,0.35)] ${collapsed
-                    ? 'absolute bottom-0 left-[calc(100%+10px)] w-[264px]'
-                    : 'absolute bottom-full left-0 right-0 mb-2'
-                    }`}
-                />
-              )}
-            </div>
-          </div>
+          <SidebarFooter
+            isAuthenticated={isAuthenticated}
+            signInLoading={signInLoading}
+            sessionProfile={sessionProfile}
+            compact={collapsed}
+            onAuthAction={handleAuthAction}
+            notice={settingsNotice}
+          />
         </div>
       </aside>
 
-      {mobileOpen && (
+      {mobileOpen ? (
         <div className="fixed inset-0 z-40 sm:hidden">
-          <div className="absolute inset-0 bg-black/70" onClick={() => setMobileOpen(false)} />
-          <div className="relative w-[19rem] h-full bg-app border-r border-base shadow-2xl shadow-black/40 p-3 flex flex-col gap-2">
-            <div className="rounded-2xl border border-base bg-surface p-3.5">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-1">
-                  <div>
-                    <p className="text-[11px] uppercase tracking-[0.16em] text-subtle">Workspace</p>
-                    <p className="text-lg font-bold tracking-tight">Asset Management</p>
-                  </div>
+          <button
+            type="button"
+            className="absolute inset-0 bg-black/70"
+            onClick={closeMobileNav}
+            aria-label="Close navigation overlay"
+          />
+          <div className="relative flex h-full w-[20rem] max-w-[88vw] flex-col border-r border-base bg-app shadow-2xl shadow-black/40">
+            <div className="border-b border-base bg-[linear-gradient(160deg,var(--accent-soft)_0%,transparent_72%)] px-4 py-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-[11px] uppercase tracking-[0.18em] text-subtle">Workspace</p>
+                  <p className="mt-1 text-xl font-bold tracking-tight text-primary truncate">
+                    Asset Manager
+                  </p>
                 </div>
+
                 <button
-                  className="h-8 w-8 rounded-lg border border-base bg-surface text-muted hover:text-primary hover:bg-surface-3 text-sm"
-                  onClick={() => setMobileOpen(false)}
+                  className="flex h-9 w-9 items-center justify-center rounded-xl border border-base bg-surface text-muted hover:text-primary hover:bg-surface-3 transition"
+                  onClick={closeMobileNav}
                   aria-label="Close navigation"
+                  type="button"
                 >
                   x
                 </button>
               </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto px-1 py-1">
-              <SidebarSections pathname={pathname} query={query} canManage={isAdmin && isAuthenticated} onNavigate={() => setMobileOpen(false)} />
-            </div>
-
-            {isAuthenticated && sessionProfile && (
-              <div className="rounded-lg border border-base bg-surface-2 px-3 py-2 min-w-0 shrink-0">
-                <p
-                  className="text-sm font-medium text-primary truncate"
-                  title={`${sessionProfile.name} · ${sidebarRoleLabel(sessionProfile.role)}`}
-                >
-                  {sidebarFirstName(sessionProfile.name) || sessionProfile.name}
-                  <span className="text-muted font-normal"> | </span>
-                  {sidebarRoleLabel(sessionProfile.role)}
-                </p>
-              </div>
-            )}
-
-            <button
-              onClick={() => setSettingsOpen((value) => !value)}
-              className="mt-3 w-full rounded-xl border border-base bg-surface-2 font-semibold px-3 py-2.5 text-sm transition hover:bg-surface-3 inline-flex items-center justify-center gap-2"
-              aria-label="Open settings"
-              type="button"
-            >
-              <span className="group nav-item h-5 w-5 rounded-md border border-base flex items-center justify-center">
-                <AnimatedNavIcon name="settings" />
-              </span>
-              <span>Settings</span>
-            </button>
-
-            {settingsOpen && (
-              <SettingsPanel
-                isAuthenticated={isAuthenticated}
-                signInLoading={signInLoading}
+            <div className="flex-1 overflow-y-auto px-3 py-4">
+              <SidebarNavigation
+                sections={visibleSections}
+                pathname={pathname}
+                search={query}
+                openGroups={openGroups}
                 theme={theme}
                 density={density}
                 font={font}
-                onThemeToggle={toggleTheme}
-                onDensityChange={setDensity}
-                onFontChange={setFont}
-                onGuide={handleGuide}
-                onLogout={handleLogout}
-                onSignIn={handleSignIn}
-                notice={settingsNotice}
-                className="settings-pop mt-2 shadow-[0_16px_32px_rgba(0,0,0,0.35)]"
+                onToggleGroup={toggleGroup}
+                onExpandGroup={expandGroupFromCompact}
+                onAction={handleNavAction}
+                onNavigate={handleMobileNavigate}
               />
-            )}
+            </div>
+
+            <SidebarFooter
+              isAuthenticated={isAuthenticated}
+              signInLoading={signInLoading}
+              sessionProfile={sessionProfile}
+              onAuthAction={handleAuthAction}
+              notice={settingsNotice}
+            />
           </div>
         </div>
-      )}
+      ) : null}
     </>
   )
 }

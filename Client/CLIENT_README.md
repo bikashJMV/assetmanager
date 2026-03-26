@@ -1,6 +1,6 @@
 # AMS Client
 
-[React 19 + Vite 7 + TypeScript frontend for the Asset Management](https://web-assetmanager.vercel.app)
+[React 19 + Vite 7 + TypeScript frontend for the Asset Manager](https://web-assetmanager.vercel.app)
 ---
 
 ## Table of Contents

@@ -1,12 +1,19 @@
 import type { ReactNode } from 'react'
 
-type IconName =
+export type IconName =
   | 'home'
   | 'guide'
   | 'boxes'
   | 'scan'
   | 'users'
   | 'plus'
+  | 'chart-column'
+  | 'bell'
+  | 'trash'
+  | 'log-in'
+  | 'type'
+  | 'text-layout'
+  | 'text-font'
   | 'list-chevrons-up-down'
   | 'refresh-cw'
   | 'settings'
@@ -86,6 +93,77 @@ export default function AnimatedNavIcon({ name }: { name: IconName }) {
         <path className="ai-user-body" d="M2.5 20v-1a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v1" />
         <path className="ai-user-plus-v" d="M20 8v6" />
         <path className="ai-user-plus-h" d="M23 11h-6" />
+      </BaseIcon>
+    )
+  }
+
+  if (name === 'chart-column') {
+    return (
+      <BaseIcon>
+        <path className="ai-chart-axis" d="M4 4v16h16" />
+        <path className="ai-chart-bar-1" d="M8 18v-5" />
+        <path className="ai-chart-bar-2" d="M12 18V9" />
+        <path className="ai-chart-bar-3" d="M16 18V6" />
+      </BaseIcon>
+    )
+  }
+
+  if (name === 'bell') {
+    return (
+      <BaseIcon>
+        <path className="ai-bell-body" d="M18 9a6 6 0 1 0-12 0c0 6-2.5 7-2.5 7h17S18 15 18 9" />
+        <path className="ai-bell-clapper" d="M10 19a2 2 0 0 0 4 0" />
+      </BaseIcon>
+    )
+  }
+
+  if (name === 'trash') {
+    return (
+      <BaseIcon>
+        <path className="ai-trash-lid" d="M4 7h16" />
+        <path className="ai-trash-handle" d="M10 4h4" />
+        <path className="ai-trash-body" d="m6 7 1 13h10l1-13" />
+        <path className="ai-trash-line-1" d="M10 11v5" />
+        <path className="ai-trash-line-2" d="M14 11v5" />
+      </BaseIcon>
+    )
+  }
+
+  if (name === 'log-in') {
+    return (
+      <BaseIcon>
+        <path className="ai-login-door" d="M10 21H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+        <path className="ai-login-line" d="M9 12h12" />
+        <path className="ai-login-arrow" d="m16 7 5 5-5 5" />
+      </BaseIcon>
+    )
+  }
+
+  if (name === 'type') {
+    return (
+      <BaseIcon>
+        <path className="ai-type-top" d="M5 6h14" />
+        <path className="ai-type-stem" d="M12 6v12" />
+        <path className="ai-type-base" d="M9 18h6" />
+      </BaseIcon>
+    )
+  }
+
+  if (name === 'text-layout') {
+    return (
+      <BaseIcon>
+        <path className="ai-layout-row-1" d="M5 7h14" />
+        <path className="ai-layout-row-2" d="M5 12h10" />
+        <path className="ai-layout-row-3" d="M5 17h6" />
+      </BaseIcon>
+    )
+  }
+
+  if (name === 'text-font') {
+    return (
+      <BaseIcon>
+        <path className="ai-font-top" d="M6 19 12 5l6 14" />
+        <path className="ai-font-mid" d="M8.5 13h7" />
       </BaseIcon>
     )
   }

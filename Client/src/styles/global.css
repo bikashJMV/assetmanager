@@ -233,6 +233,48 @@
   transform: scaleY(1.12);
 }
 
+.nav-item:hover .ai-chart-bar-1,
+.nav-item:focus-visible .ai-chart-bar-1,
+.nav-item.nav-item-active .ai-chart-bar-1 {
+  transform: translateY(-0.8px);
+}
+
+.nav-item:hover .ai-chart-bar-2,
+.nav-item:focus-visible .ai-chart-bar-2,
+.nav-item.nav-item-active .ai-chart-bar-2 {
+  transform: translateY(-1.3px);
+}
+
+.nav-item:hover .ai-chart-bar-3,
+.nav-item:focus-visible .ai-chart-bar-3,
+.nav-item.nav-item-active .ai-chart-bar-3 {
+  transform: translateY(-1.8px);
+}
+
+.nav-item:hover .ai-bell-body,
+.nav-item:focus-visible .ai-bell-body,
+.nav-item.nav-item-active .ai-bell-body {
+  transform: rotate(-8deg);
+}
+
+.nav-item:hover .ai-bell-clapper,
+.nav-item:focus-visible .ai-bell-clapper,
+.nav-item.nav-item-active .ai-bell-clapper {
+  transform: translateY(0.9px);
+}
+
+.nav-item:hover .ai-trash-lid,
+.nav-item:focus-visible .ai-trash-lid,
+.nav-item.nav-item-active .ai-trash-lid {
+  transform: translateY(-1px);
+}
+
+.nav-item:hover .ai-trash-body,
+.nav-item:focus-visible .ai-trash-body,
+.nav-item.nav-item-active .ai-trash-body {
+  transform: scaleY(1.03);
+}
+
 .nav-item:hover .ai-plus-v,
 .nav-item:hover .ai-plus-h,
 .nav-item:focus-visible .ai-plus-v,
@@ -273,6 +315,27 @@
 .nav-item:focus-visible .ai-logout-line,
 .nav-item.nav-item-active .ai-logout-line {
   transform: translateX(1.1px);
+}
+
+.nav-item:hover .ai-login-arrow,
+.nav-item:focus-visible .ai-login-arrow,
+.nav-item.nav-item-active .ai-login-arrow,
+.nav-item:hover .ai-login-line,
+.nav-item:focus-visible .ai-login-line,
+.nav-item.nav-item-active .ai-login-line {
+  transform: translateX(1.1px);
+}
+
+.nav-item:hover .ai-type-top,
+.nav-item:focus-visible .ai-type-top,
+.nav-item.nav-item-active .ai-type-top {
+  transform: translateY(-0.8px);
+}
+
+.nav-item:hover .ai-type-stem,
+.nav-item:focus-visible .ai-type-stem,
+.nav-item.nav-item-active .ai-type-stem {
+  transform: scaleY(1.08);
 }
 
 .nav-item:hover .ai-sun-rays,

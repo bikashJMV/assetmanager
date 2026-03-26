@@ -8,7 +8,7 @@ from routers import assets, logs, health, assignments, employees
 
 def create_app() -> FastAPI:
     app = FastAPI(
-        title="Asset Management System API",
+        title="Asset Manager API",
         description="Modular FastAPI backend for AMS following SOLID, DRY, and KISS principles.",
         version="2.0.0"
     )

@@ -1,6 +1,6 @@
 # AMS Server Reference
 
-[FastAPI backend for the Asset Management System, backed by Supabase (PostgreSQL + Auth + RPC + RLS)](https://assetmanager-backend.vercel.app)
+[FastAPI backend for the Asset Managemer, backed by Supabase (PostgreSQL + Auth + RPC + RLS)](https://assetmanager-backend.vercel.app)
 
 ---
 

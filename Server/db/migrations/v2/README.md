@@ -10,11 +10,12 @@ Apply in this exact order:
 6. `06_seed.sql`
 7. `07_admin_audit.sql`
 8. `08_it_ops_rbac.sql`
+9. `09_warranty_notifications.sql`
 
 ## Notes
 
 - All scripts are idempotent and safe to re-run.
-- If you already applied V2 once, re-run `03_views.sql`, `04_rls_policies.sql`, `07_admin_audit.sql`, and `08_it_ops_rbac.sql` after pulling latest changes.
+- If you already applied V2 once, re-run `03_views.sql`, `04_rls_policies.sql`, `07_admin_audit.sql`, `08_it_ops_rbac.sql`, and `09_warranty_notifications.sql` after pulling latest changes.
 - Seed uses conflict-safe inserts/upserts.
 - Asset status is derived from assignment state via DB trigger.
 - `ERP Status` maps to `employees.is_active` only.

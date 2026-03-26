@@ -18,7 +18,7 @@ export default function Guide() {
         <header className="bg-surface-2 border border-base rounded-2xl p-6 sm:p-8 space-y-3">
           <p className="text-xs uppercase tracking-[0.22em] text-subtle">Guide</p>
           <h1 className="text-3xl sm:text-4xl font-bold tracking-tight">
-            Asset Management made <span className="text-accent">simple</span>
+            Asset Manager made <span className="text-accent">simple</span>
           </h1>
           <p className="text-muted text-sm sm:text-base">
             Manage company assets with easy tracking, scanning, and employee assignment.

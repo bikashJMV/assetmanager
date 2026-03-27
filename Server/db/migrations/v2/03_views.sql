@@ -1,5 +1,5 @@
 -- 03_views.sql
--- Read models for AMS V2
+-- Read models for AMS
 
 set search_path = public;
 
@@ -51,7 +51,9 @@ left join manufacturers m on m.id = a.manufacturer_id
 left join locations l on l.id = a.location_id
 left join v_asset_current_assignment ca on ca.asset_id = a.id
 left join employees e on e.id = ca.employee_id
-left join departments d on d.id = e.department_id;
+left join departments d on d.id = e.department_id
+where coalesce(a.is_deleted, false) = false
+  and (e.id is null or coalesce(e.is_deleted, false) = false);
 
 create or replace view v_assignment_anomalies as
 select

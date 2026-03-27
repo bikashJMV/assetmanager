@@ -7,12 +7,14 @@ import {
   getSessionEmployee,
   hasActiveAdminAccess,
   listCategories,
+  softDeleteAssetById,
   type AssetFilters,
   type AssetInventoryRecord,
   type CategoryRecord,
 } from '../../api'
 import Error from '../common/Error'
 import RefreshButton from '../common/RefreshButton'
+import ConfirmDialog from '../common/ConfirmDialog'
 import { getErrorDebugDetail, getUserFacingMessage, logDevError } from '../../utils/errors'
 import { formatDisplay } from '../../utils/formatDisplay'
 
@@ -30,6 +32,7 @@ export default function AllAssets() {
   const [qrLoading, setQrLoading] = useState(false)
   const [categories, setCategories] = useState<CategoryRecord[]>([])
   const [isAdmin, setIsAdmin] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<AssetInventoryRecord | null>(null)
   const [scopeEmployeeId, setScopeEmployeeId] = useState<string | null>(null)
   const [accessResolved, setAccessResolved] = useState(false)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -169,6 +172,19 @@ export default function AllAssets() {
     document.body.removeChild(link)
   }
 
+  const handleSoftDeleteAsset = async (asset: AssetInventoryRecord) => {
+    if (!isAdmin) return
+    try {
+      await softDeleteAssetById(asset.id)
+      setDeleteTarget(null)
+      await fetchAssets(filtersRef.current)
+    } catch (err) {
+      logDevError('assets.soft_delete', err)
+      setError(getUserFacingMessage(err, 'Unable to delete asset right now.'))
+      setErrorDebug(getErrorDebugDetail(err))
+    }
+  }
+
   return (
     <main className="min-h-screen bg-app text-primary px-4 sm:px-6 py-6 sm:py-8">
       <div className="mb-6 flex flex-col gap-3 2xl:flex-row 2xl:items-center">
@@ -304,6 +320,16 @@ export default function AllAssets() {
                         >
                           Edit
                         </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setDeleteTarget(asset)
+                          }}
+                          className="text-xs border border-base px-3 py-1 rounded hover:bg-surface-2 transition whitespace-nowrap"
+                          type="button"
+                        >
+                          Delete
+                        </button>
                       </div>
                     ) : (
                       <span className="text-subtle text-xs">-</span>
@@ -368,6 +394,16 @@ export default function AllAssets() {
           </div>
         </div>
       )}
+      <ConfirmDialog
+        open={Boolean(deleteTarget)}
+        title="Move Asset to Recycle Bin"
+        message={`Move ${(deleteTarget?.asset_tag || deleteTarget?.model || 'this asset')} to Recycle Bin?`}
+        confirmLabel="Delete"
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={() => {
+          if (deleteTarget) void handleSoftDeleteAsset(deleteTarget)
+        }}
+      />
     </main>
   )
 }

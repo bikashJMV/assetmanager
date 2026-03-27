@@ -24,6 +24,18 @@ export type EmployeeRecord = {
   metadata: Record<string, unknown>
 }
 
+export type RecycleBinEntry = {
+  entry_id: string
+  entity_type: 'asset' | 'employee'
+  entity_id: string
+  label: string
+  payload: Record<string, unknown>
+  deleted_at: string
+  deleted_by_employee_id: string
+  deleted_by_employee_code: string | null
+  deleted_by_employee_name: string | null
+}
+
 export type EmployeeListFilters = {
   search?: string
   is_active?: boolean | 'all'
@@ -126,6 +138,12 @@ export type WarrantyNotification = {
   warranty_expiry: string
   days_remaining: number
   severity: 'expired' | 'due_soon'
+  message: string
+}
+
+export type WelcomeNotification = {
+  show_alert: boolean
+  title: string
   message: string
 }
 
@@ -292,6 +310,18 @@ function isMissingRpcError(error: unknown, functionName: string): boolean {
   )
 }
 
+function isMissingColumnError(error: unknown, tableName: string, columnName: string): boolean {
+  if (!error || typeof error !== 'object') return false
+  const code = typeof (error as { code?: unknown }).code === 'string'
+    ? String((error as { code?: unknown }).code)
+    : ''
+  const message = typeof (error as { message?: unknown }).message === 'string'
+    ? String((error as { message?: unknown }).message).toLowerCase()
+    : ''
+  const needle = `column ${tableName.toLowerCase()}.${columnName.toLowerCase()}`
+  return code === '42703' || message.includes(needle) || message.includes(`${columnName.toLowerCase()} does not exist`)
+}
+
 export async function getSession(): Promise<Session | null> {
   const { data, error } = await supabase.auth.getSession()
   ensureNoSupabaseError(error, 'Unable to get session')
@@ -422,23 +452,41 @@ export async function getSessionEmployee(user?: User | null): Promise<SessionEmp
   let data: any = null
 
   // Primary lookup by auth_user_id is more reliable than email matching.
-  const byAuthId = await supabase
+  let byAuthId = await supabase
     .from('employees')
     .select(columns)
     .eq('auth_user_id', activeUser.id)
+    .eq('is_deleted', false)
     .limit(1)
     .maybeSingle()
+  if (isMissingColumnError(byAuthId.error, 'employees', 'is_deleted')) {
+    byAuthId = await supabase
+      .from('employees')
+      .select(columns)
+      .eq('auth_user_id', activeUser.id)
+      .limit(1)
+      .maybeSingle()
+  }
   ensureNoSupabaseError(byAuthId.error, 'Unable to load employee profile')
   data = byAuthId.data
 
   // Fallback: case-insensitive email lookup for legacy rows missing auth_user_id link.
   if (!data && activeUser.email?.trim()) {
-    const byEmail = await supabase
+    let byEmail = await supabase
       .from('employees')
       .select(columns)
       .ilike('email', activeUser.email.trim())
+      .eq('is_deleted', false)
       .limit(1)
       .maybeSingle()
+    if (isMissingColumnError(byEmail.error, 'employees', 'is_deleted')) {
+      byEmail = await supabase
+        .from('employees')
+        .select(columns)
+        .ilike('email', activeUser.email.trim())
+        .limit(1)
+        .maybeSingle()
+    }
     ensureNoSupabaseError(byEmail.error, 'Unable to load employee profile')
     data = byEmail.data
   }
@@ -487,6 +535,7 @@ export async function listEmployees(filters: EmployeeListFilters = {}): Promise<
   let query = supabase
     .from('employees')
     .select('id,employee_code,name,email,is_active,role,metadata,department:departments(name)')
+    .eq('is_deleted', false)
     .order('name', { ascending: true })
 
   if (filters.search?.trim()) {
@@ -504,7 +553,30 @@ export async function listEmployees(filters: EmployeeListFilters = {}): Promise<
     query = query.eq('department_id', departmentId)
   }
 
-  const { data, error } = await query
+  let { data, error } = await query
+  if (isMissingColumnError(error, 'employees', 'is_deleted')) {
+    let fallbackQuery = supabase
+      .from('employees')
+      .select('id,employee_code,name,email,is_active,role,metadata,department:departments(name)')
+      .order('name', { ascending: true })
+
+    if (filters.search?.trim()) {
+      const s = filters.search.trim()
+      fallbackQuery = fallbackQuery.or(`name.ilike.%${s}%,email.ilike.%${s}%,employee_code.ilike.%${s}%`)
+    }
+    if (filters.is_active !== undefined && filters.is_active !== 'all') {
+      fallbackQuery = fallbackQuery.eq('is_active', filters.is_active)
+    }
+    if (filters.department?.trim()) {
+      const departmentId = await resolveDepartmentIdByName(filters.department)
+      if (!departmentId) return []
+      fallbackQuery = fallbackQuery.eq('department_id', departmentId)
+    }
+
+    const fallback = await fallbackQuery
+    data = fallback.data
+    error = fallback.error
+  }
   ensureNoSupabaseError(error, 'Unable to load employees')
 
   let rows = (data ?? []).map(normalizeEmployeeRow)
@@ -788,6 +860,7 @@ export async function updateAsset(assetTag: string, payload: Partial<AssetWriteI
     .from('assets')
     .select('id')
     .eq('asset_tag', assetTag)
+    .eq('is_deleted', false)
     .limit(1)
     .single()
   ensureNoSupabaseError(assetError, 'Asset not found')
@@ -978,6 +1051,24 @@ export async function listWarrantyNotifications(windowDays = 30): Promise<Warran
   }))
 }
 
+export async function getWelcomeNotification(): Promise<WelcomeNotification | null> {
+  const { data, error } = await supabase.rpc('fn_get_welcome_notification')
+  if (error) {
+    if (isMissingRpcError(error, 'fn_get_welcome_notification')) {
+      return null
+    }
+    ensureNoSupabaseError(error, 'Unable to load welcome notification')
+  }
+  const payload = Array.isArray(data) ? data[0] : data
+  if (!payload || typeof payload !== 'object') return null
+
+  return {
+    show_alert: Boolean((payload as any).show_alert),
+    title: String((payload as any).title ?? ''),
+    message: String((payload as any).message ?? ''),
+  }
+}
+
 export async function getLogForAsset(assetTag: string) {
   const asset = await getAssetIdentityByTag(assetTag)
 
@@ -1056,11 +1147,71 @@ async function getAssetIdentityByTag(assetTag: string): Promise<{ id: string; as
     .from('assets')
     .select('id,asset_tag')
     .eq('asset_tag', assetTag)
+    .eq('is_deleted', false)
     .limit(1)
     .single()
 
   ensureNoSupabaseError(assetError, 'Asset not found')
   return asset
+}
+
+export async function softDeleteAssetById(assetId: string, note?: string) {
+  await assertActiveAdminAccess()
+  const { data, error } = await supabase.rpc('fn_soft_delete_asset', {
+    p_asset_id: assetId,
+    p_note: note?.trim() || null,
+  })
+  ensureNoSupabaseError(error, 'Unable to delete asset')
+  const payload = Array.isArray(data) ? data[0] : data
+  if (!payload || typeof payload !== 'object') throw new Error('Unexpected response while deleting asset')
+  if ((payload as { ok?: boolean }).ok === false) {
+    throw new Error(String((payload as { message?: unknown }).message || 'Unable to delete asset'))
+  }
+}
+
+export async function softDeleteEmployeeById(employeeId: string, note?: string) {
+  await assertActiveAdminAccess()
+  const { data, error } = await supabase.rpc('fn_soft_delete_employee', {
+    p_employee_id: employeeId,
+    p_note: note?.trim() || null,
+  })
+  ensureNoSupabaseError(error, 'Unable to delete employee')
+  const payload = Array.isArray(data) ? data[0] : data
+  if (!payload || typeof payload !== 'object') throw new Error('Unexpected response while deleting employee')
+  if ((payload as { ok?: boolean }).ok === false) {
+    throw new Error(String((payload as { message?: unknown }).message || 'Unable to delete employee'))
+  }
+}
+
+export async function listRecycleBinEntries(): Promise<RecycleBinEntry[]> {
+  await assertActiveAdminAccess()
+  const { data, error } = await supabase.rpc('fn_list_recycle_bin_entries')
+  ensureNoSupabaseError(error, 'Unable to load recycle bin')
+  const rows = Array.isArray(data) ? data : []
+  return rows.map((row: any) => ({
+    entry_id: String(row.entry_id),
+    entity_type: row.entity_type === 'employee' ? 'employee' : 'asset',
+    entity_id: String(row.entity_id),
+    label: String(row.label || ''),
+    payload: (row.payload && typeof row.payload === 'object') ? row.payload as Record<string, unknown> : {},
+    deleted_at: String(row.deleted_at),
+    deleted_by_employee_id: String(row.deleted_by_employee_id),
+    deleted_by_employee_code: row.deleted_by_employee_code ?? null,
+    deleted_by_employee_name: row.deleted_by_employee_name ?? null,
+  }))
+}
+
+export async function restoreRecycleBinEntry(entryId: string) {
+  await assertActiveAdminAccess()
+  const { data, error } = await supabase.rpc('fn_restore_recycle_bin_entry', {
+    p_entry_id: entryId,
+  })
+  ensureNoSupabaseError(error, 'Unable to restore item')
+  const payload = Array.isArray(data) ? data[0] : data
+  if (!payload || typeof payload !== 'object') throw new Error('Unexpected response while restoring item')
+  if ((payload as { ok?: boolean }).ok === false) {
+    throw new Error(String((payload as { message?: unknown }).message || 'Unable to restore item'))
+  }
 }
 
 async function createLogForAsset(assetId: string, assetTag: string, note: string) {
@@ -1101,9 +1252,9 @@ export async function scanAsset(assetTag: string) {
 
 export async function getDashboardStats() {
   const [assetsRes, assignmentsRes, employeesRes] = await Promise.all([
-    supabase.from('assets').select('id,status', { count: 'exact' }),
+    supabase.from('assets').select('id,status', { count: 'exact' }).eq('is_deleted', false),
     supabase.from('asset_assignments').select('id,returned_at', { count: 'exact' }).is('returned_at', null),
-    supabase.from('employees').select('id,is_active', { count: 'exact' }),
+    supabase.from('employees').select('id,is_active', { count: 'exact' }).eq('is_deleted', false),
   ])
 
   ensureNoSupabaseError(assetsRes.error, 'Unable to load dashboard assets stats')
@@ -1129,12 +1280,14 @@ export async function getPublicDashboardSummary(): Promise<PublicDashboardSummar
     supabase
       .from('assets')
       .select('id,asset_tag,status', { count: 'exact' })
+      .eq('is_deleted', false)
       .not('asset_tag', 'is', null)
       .neq('asset_tag', ''),
     supabase.from('asset_assignments').select('id,returned_at', { count: 'exact' }).is('returned_at', null),
     supabase
       .from('assets')
       .select('asset_tag,category:asset_categories(name)')
+      .eq('is_deleted', false)
       .not('asset_tag', 'is', null)
       .neq('asset_tag', ''),
   ])

@@ -1,5 +1,5 @@
 -- 04_rls_policies.sql
--- Row level security policies for AMS V2
+-- Row level security policies for AMS
 
 set search_path = public;
 

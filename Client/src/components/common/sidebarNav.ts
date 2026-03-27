@@ -56,7 +56,6 @@ export const sidebarSections: SidebarNavSection[] = [
     title: 'Main',
     items: [
       { id: 'home', type: 'link', label: 'Home', to: '/', icon: 'home', matchPrefix: false },
-      { id: 'notifications', type: 'link', label: 'Notifications', to: '/notifications', icon: 'bell', visibility: 'authenticated' },
       {
         id: 'assets',
         type: 'group',
@@ -86,10 +85,11 @@ export const sidebarSections: SidebarNavSection[] = [
     id: 'workspace',
     title: 'Tools',
     items: [
-      { id: 'guide', type: 'link', label: 'Guide', to: '/guide', icon: 'guide' },
       { id: 'analysis', type: 'link', label: 'Analysis', to: '/analysis', icon: 'chart-column', visibility: 'authenticated' },
+      { id: 'notifications', type: 'link', label: 'Notifications', to: '/notifications', icon: 'bell', visibility: 'authenticated' },
       { id: 'recycle-bin', type: 'link', label: 'Recycle Bin', to: '/recycle-bin', icon: 'trash', visibility: 'manage' },
       { id: 'theme-toggle', type: 'action', label: 'Theme: Light/Dark', icon: 'settings', action: 'toggle-theme' },
+      { id: 'guide', type: 'link', label: 'Guide', to: '/guide', icon: 'guide' },
       {
         id: 'text-layout',
         type: 'group',

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import EmployeeForm from '../form/EmployeeForm'
 import Error from '../common/Error'
 import RefreshButton from '../common/RefreshButton'
+import ConfirmDialog from '../common/ConfirmDialog'
 import {
   getCurrentEmployeeAssets,
   getAssets,
@@ -11,6 +12,7 @@ import {
   listEmployees,
   setEmployeeAdminStatus,
   setEmployeeRole,
+  softDeleteEmployeeById,
   type EmployeeRole,
   type EmployeeListFilters,
   type EmployeeRecord,
@@ -104,6 +106,7 @@ export default function Employee() {
   const [filtersOpen, setFiltersOpen] = useState(false)
   const [viewMode, setViewMode] = useState<EmployeeViewMode>(getInitialEmployeeViewMode)
   const [successMessage, setSuccessMessage] = useState('')
+  const [deleteTarget, setDeleteTarget] = useState<EmployeeRecord | null>(null)
 
   const requestIdRef = useRef(0)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -353,6 +356,19 @@ export default function Employee() {
     }
   }
 
+  const handleSoftDeleteEmployee = async (employee: EmployeeRecord) => {
+    try {
+      await softDeleteEmployeeById(employee.id)
+      setDeleteTarget(null)
+      setSuccessMessage(`${employee.name} moved to Recycle Bin.`)
+      await fetchEmployees(filtersRef.current)
+    } catch (err) {
+      logDevError('employees.soft_delete', err)
+      setError(getUserFacingMessage(err, 'Unable to delete employee right now.'))
+      setErrorDebug(getErrorDebugDetail(err))
+    }
+  }
+
   return (
     <main className="min-h-screen bg-app text-primary px-4 sm:px-6 py-6 sm:py-8">
       <div className="mb-6 space-y-3">
@@ -584,6 +600,7 @@ export default function Employee() {
                           onGrantAdmin={handleGrantAdmin}
                           onRevokeAdmin={handleRevokeAdmin}
                           onDownloadQrs={handleDownloadEmployeeQrs}
+                          onDelete={setDeleteTarget}
                           align="end"
                         />
                       </td>
@@ -631,6 +648,7 @@ export default function Employee() {
                       onGrantAdmin={handleGrantAdmin}
                       onRevokeAdmin={handleRevokeAdmin}
                       onDownloadQrs={handleDownloadEmployeeQrs}
+                      onDelete={setDeleteTarget}
                     />
                   </div>
                 )}
@@ -697,6 +715,20 @@ export default function Employee() {
           </div>
         </div>
       )}
+      <ConfirmDialog
+        open={Boolean(deleteTarget)}
+        title="Move Employee to Recycle Bin"
+        message={
+          deleteTarget
+            ? `Move ${deleteTarget.name} (${deleteTarget.employee_code}) to Recycle Bin?`
+            : 'Move employee to Recycle Bin?'
+        }
+        confirmLabel="Delete"
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={() => {
+          if (deleteTarget) void handleSoftDeleteEmployee(deleteTarget)
+        }}
+      />
     </main>
   )
 }
@@ -712,6 +744,7 @@ type EmployeeActionsProps = {
   onGrantAdmin: (employee: EmployeeRecord) => Promise<void>
   onRevokeAdmin: (employee: EmployeeRecord) => Promise<void>
   onDownloadQrs: (employee: EmployeeRecord) => Promise<void>
+  onDelete: (employee: EmployeeRecord) => void
 }
 
 function EmployeeActions({
@@ -725,6 +758,7 @@ function EmployeeActions({
   onGrantAdmin,
   onRevokeAdmin,
   onDownloadQrs,
+  onDelete,
 }: EmployeeActionsProps) {
   const secondaryButtonClass = 'border border-base text-muted py-1.5 px-3 rounded-lg hover:bg-surface-3 transition text-xs disabled:opacity-50 disabled:cursor-not-allowed'
   const primaryButtonClass = 'bg-accent text-on-accent py-1.5 px-3 rounded-lg hover:bg-accent-hover transition text-xs'
@@ -799,6 +833,16 @@ function EmployeeActions({
         title="Download QR codes for all assets assigned to this employee"
       >
         {bulkQrEmployeeId === employee.id ? 'Preparing QRs...' : 'Download QRs'}
+      </button>
+      <button
+        onClick={() => {
+          onDelete(employee)
+        }}
+        disabled={employee.id === sessionEmployeeId}
+        className={secondaryButtonClass}
+        type="button"
+      >
+        Delete
       </button>
     </div>
   )

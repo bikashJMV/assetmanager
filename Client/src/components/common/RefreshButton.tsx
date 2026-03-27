@@ -19,7 +19,7 @@ export default function RefreshButton({
   ariaLabel,
   title,
 }: Props) {
-  const resolvedLabel = loading ? 'Refreshing...' : label
+  const resolvedLabel = label
   const resolvedAriaLabel = ariaLabel || (loading ? 'Refreshing data' : 'Refresh data')
   const resolvedTitle = title || (loading ? 'Refreshing...' : 'Refresh')
 

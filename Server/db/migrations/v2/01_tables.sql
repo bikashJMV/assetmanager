@@ -1,5 +1,5 @@
 -- 01_tables.sql
--- Core normalized schema for AMS V2
+-- Core normalized schema for AMS
 
 create extension if not exists pgcrypto;
 create extension if not exists citext;

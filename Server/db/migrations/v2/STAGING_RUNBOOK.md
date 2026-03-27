@@ -1,4 +1,4 @@
-# V2 Backend Staging Runbook
+# Backend Staging Runbook
 
 This runbook executes Step 2 (backend runtime + import pipeline) in staging first.
 
@@ -25,7 +25,7 @@ Run each file in its own SQL Editor execution, in exact order:
 5. `05_storage_realtime_auth.sql`
 6. `06_seed.sql`
 
-If staging already had an older V2 rollout, re-run at least:
+If staging already had an older rollout, re-run at least:
 
 - `03_views.sql` (adds/refreshes `fn_public_scan_asset`)
 - `04_rls_policies.sql` (admin RLS and RPC security mode updates)

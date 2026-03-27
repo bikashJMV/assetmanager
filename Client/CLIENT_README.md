@@ -3,6 +3,17 @@
 [React 19 + Vite 7 + TypeScript frontend for the Asset Manager](https://web-assetmanager.vercel.app)
 ---
 
+## Latest updates (current implementation)
+
+- Added protected `Notifications` page (`/notifications`) with:
+  - role-aware warranty alerts from DB RPC
+  - date range filtering
+  - incremental loading (`15 + Load more`)
+  - one-time welcome prompt support for new users
+- Added real `Recycle Bin` page (`/recycle-bin`) backed by DB RPC (list + restore).
+- Added soft-delete actions for assets and employees (admin/IT Ops only), now routed through a shared confirmation dialog component.
+- Added shared refresh logic hook: `src/hooks/useRefreshableLoader.ts`.
+
 ## Table of Contents
 
 1. [Architecture Overview](#architecture-overview)
@@ -23,6 +34,8 @@
     - [Employee](#employee)
     - [NewEmployee](#newemployee)
     - [ScanPage](#scanpage)
+    - [Notifications](#notifications)
+    - [RecycleBin](#recyclebin)
 12. [Common Components (`components/common/`)](#common-components-componentscommon)
     - [Sidebar](#sidebar)
     - [Error](#error)
@@ -31,6 +44,7 @@
     - [PageNotFound](#pagenotfound)
     - [RefreshButton](#refreshbutton)
     - [AnimatedNavIcon](#animatednavicon)
+    - [ConfirmDialog](#confirmdialog)
     - [sidebarNav.ts](#sidebarnav-ts)
 13. [Form Components (`components/form/`)](#form-components-componentsform)
     - [AssetForm](#assetform)
@@ -38,14 +52,16 @@
 14. [Utilities (`utils/`)](#utilities-utils)
     - [errors.ts](#errorsts)
     - [formatDisplay.ts](#formatdisplayts)
-15. [Styles (`styles/`)](#styles-styles)
+15. [Hooks (`hooks/`)](#hooks-hooks)
+    - [useRefreshableLoader.ts](#userefreshableloaderts)
+16. [Styles (`styles/`)](#styles-styles)
     - [theme.css](#themecss)
     - [global.css](#globalcss)
-16. [Privileged access](#privileged-access)
-17. [QR Code Behavior](#qr-code-behavior)
-18. [Realtime & Dashboard Stats](#realtime--dashboard-stats)
-19. [Vercel Deployment](#vercel-deployment)
-20. [Known Issues & Notes](#known-issues--notes)
+17. [Privileged access](#privileged-access)
+18. [QR Code Behavior](#qr-code-behavior)
+19. [Realtime & Dashboard Stats](#realtime--dashboard-stats)
+20. [Vercel Deployment](#vercel-deployment)
+21. [Known Issues & Notes](#known-issues--notes)
 
 ---
 

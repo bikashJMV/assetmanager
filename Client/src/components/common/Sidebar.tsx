@@ -400,7 +400,6 @@ function GroupNavItem({
         onClick={() => onExpandFromCompact(item.id)}
         title={item.label}
         aria-label={`Expand ${item.label}`}
-        aria-expanded={open}
         className={`group nav-item flex h-10 w-10 items-center justify-center rounded-xl border transition ${active || open
           ? 'nav-item-active border-accent-soft bg-surface-3 text-accent'
           : 'border-base bg-surface text-muted hover:bg-surface-3 hover:text-primary'
@@ -416,7 +415,6 @@ function GroupNavItem({
       <button
         type="button"
         onClick={() => onToggle(item.id)}
-        aria-expanded={open}
         className={`group nav-item relative flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition ${emphasizeGroup ? 'nav-item-active bg-surface-2 text-primary' : open ? 'bg-surface-2 text-primary' : 'text-muted hover:bg-surface-3 hover:text-primary'
           }`}
       >

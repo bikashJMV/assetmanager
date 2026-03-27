@@ -41,7 +41,15 @@ flowchart TD
 
 ## Roles & database
 
-Employees have a canonical `employees.role`: `employee`, `admin`, or `it_ops` (highest). RLS and RPCs enforce permissions; privileged role changes go through audited SQL (`fn_set_employee_role` / legacy wrapper). Apply migrations through `08_it_ops_rbac.sql` after the earlier V2 files — see [Server/db/migrations/v2/README.md](./Server/db/migrations/v2/README.md).
+Employees have a canonical `employees.role`: `employee`, `admin`, or `it_ops` (highest). RLS and RPCs enforce permissions; privileged role changes go through audited SQL (`fn_set_employee_role` / legacy wrapper). Apply migrations through `08_it_ops_rbac.sql` after the earlier core files — see [Server/db/migrations/v2/README.md](./Server/db/migrations/v2/README.md).
+
+## Recent platform updates
+
+- Notifications center at `/notifications` with role-aware warranty alerts (`employee` sees scoped alerts; `admin`/`it_ops` see all).
+- First-sign-in welcome prompt support (DB RPC + client fallback).
+- Soft delete for assets/employees (admin + IT Ops), with centralized Recycle Bin and restore workflow.
+- Shared confirmation dialog for destructive actions (replaces browser confirm prompts).
+- Shared refresh patterns across core pages (`RefreshButton` + refresh loader hook).
 
 ## Detailed documentation
 

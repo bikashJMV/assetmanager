@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-Import data from employee/asset spreadsheet into AMS V2 schema.
+Import data from employee/asset spreadsheet into AMS schema.
 
 Order of operations per row:
 1) employees
@@ -827,7 +827,7 @@ class V2Importer:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Import AMS V2 data from CSV/XLSX")
+    parser = argparse.ArgumentParser(description="Import AMS data from CSV/XLSX")
     parser.add_argument("--file", required=True, help="Path to spreadsheet (.csv or .xlsx)")
     parser.add_argument("--sheet", help="Worksheet name for .xlsx files")
     parser.add_argument("--url", default=settings.SUPABASE_URL, help="Supabase URL")

@@ -46,7 +46,7 @@ def create_app() -> FastAPI:
 
     @app.get("/", tags=["System"])
     def root():
-        return {"message": "AMS API V2 is running", "env": settings.ENV}
+        return {"message": "AMS API is running", "env": settings.ENV}
 
     return app
 

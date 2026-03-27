@@ -36,6 +36,7 @@ begin
   from employees e
   where e.auth_user_id = auth.uid()
     and e.is_active = true
+    and coalesce(e.is_deleted, false) = false
   limit 1;
 
   if v_me.id is null then
@@ -70,6 +71,7 @@ begin
   left join v_asset_inventory inv on inv.id = a.id
   left join employees me on me.id = inv.current_employee_id
   where a.warranty_expiry is not null
+    and coalesce(a.is_deleted, false) = false
     and a.warranty_expiry <= current_date + v_days
     and (
       v_is_privileged

@@ -1,5 +1,5 @@
 -- 02_functions.sql
--- Database functions and triggers for AMS V2
+-- Database functions and triggers for AMS
 
 set search_path = public;
 
@@ -170,7 +170,7 @@ begin
     split_part(new.email, '@', 1)
   );
 
-  generated_employee_code := 'AUTO-' || upper(substr(replace(new.id::text, '-', ''), 1, 8));
+  generated_employee_code := fn_next_employee_code();
 
   insert into employees (
     employee_code,

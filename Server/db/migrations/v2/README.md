@@ -1,4 +1,4 @@
-# AMS V2 Database Migrations
+# AMS Database Migrations
 
 Apply in this exact order:
 
@@ -11,11 +11,14 @@ Apply in this exact order:
 7. `07_admin_audit.sql`
 8. `08_it_ops_rbac.sql`
 9. `09_warranty_notifications.sql`
+10. `10_user_welcome_notification.sql`
+11. `11_soft_delete_recycle_bin.sql`
+12. `12_employee_code_standardization.sql`
 
 ## Notes
 
 - All scripts are idempotent and safe to re-run.
-- If you already applied V2 once, re-run `03_views.sql`, `04_rls_policies.sql`, `07_admin_audit.sql`, `08_it_ops_rbac.sql`, and `09_warranty_notifications.sql` after pulling latest changes.
+- If you already applied these migrations once, re-run `03_views.sql`, `04_rls_policies.sql`, `07_admin_audit.sql`, `08_it_ops_rbac.sql`, `09_warranty_notifications.sql`, `10_user_welcome_notification.sql`, `11_soft_delete_recycle_bin.sql`, and `12_employee_code_standardization.sql` after pulling latest changes.
 - Seed uses conflict-safe inserts/upserts.
 - Asset status is derived from assignment state via DB trigger.
 - `ERP Status` maps to `employees.is_active` only.
@@ -44,7 +47,7 @@ If you need to revert, roll back in reverse dependency order:
 2. Drop RLS policies from `04_rls_policies.sql`
 3. Drop views from `03_views.sql`
 4. Drop triggers/functions/sequence from `02_functions.sql`
-5. Drop V2 tables/types from `01_tables.sql`
+5. Drop base tables/types from `01_tables.sql`
 
 ## Import
 

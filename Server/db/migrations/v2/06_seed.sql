@@ -1,5 +1,5 @@
 -- 06_seed.sql
--- Idempotent reference seed for AMS V2
+-- Idempotent reference seed for AMS
 
 set search_path = public;
 

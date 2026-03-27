@@ -173,7 +173,7 @@ create_app() → FastAPI
 - Registers custom exception handlers (`HTTPException`, `Exception`)
 - Includes all routers with `require_backend_api_key` as a shared dependency on protected routes
 - Exposes a root-level `/scan/{asset_ref}` shortcut for QR navigation (also protected)
-- Exposes `GET /` → `{"message": "AMS API V2 is running", "env": "local|production"}`
+- Exposes `GET /` → `{"message": "AMS API is running", "env": "local|production"}`
 
 ### `app.py` — Legacy compatibility shim
 
@@ -481,7 +481,7 @@ POST   /assignments/return         — Return (admin/it_ops bearer JWT when enab
 ### Unprotected Endpoints
 
 ```
-GET    /          — {"message": "AMS API V2 is running", "env": "..."}
+GET    /          — {"message": "AMS API is running", "env": "..."}
 GET    /health    — {"api": "running", "database": "connected|error: ..."}
 ```
 
@@ -523,8 +523,11 @@ All SQL migrations are in `db/migrations/v2/`. Run in order on a fresh Supabase 
 | `05_storage_realtime_auth.sql` | Supabase Storage bucket config + Realtime publication setup + Auth hooks |
 | `06_seed.sql` | Initial seed data (departments, categories, etc.) |
 | `07_admin_audit.sql` | Legacy admin audit + `fn_set_employee_admin_status` (layered with `08` after migrate) |
+| `09_warranty_notifications.sql` | RPC `fn_list_warranty_notifications` for role-aware warranty alerts |
+| `10_user_welcome_notification.sql` | RPC `fn_get_welcome_notification` for first-sign-in welcome prompt |
+| `11_soft_delete_recycle_bin.sql` | Soft-delete + recycle-bin schema and RPCs (`fn_soft_delete_*`, `fn_restore_recycle_bin_entry`, `fn_list_recycle_bin_entries`) |
 
-> If V2 tables were already applied, only re-run `03_views.sql` and `04_rls_policies.sql` to pick up the latest `fn_public_scan_asset` RPC and updated admin RLS policies.
+> If tables were already applied, re-run the files that changed in your branch (typically `03_views.sql`, `08_it_ops_rbac.sql`, and any newer numbered migration scripts such as `09`-`11`).
 
 See `db/migrations/v2/README.md` and `STAGING_RUNBOOK.md` for detailed migration instructions and rollback steps.
 

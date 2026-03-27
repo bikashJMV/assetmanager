@@ -1,5 +1,5 @@
 -- 05_storage_realtime_auth.sql
--- Storage, realtime publication, and auth trigger wiring for AMS V2
+-- Storage, realtime publication, and auth trigger wiring for AMS
 
 set search_path = public;
 

@@ -5,12 +5,14 @@ import {
   getAssetDetail,
   hasActiveAdminAccess,
   returnAsset,
+  softDeleteAssetById,
   type AssetAssignmentRecord,
   type AssetDetailRecord,
 } from '../../api'
 import AssetForm from '../form/AssetForm'
 import Error from '../common/Error'
 import Loader from '../common/Loader'
+import ConfirmDialog from '../common/ConfirmDialog'
 import { getErrorDebugDetail, getUserFacingMessage, logDevError } from '../../utils/errors'
 import { formatDisplay } from '../../utils/formatDisplay'
 
@@ -27,6 +29,7 @@ export default function AssetDetail() {
   const [assignNotes, setAssignNotes] = useState('')
   const [actionLoading, setActionLoading] = useState(false)
   const [canManage, setCanManage] = useState(false)
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
 
   const refresh = async () => {
     if (!id) return
@@ -129,6 +132,23 @@ export default function AssetDetail() {
     }
   }
 
+  const handleSoftDelete = async () => {
+    if (!detail?.asset.id || !canManage) return
+    setActionLoading(true)
+    setError('')
+    setErrorDebug(undefined)
+    try {
+      await softDeleteAssetById(detail.asset.id)
+      navigate('/recycle-bin')
+    } catch (err) {
+      logDevError('assetDetail.soft_delete', err)
+      setError(getUserFacingMessage(err, 'Unable to delete this asset right now.'))
+      setErrorDebug(getErrorDebugDetail(err))
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
   if (error && !detail) {
     return (
       <Error
@@ -171,13 +191,23 @@ export default function AssetDetail() {
           <span className="text-subtle text-sm">{formatDisplay(asset.category_name)}</span>
         </h1>
         {canManage ? (
-          <button
-            onClick={() => setShowEdit(true)}
-            className="ml-auto bg-accent text-on-accent font-semibold px-4 py-2 rounded-lg hover:bg-accent-hover transition text-sm shadow-accent"
-            type="button"
-          >
-            Edit Asset
-          </button>
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              onClick={() => setShowEdit(true)}
+              className="bg-accent text-on-accent font-semibold px-4 py-2 rounded-lg hover:bg-accent-hover transition text-sm shadow-accent"
+              type="button"
+            >
+              Edit Asset
+            </button>
+            <button
+              onClick={() => setDeleteDialogOpen(true)}
+              disabled={actionLoading}
+              className="border border-base px-4 py-2 rounded-lg hover:bg-surface-2 transition text-sm disabled:opacity-60"
+              type="button"
+            >
+              Delete
+            </button>
+          </div>
         ) : null}
       </div>
 
@@ -209,7 +239,7 @@ export default function AssetDetail() {
             <input
               value={assignCode}
               onChange={(e) => setAssignCode(e.target.value)}
-              placeholder="Employee Code (e.g., EMP-1001)"
+              placeholder="Employee Code (e.g., EMP0001)"
               disabled={!canManage}
               className="w-full bg-surface-2 border border-base rounded-lg px-3 py-2.5 text-sm"
             />
@@ -363,6 +393,18 @@ export default function AssetDetail() {
           }}
         />
       )}
+      <ConfirmDialog
+        open={deleteDialogOpen}
+        title="Move Asset to Recycle Bin"
+        message={`Move ${detail.asset.asset_tag || 'this asset'} to Recycle Bin?`}
+        confirmLabel="Delete"
+        loading={actionLoading}
+        onClose={() => setDeleteDialogOpen(false)}
+        onConfirm={() => {
+          setDeleteDialogOpen(false)
+          void handleSoftDelete()
+        }}
+      />
     </main>
   )
 }

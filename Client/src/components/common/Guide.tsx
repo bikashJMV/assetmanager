@@ -108,7 +108,7 @@ export default function Guide() {
         </section>
 
         <section className="bg-surface-2 border border-base rounded-xl p-5">
-          <h2 className="text-lg font-semibold">Ticket requests</h2>
+          <h2 className="text-lg font-semibold">Ticket requests in Upcomming updates</h2>
           <p className="text-sm text-muted mt-2">
             Both employees and admins can create a ticket request if they need an update, correction, or support action.
           </p>

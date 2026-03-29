@@ -1,0 +1,23 @@
+{
+    "address": [
+        {
+            "company": "JMV LPS LTD",
+            "line1": "W-50, Sector-11, Noida",
+            "district": "Gautam Buddha Nagar",
+            "state": "Uttar Pradesh",
+            "pincode": "201301",
+            "GSTIN/UIN": "09AACCJ0193L2ZB",
+            "state_code": "09"
+        },
+        {
+            "company": "JMV LPS LTD (Unit-J12)",
+            "line1": "J-12, Site-C, Surajpur Industrial Area",
+            "city": "Greater Noida",
+            "district": "Gautam Buddha Nagar",
+            "state": "Uttar Pradesh",
+            "pincode": "201306",
+            "GSTIN/UIN": "09AACCJ0193L2ZB",
+            "state_code": "09"
+        }
+    ]
+}

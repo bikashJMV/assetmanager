@@ -4,6 +4,11 @@ import { getPublicScanAsset, scanAsset } from '../../api'
 import { getUserFacingMessage, logDevError } from '../../utils/errors'
 import { formatDisplay } from '../../utils/formatDisplay'
 
+type BarcodeDetectorInstance = {
+  detect: (image: HTMLVideoElement) => Promise<Array<{ rawValue?: string }>>
+}
+type BarcodeDetectorConstructor = new (options: { formats: string[] }) => BarcodeDetectorInstance
+
 type ScanAsset = {
   asset_tag: string | null
   category: string | null
@@ -21,7 +26,7 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
   const navigate = useNavigate()
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
-  const detectorRef = useRef<any>(null)
+  const detectorRef = useRef<BarcodeDetectorInstance | null>(null)
   const frameRef = useRef<number | null>(null)
   const scannerBusyRef = useRef(false)
   const [manualTag, setManualTag] = useState('')
@@ -112,7 +117,12 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
     }
 
     try {
-      const BarcodeDetectorCtor = (window as any).BarcodeDetector
+      const win = window as Window & { BarcodeDetector?: BarcodeDetectorConstructor }
+      const BarcodeDetectorCtor = win.BarcodeDetector
+      if (!BarcodeDetectorCtor) {
+        setScannerError('Camera QR scanning is not supported in this browser. Use manual entry.')
+        return
+      }
       detectorRef.current = new BarcodeDetectorCtor({ formats: ['qr_code'] })
 
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -139,7 +149,6 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
     return () => {
       stopScanner()
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   if (protectedRoute && !id) {
@@ -245,7 +254,7 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
         <Field label="Category" value={formatDisplay(asset.category)} />
         <Field label="Location" value={formatDisplay(asset.location)} />
         <Field label="Current Holder" value={formatDisplay(asset.holder)} />
-        <Field label="Holder ERP/HR Status" value={asset.holder_erp_status} subtle />
+        <Field label="Holder ERP status" value={asset.holder_erp_status} subtle />
 
         {customEntries.map(([key, value]) => (
           <Field key={key} label={key} value={formatDisplay(value)} />
@@ -254,7 +263,7 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
 
       {asset.holder_erp_status.toLowerCase().includes('inactive') && (
         <p className="text-center text-subtle text-xs mt-6">
-          Holder ERP/HR inactive flag is an admin audit signal.
+          Holder ERP inactive flag is an admin audit signal.
         </p>
       )}
 

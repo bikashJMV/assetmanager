@@ -586,14 +586,14 @@ function SidebarFooter({
             </div>
           </div>
         ) : (
-          <div className="mb-3 rounded-2xl border border-base bg-surface-2 p-3 min-w-0">
+          <div className="mb-2 rounded-2xl border border-base bg-surface-2 p-3 min-w-0">
             <div className="flex items-center gap-3 min-w-0">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-accent-soft bg-[color:var(--accent-soft)] text-sm font-black text-accent">
+              <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-2xl border border-accent-soft bg-[color:var(--accent-soft)] text-sm font-black text-accent">
                 {sidebarInitial(sessionProfile.name)}
               </div>
               <div className="min-w-0 flex-1 flex items-center justify-between gap-2">
-                <p className="truncate text-sm font-semibold text-primary">
-                  {(sidebarFirstName(sessionProfile.name) || sessionProfile.name) + ' | ' + sidebarRoleLabel(sessionProfile.role)}
+                <p className="truncate min-w-fit text-sm font-semibold text-primary">
+                  {(sidebarFirstName(sessionProfile.name) || sessionProfile.name) + '|' + sidebarRoleLabel(sessionProfile.role).toUpperCase()}
                 </p>
                 <span
                   className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border border-base bg-surface text-subtle"
@@ -805,7 +805,7 @@ export default function Sidebar({ isAuthenticated }: { isAuthenticated: boolean 
       </button>
 
       <aside
-        className={`hidden sm:block shrink-0 transition-[width] duration-300 ease-in-out motion-reduce:transition-none ${collapsed ? 'w-[76px]' : 'w-[292px]'
+        className={`hidden sm:block shrink-0 transition-[width] duration-300 ease-in-out motion-reduce:transition-none ${collapsed ? 'w-[60px]' : 'w-[230px]'
           }`}
       >
         <div className="sticky top-0 flex h-screen flex-col overflow-x-visible overflow-y-hidden border-r border-base bg-surface shadow-[0_18px_40px_rgba(0,0,0,0.22)]">

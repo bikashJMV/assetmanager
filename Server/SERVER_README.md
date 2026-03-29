@@ -1,6 +1,6 @@
 # AMS Server Reference
 
-[FastAPI backend for the Asset Managemer, backed by Supabase (PostgreSQL + Auth + RPC + RLS)](https://assetmanager-backend.vercel.app)
+[FastAPI backend for the Asset Manager, backed by Supabase (PostgreSQL + Auth + RPC + RLS)](https://assetmanager-backend.vercel.app)
 
 ---
 
@@ -526,8 +526,9 @@ All SQL migrations are in `db/migrations/v2/`. Run in order on a fresh Supabase 
 | `09_warranty_notifications.sql` | RPC `fn_list_warranty_notifications` for role-aware warranty alerts |
 | `10_user_welcome_notification.sql` | RPC `fn_get_welcome_notification` for first-sign-in welcome prompt |
 | `11_soft_delete_recycle_bin.sql` | Soft-delete + recycle-bin schema and RPCs (`fn_soft_delete_*`, `fn_restore_recycle_bin_entry`, `fn_list_recycle_bin_entries`) |
+| `12`–`16_*.sql` | Code normalization, assign timestamp coalesce, **ERP flag split** (`16_employee_erp_active.sql`: `employees.erp_active`, `v_asset_inventory.current_employee_erp_active`, scan + anomaly views, assignment still gated on `is_active` only) — full order in `migrations/v2/README.md` |
 
-> If tables were already applied, re-run the files that changed in your branch (typically `03_views.sql`, `08_it_ops_rbac.sql`, and any newer numbered migration scripts such as `09`-`11`).
+> If tables were already applied, re-run the files that changed in your branch (see `migrations/v2/README.md` for the numbered sequence through `16`).
 
 See `db/migrations/v2/README.md` and `STAGING_RUNBOOK.md` for detailed migration instructions and rollback steps.
 

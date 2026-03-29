@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom'
 import {
   getAssets,
   getQrDataUriForAssetTag,
-  regenerateQrDataUriForAssetTag,
   getSessionEmployee,
   hasActiveAdminAccess,
   listCategories,
@@ -19,6 +18,8 @@ import { getErrorDebugDetail, getUserFacingMessage, logDevError } from '../../ut
 import { formatDisplay } from '../../utils/formatDisplay'
 
 const SEARCH_DEBOUNCE_MS = 300
+/** Set to true to show "Regenerate QR" in the asset QR modal. */
+const SHOW_REGENERATE_QR_BUTTON = false
 const statusFilters = ['assigned', 'in_stock', 'in_repair', 'retired', 'lost', 'disposed']
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
@@ -35,6 +36,8 @@ export default function AllAssets() {
   const [deleteTarget, setDeleteTarget] = useState<AssetInventoryRecord | null>(null)
   const [scopeEmployeeId, setScopeEmployeeId] = useState<string | null>(null)
   const [accessResolved, setAccessResolved] = useState(false)
+  /** False until session scope is known and the first asset list request has finished (success or error). */
+  const [initialListReady, setInitialListReady] = useState(false)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const requestIdRef = useRef(0)
   const filtersRef = useRef<AssetFilters>({})
@@ -106,6 +109,11 @@ export default function AllAssets() {
     void fetchAssets(filtersRef.current)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accessResolved, isAdmin, scopeEmployeeId])
+
+  useEffect(() => {
+    if (!accessResolved || loading) return
+    setInitialListReady(true)
+  }, [accessResolved, loading])
 
   useEffect(() => {
     filtersRef.current = filters
@@ -185,6 +193,16 @@ export default function AllAssets() {
     }
   }
 
+  if (!initialListReady) {
+    return (
+      <main className="min-h-screen bg-app text-primary flex items-center justify-center px-4">
+        <p className="text-subtle text-sm" role="status" aria-live="polite">
+          Loading...
+        </p>
+      </main>
+    )
+  }
+
   return (
     <main className="min-h-screen bg-app text-primary px-4 sm:px-6 py-6 sm:py-8">
       <div className="mb-6 flex flex-col gap-3 2xl:flex-row 2xl:items-center">
@@ -260,10 +278,11 @@ export default function AllAssets() {
           />
         </div>
       ) : null}
-      {loading && <p className="text-subtle text-sm mb-3">Loading...</p>}
 
-      {!loading && !error && (
-        <div className="overflow-x-auto rounded-xl border border-base">
+      {!error && (
+        <div
+          className={`overflow-x-auto rounded-xl border border-base transition-opacity ${loading ? 'opacity-60 pointer-events-none' : ''}`}
+        >
           <table className="w-full text-sm text-left min-w-[940px]">
             <thead className="bg-surface-2 text-subtle text-xs uppercase">
               <tr>
@@ -288,8 +307,8 @@ export default function AllAssets() {
                   <td className="px-4 py-3">{formatDisplay(asset.current_employee_name)}</td>
                   <td className="px-4 py-3">
                     {asset.current_employee_id ? (
-                      <span className={`px-2 py-0.5 rounded text-xs ${asset.current_employee_is_active ? 'bg-accent text-on-accent' : 'bg-surface border border-base text-muted'}`}>
-                        {asset.current_employee_is_active ? 'ERP Active' : 'ERP Inactive'}
+                      <span className={`px-2 py-0.5 rounded text-xs ${asset.current_employee_erp_active ? 'bg-accent text-on-accent' : 'bg-surface border border-base text-muted'}`}>
+                        {asset.current_employee_erp_active ? 'ERP Active' : 'ERP Inactive'}
                       </span>
                     ) : (
                       <span className="text-subtle">-</span>
@@ -357,25 +376,28 @@ export default function AllAssets() {
             </div>
             <p className="text-muted text-xs mt-4">Scan to view asset details</p>
             <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-2">
-              <button
-                onClick={async () => {
-                  setQrLoading(true)
-                  try {
-                    const newQrCode = await regenerateQrDataUriForAssetTag(qrModal.assetTag)
-                    setQrModal({ assetTag: qrModal.assetTag, qrCode: newQrCode })
-                  } catch (err) {
-                    logDevError('assets.qr.regenerate', err)
-                    setError(getUserFacingMessage(err, 'Unable to regenerate QR right now.'))
-                  } finally {
-                    setQrLoading(false)
-                  }
-                }}
-                disabled={qrLoading}
-                className="border border-[color:var(--accent-soft)] text-primary font-semibold px-6 py-2 rounded-lg hover:bg-surface-3 transition text-sm w-full"
-                type="button"
-              >
-                {qrLoading ? 'Regenerating...' : 'Regenerate QR'}
-              </button>
+              {SHOW_REGENERATE_QR_BUTTON ? (
+                <button
+                  onClick={async () => {
+                    setQrLoading(true)
+                    try {
+                      const { regenerateQrDataUriForAssetTag } = await import('../../api')
+                      const newQrCode = await regenerateQrDataUriForAssetTag(qrModal.assetTag)
+                      setQrModal({ assetTag: qrModal.assetTag, qrCode: newQrCode })
+                    } catch (err) {
+                      logDevError('assets.qr.regenerate', err)
+                      setError(getUserFacingMessage(err, 'Unable to regenerate QR right now.'))
+                    } finally {
+                      setQrLoading(false)
+                    }
+                  }}
+                  disabled={qrLoading}
+                  className="border border-[color:var(--accent-soft)] text-primary font-semibold px-6 py-2 rounded-lg hover:bg-surface-3 transition text-sm w-full"
+                  type="button"
+                >
+                  {qrLoading ? 'Regenerating...' : 'Regenerate QR'}
+                </button>
+              ) : null}
               <button
                 onClick={handleDownloadQr}
                 className="border border-base text-primary font-semibold px-6 py-2 rounded-lg hover:bg-surface-3 transition text-sm w-full"

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { listRecycleBinEntries, restoreRecycleBinEntry, type RecycleBinEntry } from '../../api'
 import RefreshButton from '../common/RefreshButton'
 import { getErrorDebugDetail, getUserFacingMessage, logDevError } from '../../utils/errors'
@@ -15,16 +15,16 @@ export default function RecycleBin() {
     },
   })
 
-  const load = async () => {
+  const load = useCallback(async () => {
     await run(async () => {
       const data = await listRecycleBinEntries()
       setRows(data)
     })
-  }
+  }, [run])
 
   useEffect(() => {
     void load()
-  }, [])
+  }, [load])
 
   const handleRestore = async (entryId: string) => {
     setRestoringId(entryId)

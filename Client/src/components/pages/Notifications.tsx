@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   getSessionEmployee,
@@ -54,7 +54,7 @@ export default function Notifications() {
     },
   })
 
-  const loadNotifications = async () => {
+  const loadNotifications = useCallback(async () => {
     setErrorDebug(undefined)
     await run(async () => {
       const [sessionProfile, rows, welcomeMessage] = await Promise.all([
@@ -94,11 +94,11 @@ export default function Notifications() {
         }
       }
     })
-  }
+  }, [toDate, run])
 
   useEffect(() => {
     void loadNotifications()
-  }, [toDate])
+  }, [loadNotifications])
 
   const filteredNotifications = useMemo(() => {
     const start = parseDateInput(fromDate)

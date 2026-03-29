@@ -45,6 +45,7 @@ Employees have a canonical `employees.role`: `employee`, `admin`, or `it_ops` (h
 
 ## Recent platform updates
 
+- **Employee flags:** `employees.is_active` (employment / account) and `employees.erp_active` (ERP entitlement) are separate after migration `16_employee_erp_active.sql`. Assignment RPCs still require an **employment-active** employee; asset lists and scan copy use **ERP** for holder badges and “hide ERP-inactive” filters. The client defaults the employee directory to **employment active + ERP inactive** so that slice is easy to find; new-employee form defaults match unless you change the toggles.
 - Notifications center at `/notifications` with role-aware warranty alerts (`employee` sees scoped alerts; `admin`/`it_ops` see all).
 - First-sign-in welcome prompt support (DB RPC + client fallback).
 - Soft delete for assets/employees (admin + IT Ops), with centralized Recycle Bin and restore workflow.

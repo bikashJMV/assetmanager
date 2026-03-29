@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { getUserFacingMessage } from '../utils/errors'
 
 type UseRefreshableLoaderOptions = {
@@ -9,19 +9,21 @@ type UseRefreshableLoaderOptions = {
 export function useRefreshableLoader({ defaultErrorMessage, onError }: UseRefreshableLoaderOptions) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const onErrorRef = useRef(onError)
+  onErrorRef.current = onError
 
-  const run = async (task: () => Promise<void>) => {
+  const run = useCallback(async (task: () => Promise<void>) => {
     setLoading(true)
     setError('')
     try {
       await task()
     } catch (err) {
       setError(getUserFacingMessage(err, defaultErrorMessage))
-      onError?.(err)
+      onErrorRef.current?.(err)
     } finally {
       setLoading(false)
     }
-  }
+  }, [defaultErrorMessage])
 
   return {
     loading,

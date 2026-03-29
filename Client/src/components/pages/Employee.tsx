@@ -23,11 +23,12 @@ import { getErrorDebugDetail, getUserFacingMessage, logDevError } from '../../ut
 import { formatDisplay } from '../../utils/formatDisplay'
 
 const SEARCH_DEBOUNCE_MS = 300
-const ERP_STATUS_ALL = 'all' as const
+const FILTER_STATUS_ALL = 'all' as const
 const ROLE_ALL = 'all' as const
 
 type EmployeeFiltersInput = {
   search: string
+  employeeStatus: 'all' | 'active' | 'inactive'
   erpStatus: 'all' | 'active' | 'inactive'
   department: string
   role: string
@@ -44,7 +45,8 @@ function getInitialEmployeeViewMode(): EmployeeViewMode {
 
 function getActiveAdvancedFilterCount(input: EmployeeFiltersInput): number {
   let count = 0
-  if (input.erpStatus !== ERP_STATUS_ALL) count += 1
+  if (input.employeeStatus !== FILTER_STATUS_ALL) count += 1
+  if (input.erpStatus !== FILTER_STATUS_ALL) count += 1
   if (input.department.trim()) count += 1
   if (input.role.trim() && input.role !== ROLE_ALL) count += 1
   return count
@@ -58,16 +60,22 @@ function formatRoleLabel(role: string): string {
 }
 
 function toApiFilters(input: EmployeeFiltersInput): EmployeeListFilters {
-  const filters: EmployeeListFilters = { is_active: 'all' }
+  const filters: EmployeeListFilters = { is_active: 'all', erp_active: 'all' }
 
   if (input.search.trim()) {
     filters.search = input.search.trim()
   }
 
-  if (input.erpStatus === 'active') {
+  if (input.employeeStatus === 'active') {
     filters.is_active = true
-  } else if (input.erpStatus === 'inactive') {
+  } else if (input.employeeStatus === 'inactive') {
     filters.is_active = false
+  }
+
+  if (input.erpStatus === 'active') {
+    filters.erp_active = true
+  } else if (input.erpStatus === 'inactive') {
+    filters.erp_active = false
   }
 
   if (input.department.trim()) {
@@ -86,6 +94,7 @@ export default function Employee() {
   const [departments, setDepartments] = useState<string[]>([])
   const [filtersInput, setFiltersInput] = useState<EmployeeFiltersInput>({
     search: '',
+    employeeStatus: 'all',
     erpStatus: 'all',
     department: '',
     role: ROLE_ALL,
@@ -112,6 +121,7 @@ export default function Employee() {
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const filtersRef = useRef<EmployeeListFilters>(toApiFilters({
     search: '',
+    employeeStatus: 'all',
     erpStatus: 'all',
     department: '',
     role: ROLE_ALL,
@@ -181,7 +191,6 @@ export default function Employee() {
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current)
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
@@ -204,7 +213,7 @@ export default function Employee() {
   }
 
   const handleFilterChange = (
-    partial: Partial<Pick<EmployeeFiltersInput, 'erpStatus' | 'department' | 'role'>>
+    partial: Partial<Pick<EmployeeFiltersInput, 'employeeStatus' | 'erpStatus' | 'department' | 'role'>>
   ) => {
     if (debounceRef.current) clearTimeout(debounceRef.current)
 
@@ -223,7 +232,8 @@ export default function Employee() {
     setFiltersInput((current) => {
       const nextInput = {
         ...current,
-        erpStatus: ERP_STATUS_ALL,
+        employeeStatus: FILTER_STATUS_ALL,
+        erpStatus: FILTER_STATUS_ALL,
         department: '',
         role: ROLE_ALL,
       }
@@ -443,61 +453,74 @@ export default function Employee() {
         </div>
 
         {filtersOpen && (
-          <section className="rounded-xl border border-base bg-surface-2 p-4">
-            <div className="flex flex-col gap-3 xl:flex-row xl:items-end">
-              <div className="grid flex-1 grid-cols-1 gap-3 md:grid-cols-3">
-                <select
-                  aria-label="Filter by ERP status"
-                  value={filtersInput.erpStatus}
-                  onChange={(e) =>
-                    handleFilterChange({
-                      erpStatus: (e.target.value || ERP_STATUS_ALL) as EmployeeFiltersInput['erpStatus'],
-                    })
-                  }
-                  className="w-full bg-surface border border-base text-primary text-sm rounded-lg px-3 py-2.5"
-                >
-                  <option value="all" className="bg-surface-2 text-primary">All</option>
-                  <option value="active" className="bg-surface-2 text-primary">ERP Active</option>
-                  <option value="inactive" className="bg-surface-2 text-primary">ERP Inactive</option>
-                </select>
+          <section className="rounded-xl border border-base bg-surface-2 px-3 py-2.5 sm:px-4">
+            <div className="flex min-w-0 flex-nowrap items-center gap-2 sm:gap-3 overflow-x-auto">
+              <select
+                aria-label="Filter by employment status (employees.is_active)"
+                title="Employment / account active flag — not the same as ERP access (erp_active)"
+                value={filtersInput.employeeStatus}
+                onChange={(e) =>
+                  handleFilterChange({
+                    employeeStatus: (e.target.value || FILTER_STATUS_ALL) as EmployeeFiltersInput['employeeStatus'],
+                  })
+                }
+                className="min-w-[10rem] flex-1 bg-surface border border-base text-primary text-sm rounded-lg px-2.5 py-2"
+              >
+                <option value="all" className="bg-surface-2 text-primary">All employees</option>
+                <option value="active" className="bg-surface-2 text-primary">Active employee</option>
+                <option value="inactive" className="bg-surface-2 text-primary">Not active employee</option>
+              </select>
 
-                <select
-                  aria-label="Filter by department"
-                  value={filtersInput.department}
-                  onChange={(e) => handleFilterChange({ department: e.target.value })}
-                  className="w-full bg-surface border border-base text-primary text-sm rounded-lg px-3 py-2.5"
-                >
-                  <option value="" className="bg-surface-2 text-primary">All Departments</option>
-                  {departments.map((department) => (
-                    <option key={department} value={department} className="bg-surface-2 text-primary">
-                      {department}
-                    </option>
-                  ))}
-                </select>
+              <select
+                aria-label="Filter by ERP entitlement (employees.erp_active)"
+                title="Uses employees.erp_active — AMS/ERP access flag, separate from employment active"
+                value={filtersInput.erpStatus}
+                onChange={(e) =>
+                  handleFilterChange({
+                    erpStatus: (e.target.value || FILTER_STATUS_ALL) as EmployeeFiltersInput['erpStatus'],
+                  })
+                }
+                className="min-w-[8.5rem] flex-1 bg-surface border border-base text-primary text-sm rounded-lg px-2.5 py-2"
+              >
+                <option value="all" className="bg-surface-2 text-primary">Any ERP access</option>
+                <option value="active" className="bg-surface-2 text-primary">ERP access on</option>
+                <option value="inactive" className="bg-surface-2 text-primary">ERP access off</option>
+              </select>
 
-                <select
-                  aria-label="Filter by role"
-                  value={filtersInput.role}
-                  onChange={(e) => handleFilterChange({ role: e.target.value || ROLE_ALL })}
-                  className="w-full bg-surface border border-base text-primary text-sm rounded-lg px-3 py-2.5"
-                >
-                  <option value="all" className="bg-surface-2 text-primary">All Roles</option>
-                  <option value="admin" className="bg-surface-2 text-primary">Admin</option>
-                  <option value="it_ops" className="bg-surface-2 text-primary">IT Ops</option>
-                  <option value="employee" className="bg-surface-2 text-primary">Employee</option>
-                </select>
-              </div>
+              <select
+                aria-label="Filter by department"
+                value={filtersInput.department}
+                onChange={(e) => handleFilterChange({ department: e.target.value })}
+                className="min-w-[9rem] flex-1 bg-surface border border-base text-primary text-sm rounded-lg px-2.5 py-2"
+              >
+                <option value="" className="bg-surface-2 text-primary">All Departments</option>
+                {departments.map((department) => (
+                  <option key={department} value={department} className="bg-surface-2 text-primary">
+                    {department}
+                  </option>
+                ))}
+              </select>
 
-              <div className="flex justify-end">
-                <button
-                  type="button"
-                  onClick={handleResetAdvancedFilters}
-                  disabled={activeAdvancedFilterCount === 0}
-                  className="inline-flex h-10 items-center rounded-lg border border-base bg-surface px-3 text-sm font-medium text-muted transition hover:bg-surface-3 hover:text-primary disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  Clear
-                </button>
-              </div>
+              <select
+                aria-label="Filter by role"
+                value={filtersInput.role}
+                onChange={(e) => handleFilterChange({ role: e.target.value || ROLE_ALL })}
+                className="min-w-[7.5rem] flex-1 bg-surface border border-base text-primary text-sm rounded-lg px-2.5 py-2"
+              >
+                <option value="all" className="bg-surface-2 text-primary">All Roles</option>
+                <option value="admin" className="bg-surface-2 text-primary">Admin</option>
+                <option value="it_ops" className="bg-surface-2 text-primary">IT Ops</option>
+                <option value="employee" className="bg-surface-2 text-primary">Employee</option>
+              </select>
+
+              <button
+                type="button"
+                onClick={handleResetAdvancedFilters}
+                disabled={activeAdvancedFilterCount === 0}
+                className="inline-flex h-9 shrink-0 items-center rounded-lg border border-base bg-surface px-3 text-sm font-medium text-muted transition hover:bg-surface-3 hover:text-primary disabled:opacity-50 disabled:cursor-not-allowed sm:h-10"
+              >
+                Clear
+              </button>
             </div>
           </section>
         )}
@@ -559,7 +582,7 @@ export default function Employee() {
       <section className="min-w-0">
         {!accessResolved ? (
           <div className="rounded-xl border border-base bg-surface px-4 py-6 text-sm text-subtle">
-            Checking access...
+            Loading...
           </div>
         ) : viewMode === 'table' ? (
           <div className="overflow-x-auto rounded-xl border border-base">
@@ -571,7 +594,8 @@ export default function Employee() {
                   <th className="px-4 py-3">Employee Code</th>
                   <th className="px-4 py-3">Department</th>
                   <th className="px-4 py-3">Role</th>
-                  <th className="px-4 py-3">ERP Status</th>
+                  <th className="px-4 py-3">Employee</th>
+                  <th className="px-4 py-3">ERP</th>
                   {canManageEmployees && <th className="px-4 py-3 text-right">Actions</th>}
                 </tr>
               </thead>
@@ -585,7 +609,12 @@ export default function Employee() {
                     <td className="px-4 py-3 text-primary">{formatRoleLabel(employee.role)}</td>
                     <td className="px-4 py-3">
                       <span className={`text-xs px-2 py-1 rounded ${employee.is_active ? 'bg-accent text-on-accent' : 'bg-surface border border-base text-muted'}`}>
-                        {employee.is_active ? 'ERP Active' : 'ERP Inactive'}
+                        {employee.is_active ? 'Active' : 'Not active'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={`text-xs px-2 py-1 rounded ${employee.erp_active ? 'bg-accent text-on-accent' : 'bg-surface border border-base text-muted'}`}>
+                        {employee.erp_active ? 'ERP Active' : 'ERP Inactive'}
                       </span>
                     </td>
                     {canManageEmployees && (
@@ -609,7 +638,7 @@ export default function Employee() {
                 ))}
                 {!loading && employees.length === 0 && (
                   <tr>
-                    <td colSpan={canManageEmployees ? 7 : 6} className="text-center py-8 text-subtle">No employees found</td>
+                    <td colSpan={canManageEmployees ? 8 : 7} className="text-center py-8 text-subtle">No employees found</td>
                   </tr>
                 )}
               </tbody>
@@ -624,9 +653,14 @@ export default function Employee() {
                     <h2 className="text-lg font-semibold">{employee.name}</h2>
                     <p className="text-sm text-muted">{formatDisplay(employee.email)}</p>
                   </div>
-                  <span className={`text-xs px-2 py-1 rounded ${employee.is_active ? 'bg-accent text-on-accent' : 'bg-surface border border-base text-muted'}`}>
-                    {employee.is_active ? 'ERP Active' : 'ERP Inactive'}
-                  </span>
+                  <div className="flex flex-col items-end gap-1 shrink-0">
+                    <span className={`text-xs px-2 py-1 rounded ${employee.is_active ? 'bg-accent text-on-accent' : 'bg-surface border border-base text-muted'}`}>
+                      {employee.is_active ? 'Active employee' : 'Not active'}
+                    </span>
+                    <span className={`text-xs px-2 py-1 rounded ${employee.erp_active ? 'bg-accent text-on-accent' : 'bg-surface border border-base text-muted'}`}>
+                      {employee.erp_active ? 'ERP Active' : 'ERP Inactive'}
+                    </span>
+                  </div>
                 </div>
                 <div className="mt-4 space-y-1 text-sm">
                   <p className="text-subtle uppercase tracking-[0.14em] text-[11px]">Employee Code</p>
@@ -668,6 +702,8 @@ export default function Employee() {
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-start justify-center z-50 overflow-y-auto py-10 px-4">
           <div className="w-full max-w-4xl">
             <EmployeeForm
+              key={editEmployee.id}
+              departmentOptions={departments}
               prefill={{
                 id: editEmployee.id,
                 employee_code: editEmployee.employee_code,
@@ -676,6 +712,7 @@ export default function Employee() {
                 department: editEmployee.department,
                 role: editEmployee.role,
                 is_active: editEmployee.is_active,
+                erp_active: editEmployee.erp_active,
               }}
               onClose={() => setEditEmployee(null)}
               onSubmit={handleUpsertEmployee}

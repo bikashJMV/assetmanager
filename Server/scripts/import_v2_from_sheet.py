@@ -788,7 +788,9 @@ class V2Importer:
 
         inventory_rows = (
             self.client.table("v_asset_inventory")
-            .select("id,asset_tag,status,assignment_id,current_employee_code,current_employee_is_active")
+            .select(
+                "id,asset_tag,status,assignment_id,current_employee_code,current_employee_is_active,current_employee_erp_active"
+            )
             .execute()
             .data
             or []
@@ -807,7 +809,7 @@ class V2Importer:
                 assigned_without_open.append(asset_label)
             if status != "assigned" and has_open_assignment:
                 open_but_not_assigned.append(asset_label)
-            if has_open_assignment and row.get("current_employee_is_active") is False:
+            if has_open_assignment and row.get("current_employee_erp_active") is False:
                 inactive_holders.append(
                     {
                         "asset": asset_label,

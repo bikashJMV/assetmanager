@@ -25,6 +25,7 @@ class AssetBase(BaseModel):
     current_employee_name: Optional[str] = None
     current_employee_email: Optional[str] = None
     current_employee_is_active: Optional[bool] = None
+    current_employee_erp_active: Optional[bool] = None
     current_employee_department: Optional[str] = None
     latest_qr_code: Optional[str] = None
 

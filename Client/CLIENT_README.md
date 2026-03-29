@@ -5,6 +5,7 @@
 
 ## Latest updates (current implementation)
 
+- **Employee / ERP split:** `EmployeeRecord` carries both `is_active` and `erp_active`. The Employees page filters both dimensions; **default filters** are employment **Active** and ERP **Inactive**. **New employee** form defaults to the same (`is_active: true`, `erp_active: false`). Asset inventory exposes `current_employee_is_active` and `current_employee_erp_active`; list filters and holder badges use ERP where labeled “ERP”.
 - Added protected `Notifications` page (`/notifications`) with:
   - role-aware warranty alerts from DB RPC
   - date range filtering
@@ -299,7 +300,7 @@ App
 |---|---|
 | `SessionEmployee` | Signed-in user's employee profile |
 | `EmployeeRecord` | Full employee row including department and role |
-| `EmployeeListFilters` | `search`, `is_active`, `department`, `role` |
+| `EmployeeListFilters` | `search`, `is_active`, `erp_active` (each optional or `'all'`), `department`, `role` |
 | `EmployeeRole` | `'employee' \| 'admin' \| 'it_ops'` |
 | `CategoryRecord` | `id`, `slug`, `name` |
 | `CustomFieldDefinition` | Schema for per-category dynamic fields |
@@ -307,7 +308,7 @@ App
 | `AssetAssignmentRecord` | Assignment row with embedded employee info |
 | `AssetComponentRecord` | Component row with manufacturer name |
 | `AssetDetailRecord` | `{ asset, assignments, components }` |
-| `AssetFilters` | `search`, `status`, `category_slug`, `hideHeldByInactive`, `current_employee_id` |
+| `AssetFilters` | `search`, `status`, `category_slug`, `hideHeldByInactive` (omit rows where assigned holder has `erp_active` false), `current_employee_id` |
 | `AssignAssetPayload` | `asset_tag`, `employee_code`, `assigned_at?`, `notes?` |
 | `ReturnAssetPayload` | `asset_tag`, `returned_at?`, `notes?` |
 | `AssetWriteInput` | All asset fields for create/update |
@@ -342,7 +343,7 @@ App
 |---|---|
 | `getSessionEmployee(user?)` | Fetches the current user's employee profile. Primary lookup by `auth_user_id`, fallback by email. Returns `null` if no match |
 | `hasActiveAdminAccess()` | RPC `fn_is_admin_or_it_ops` + profile hint + optional `fn_claim_employee_auth_link()` |
-| `listEmployees(filters?)` | Lists employees with search/is_active/department filtering. Resolves department by name if filter provided |
+| `listEmployees(filters?)` | Lists employees with search, `is_active`, `erp_active`, department, and role filters. Resolves department by name when provided |
 | `listDepartments()` | Returns distinct department names from active departments |
 | `upsertEmployee(input)` | Upsert by `employee_code`; does not set privileged roles via metadata (use role RPC) |
 | `setEmployeeAdminStatus(target, makeAdmin)` | Admin grant/revoke path; server RPC enforces rules |
@@ -355,7 +356,7 @@ App
 
 | Function | Description |
 |---|---|
-| `getAssets(filters?)` | Reads `v_asset_inventory`. Supports search, status, category, employee scope, hideHeldByInactive |
+| `getAssets(filters?)` | Reads `v_asset_inventory`. Supports search, status, category, employee scope, `hideHeldByInactive` (holder ERP inactive) |
 | `getAsset(assetTag)` | Reads single row from `v_asset_inventory` by `asset_tag` |
 | `getAssetDetail(assetTag)` | Returns `AssetDetailRecord` with full `assignments` + `components` arrays |
 | `createAsset(payload)` | Asserts admin. Auto-generates `asset_tag` via `fn_next_asset_tag()` if omitted. Generates client-side QR. Calls `fn_create_asset_with_log` RPC |
@@ -459,7 +460,7 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
 **Features:**
 - Lists all employees in a card grid via `listEmployees()`.
 - **Debounced search** (300ms) across `employee_code`, `name`, `email`.
-- **Filters:** ERP status (`all/active/inactive`), department (select from `listDepartments()`), role (`all` / `employee` / `admin` / `it_ops`).
+- **Filters:** Employment status (`all` / active / inactive), ERP status (`all` / active / inactive), department (select from `listDepartments()`), role (`all` / `employee` / `admin` / `it_ops`). Initial load uses **employment active** and **ERP inactive**; switch either to `All` to widen the list.
 - **Filter-to-API mapping:** `toApiFilters()` translates UI filter state (`EmployeeFiltersInput`) to API filter shape (`EmployeeListFilters`).
 - **Employee Passport** — top section shows the signed-in user's own currently assigned assets from `getCurrentEmployeeAssets()`. Includes ERP-inactive note if applicable.
 - **Privileged mode:** add/edit employees; "Make Admin" / "Revoke Admin" (`setEmployeeAdminStatus`); IT Ops can set role to IT Ops (`setEmployeeRole`) — admins cannot assign IT Ops.
@@ -660,7 +661,7 @@ SVG icon component keyed by icon name (`home`, `boxes`, `users`, `plus`, `scan`,
 }
 ```
 
-**Fields:** employee_code (disabled on edit), name, email, department, role (select: `admin/employee`), ERP/HR status (`active/inactive`).
+**Fields:** employee_code (disabled on edit), name, email, department, role (`employee` / `admin` / `it_ops`), **Employee status** (employment / account, gates assignment), **ERP status** (entitlement; drives holder ERP labels and asset filters). **Defaults on create:** employment active, ERP inactive (`prefill` overrides when editing).
 
 **Required fields:** `employee_code`, `name`, `department`.
 

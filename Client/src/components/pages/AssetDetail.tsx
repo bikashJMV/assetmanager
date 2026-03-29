@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import {
   assignAsset,
@@ -8,13 +8,14 @@ import {
   softDeleteAssetById,
   type AssetAssignmentRecord,
   type AssetDetailRecord,
+  type AssetLifecycleEvent,
 } from '../../api'
 import AssetForm from '../form/AssetForm'
 import Error from '../common/Error'
 import Loader from '../common/Loader'
 import ConfirmDialog from '../common/ConfirmDialog'
 import { getErrorDebugDetail, getUserFacingMessage, logDevError } from '../../utils/errors'
-import { formatDisplay } from '../../utils/formatDisplay'
+import { formatDateTime, formatDisplay } from '../../utils/formatDisplay'
 
 export default function AssetDetail() {
   const { id } = useParams()
@@ -28,10 +29,11 @@ export default function AssetDetail() {
   const [assignCode, setAssignCode] = useState('')
   const [assignNotes, setAssignNotes] = useState('')
   const [actionLoading, setActionLoading] = useState(false)
+  const [actionSuccessMessage, setActionSuccessMessage] = useState<string | null>(null)
   const [canManage, setCanManage] = useState(false)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
 
-  const refresh = async () => {
+  const refresh = useCallback(async () => {
     if (!id) return
     setLoading(true)
     setError('')
@@ -46,11 +48,11 @@ export default function AssetDetail() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [id])
 
   useEffect(() => {
     void refresh()
-  }, [id])
+  }, [refresh])
 
   useEffect(() => {
     let mounted = true
@@ -88,12 +90,18 @@ export default function AssetDetail() {
     setActionLoading(true)
     setError('')
     setErrorDebug(undefined)
+    setActionSuccessMessage(null)
     try {
-      await assignAsset({
+      const result = await assignAsset({
         asset_tag: detail.asset.asset_tag,
         employee_code: assignCode.trim(),
         notes: assignNotes.trim() || undefined,
       })
+      const msg =
+        typeof result?.message === 'string' && result.message.trim()
+          ? result.message.trim()
+          : 'Asset assigned successfully.'
+      setActionSuccessMessage(msg)
       setAssignCode('')
       setAssignNotes('')
       await refresh()
@@ -116,11 +124,17 @@ export default function AssetDetail() {
     setActionLoading(true)
     setError('')
     setErrorDebug(undefined)
+    setActionSuccessMessage(null)
     try {
-      await returnAsset({
+      const result = await returnAsset({
         asset_tag: detail.asset.asset_tag,
         notes: assignNotes.trim() || undefined,
       })
+      const msg =
+        typeof result?.message === 'string' && result.message.trim()
+          ? result.message.trim()
+          : 'Asset returned successfully.'
+      setActionSuccessMessage(msg)
       setAssignNotes('')
       await refresh()
     } catch (err) {
@@ -213,11 +227,15 @@ export default function AssetDetail() {
 
       <div className="max-w-7xl mx-auto mt-5 space-y-5">
         <div className="bg-gradient-to-r from-[color:var(--surface-2)] via-[color:var(--bg)] to-[color:var(--surface-3)] border border-base rounded-xl p-4 sm:p-5 flex flex-col gap-4">
+          <p className="text-xs text-subtle leading-relaxed">
+            At-a-glance snapshot: lifecycle status, holder ERP entitlement when someone is assigned, and how this device is labeled in
+            inventory.
+          </p>
           <div className="flex flex-wrap items-center gap-2">
             <span className="px-3 py-1 text-xs font-semibold rounded-full bg-accent text-on-accent uppercase">{asset.status}</span>
             {asset.current_employee_id ? (
-              <span className={`px-3 py-1 text-xs font-semibold rounded-full ${asset.current_employee_is_active ? 'bg-surface border border-base text-muted' : 'bg-surface border border-base text-accent'}`}>
-                Holder ERP: {asset.current_employee_is_active ? 'Active' : 'Inactive'}
+              <span className={`px-3 py-1 text-xs font-semibold rounded-full ${asset.current_employee_erp_active ? 'bg-surface border border-base text-muted' : 'bg-surface border border-base text-accent'}`}>
+                Holder ERP: {asset.current_employee_erp_active ? 'Active' : 'Inactive'}
               </span>
             ) : null}
           </div>
@@ -229,12 +247,12 @@ export default function AssetDetail() {
         </div>
 
         <section className="bg-surface border border-base rounded-xl p-4 sm:p-5">
-          <h2 className="text-sm font-semibold uppercase tracking-[0.14em] text-subtle mb-3">Assign / Return (RPC only)</h2>
-          {!canManage && (
-            <p className="text-xs text-subtle mb-3">
-              Read-only mode. Active admin access is required for assign and return actions.
-            </p>
-          )}
+          <h2 className="text-sm font-semibold uppercase tracking-[0.14em] text-subtle mb-2">Assign or return</h2>
+          <p className="text-xs text-subtle mb-3 leading-relaxed">
+            {canManage
+              ? 'Move custody by assigning to an employee code, or close the open assignment to return the asset to stock. Assignments are exclusive—one active holder at a time.'
+              : 'Read-only: you can view this asset but cannot change custody. Admin or IT Ops access is required to assign or return.'}
+          </p>
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
             <input
               value={assignCode}
@@ -269,20 +287,33 @@ export default function AssetDetail() {
               </button>
             </div>
           </div>
-          <p className="text-[11px] text-subtle mt-2">Inventory status is maintained by `fn_assign_asset` / `fn_return_asset`.</p>
-          {error && <p className="text-accent text-sm mt-2">{error}</p>}
+          <p className="text-[11px] text-subtle mt-2">
+            Reassigning to a different code ends the previous holder’s assignment automatically and opens a new row in history.
+          </p>
+          {actionSuccessMessage ? (
+            <p className="text-sm mt-2 rounded-lg border border-[color:var(--accent-soft)] bg-[color:var(--accent-soft)]/15 px-3 py-2 text-primary">
+              {actionSuccessMessage}
+            </p>
+          ) : null}
+          {error ? <p className="text-accent text-sm mt-2">{error}</p> : null}
         </section>
 
-        <Section title="Assignment Summary">
+        <Section
+          title="Assignment Summary"
+          description="The current open assignment only—who holds the asset now, when it started, and whether custody is still open. If no one is assigned, these fields stay empty."
+        >
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <Info label="Current Holder" value={formatDisplay(asset.current_employee_name)} />
             <Info label="Current Holder Code" value={formatDisplay(asset.current_employee_code)} />
-            <Info label="Assigned At" value={formatDisplay(asset.assigned_at)} />
+            <Info label="Assigned At" value={formatDateTime(asset.assigned_at)} />
             <Info label="Open Assignment" value={openAssignment ? 'Yes' : 'No'} />
           </div>
         </Section>
 
-        <Section title="Inventory Details">
+        <Section
+          title="Inventory Details"
+          description="Canonical catalog data: identity, classification, location, warranty, in-stock status, and audit hints for who created or last edited this record in the app."
+        >
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
             <Info label="Asset Tag" value={formatDisplay(asset.asset_tag)} />
             <Info label="Category" value={formatDisplay(asset.category_name)} />
@@ -293,10 +324,15 @@ export default function AssetDetail() {
             <Info label="Inventory Status" value={formatDisplay(asset.status)} />
             <Info label="Purchase Date" value={formatDisplay(asset.purchase_date)} />
             <Info label="Warranty Expiry" value={formatDisplay(asset.warranty_expiry)} />
+            <Info label="Created by (auth user)" value={formatAuthUserRef(asset.created_by)} />
+            <Info label="Last updated by (auth user)" value={formatAuthUserRef(asset.updated_by)} />
           </div>
         </Section>
 
-        <Section title="Custom Fields">
+        <Section
+          title="Custom Fields"
+          description="Extra attributes defined for this category (beyond standard columns). They travel with the asset and appear wherever the full record is shown."
+        >
           {Object.keys(asset.custom_fields || {}).length === 0 ? (
             <p className="text-sm text-subtle">No custom field data.</p>
           ) : (
@@ -308,7 +344,10 @@ export default function AssetDetail() {
           )}
         </Section>
 
-        <Section title="Components">
+        <Section
+          title="Components"
+          description="Sub-items bundled with this asset—such as modules, docks, or accessories—each stored as its own line with type and serials where tracked."
+        >
           {detail.components.length === 0 ? (
             <p className="text-sm text-subtle">No components recorded for this asset.</p>
           ) : (
@@ -343,7 +382,10 @@ export default function AssetDetail() {
           )}
         </Section>
 
-        <Section title="Assignment History">
+        <Section
+          title="Assignment History"
+          description="Every assign and return in order, with each holder’s ERP status on that row. Use it to see who had this asset assigned to them over time—not only who holds it today in the summary above."
+        >
           <div className="overflow-x-auto rounded-lg border border-base">
             <table className="w-full min-w-[720px] text-sm">
               <thead className="bg-surface-2 text-muted uppercase text-xs">
@@ -369,6 +411,41 @@ export default function AssetDetail() {
             </table>
           </div>
         </Section>
+
+        <Section
+          title="Lifecycle log"
+          description={
+            <>
+              This timeline records what happened to the asset over time—new records, field changes, assignments and returns. Entries are
+              append-only (nothing is deleted or rewritten), so you can reconstruct custody and spot unusual patterns. Admins and IT Ops
+              can view the full log; other roles may see a limited or empty history.
+            </>
+          }
+        >
+          {detail.lifecycle_events.length === 0 ? (
+            <p className="text-sm text-subtle py-4 text-center border border-dashed border-base rounded-lg">
+              No events yet, or none visible for your role.
+            </p>
+          ) : (
+            <div className="overflow-x-auto rounded-lg border border-base">
+              <table className="w-full min-w-[720px] text-sm">
+                <thead className="bg-surface-2 text-muted uppercase text-xs">
+                  <tr>
+                    <th className="px-3 py-2 text-left">When</th>
+                    <th className="px-3 py-2 text-left">Type</th>
+                    <th className="px-3 py-2 text-left">Who</th>
+                    <th className="px-3 py-2 text-left">Details</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {detail.lifecycle_events.map((ev) => (
+                    <LifecycleEventRow key={ev.id} event={ev} />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Section>
       </div>
 
       {showEdit && (
@@ -379,7 +456,6 @@ export default function AssetDetail() {
             manufacturer_name: asset.manufacturer_name || undefined,
             model: asset.model || undefined,
             serial_number: asset.serial_number || undefined,
-            location_code: asset.location_code || undefined,
             location_name: asset.location_name || undefined,
             purchase_date: asset.purchase_date || undefined,
             warranty_expiry: asset.warranty_expiry || undefined,
@@ -409,10 +485,15 @@ export default function AssetDetail() {
   )
 }
 
-function Section({ title, children }: { title: string; children: ReactNode }) {
+function Section({ title, description, children }: { title: string; description?: ReactNode; children: ReactNode }) {
   return (
     <section className="bg-surface border border-base rounded-xl p-4 sm:p-5">
-      <h2 className="text-sm font-semibold uppercase tracking-[0.14em] text-muted mb-3">{title}</h2>
+      <h2 className={`text-sm font-semibold uppercase tracking-[0.14em] text-muted ${description ? 'mb-2' : 'mb-3'}`}>{title}</h2>
+      {description ? (
+        <div className="text-xs text-subtle mb-3 leading-relaxed">
+          {description}
+        </div>
+      ) : null}
       {children}
     </section>
   )
@@ -427,6 +508,146 @@ function Info({ label, value }: { label: string; value: string }) {
   )
 }
 
+function formatAuthUserRef(id: string | null | undefined): string {
+  if (!id) return '—'
+  return id.length > 10 ? `${id.slice(0, 8)}…` : id
+}
+
+function formatLifecycleWho(event: AssetLifecycleEvent): { primary: string; sub?: string } {
+  const dept = event.actor_department_name?.trim()
+  if (event.actor_name || event.actor_employee_code) {
+    const name = event.actor_name?.trim() || '—'
+    const code = event.actor_employee_code?.trim()
+    const bits = [code ? `${name} · ${code}` : name]
+    if (dept) bits.push(dept)
+    return { primary: bits.join(' · ') }
+  }
+  if (event.actor_id) {
+    return {
+      primary: 'Unknown user',
+      sub: `Auth ref ${formatAuthUserRef(event.actor_id)}`,
+    }
+  }
+  return { primary: 'System / public' }
+}
+
+function payloadStr(payload: Record<string, unknown>, key: string): string | null {
+  const v = payload[key]
+  if (typeof v === 'string' && v.trim()) return v.trim()
+  if (v != null && typeof v !== 'object') return String(v)
+  return null
+}
+
+/** Bold highlight for codes, tags, and other identifiers in lifecycle copy. */
+function DetailStrong({ children }: { children: string }) {
+  return <strong className="font-semibold text-primary">{children}</strong>
+}
+
+function renderLifecycleDetails(event: AssetLifecycleEvent): ReactNode {
+  const p = event.payload || {}
+  const tag = payloadStr(p, 'asset_tag')
+  switch (event.event_type) {
+    case 'asset_created': {
+      const cat = payloadStr(p, 'category_slug')
+      if (cat && tag) {
+        return (
+          <>
+            New asset <DetailStrong>{tag}</DetailStrong> · category <DetailStrong>{cat}</DetailStrong>
+          </>
+        )
+      }
+      if (tag) {
+        return (
+          <>
+            New asset <DetailStrong>{tag}</DetailStrong>
+          </>
+        )
+      }
+      return 'Asset created'
+    }
+    case 'asset_updated': {
+      const sn = payloadStr(p, 'serial_number')
+      if (tag && sn) {
+        return (
+          <>
+            Updated <DetailStrong>{tag}</DetailStrong> · serial <DetailStrong>{sn}</DetailStrong>
+          </>
+        )
+      }
+      if (tag) {
+        return (
+          <>
+            Updated asset <DetailStrong>{tag}</DetailStrong>
+          </>
+        )
+      }
+      return 'Asset details updated'
+    }
+    case 'assigned': {
+      const code = payloadStr(p, 'employee_code')
+      if (code && tag) {
+        return (
+          <>
+            Assigned to employee <DetailStrong>{code}</DetailStrong> · asset <DetailStrong>{tag}</DetailStrong>
+          </>
+        )
+      }
+      if (code) {
+        return (
+          <>
+            Assigned to employee <DetailStrong>{code}</DetailStrong>
+          </>
+        )
+      }
+      if (tag) {
+        return (
+          <>
+            Assigned · <DetailStrong>{tag}</DetailStrong>
+          </>
+        )
+      }
+      return 'Assigned to employee'
+    }
+    case 'unassigned': {
+      if (tag) {
+        return (
+          <>
+            Returned / unassigned · <DetailStrong>{tag}</DetailStrong>
+          </>
+        )
+      }
+      return 'Returned / unassigned'
+    }
+    case 'qr_scanned': {
+      if (tag) {
+        return (
+          <>
+            QR code scanned · <DetailStrong>{tag}</DetailStrong>
+          </>
+        )
+      }
+      return 'QR code scanned (public)'
+    }
+    default:
+      return formatDisplay(event.event_type)
+  }
+}
+
+function LifecycleEventRow({ event }: { event: AssetLifecycleEvent }) {
+  const who = formatLifecycleWho(event)
+  return (
+    <tr className="border-t border-base">
+      <td className="px-3 py-2 text-primary whitespace-nowrap">{formatDateTime(event.created_at)}</td>
+      <td className="px-3 py-2 text-primary font-medium">{formatDisplay(event.event_type)}</td>
+      <td className="px-3 py-2 text-primary text-sm">
+        <span className="block">{who.primary}</span>
+        {who.sub ? <span className="block text-[11px] text-subtle mt-0.5">{who.sub}</span> : null}
+      </td>
+      <td className="px-3 py-2 text-muted text-sm max-w-md">{renderLifecycleDetails(event)}</td>
+    </tr>
+  )
+}
+
 function AssignmentRow({ entry }: { entry: AssetAssignmentRecord }) {
   return (
     <tr className="border-t border-base">
@@ -434,13 +655,13 @@ function AssignmentRow({ entry }: { entry: AssetAssignmentRecord }) {
       <td className="px-3 py-2 text-primary">{formatDisplay(entry.employee?.employee_code)}</td>
       <td className="px-3 py-2 text-primary">
         {entry.employee ? (
-          <span className={`text-xs px-2 py-0.5 rounded ${entry.employee.is_active ? 'bg-accent text-on-accent' : 'bg-surface border border-base text-muted'}`}>
-            {entry.employee.is_active ? 'ERP Active' : 'ERP Inactive'}
+          <span className={`text-xs px-2 py-0.5 rounded ${entry.employee.erp_active ? 'bg-accent text-on-accent' : 'bg-surface border border-base text-muted'}`}>
+            {entry.employee.erp_active ? 'ERP Active' : 'ERP Inactive'}
           </span>
         ) : '-'}
       </td>
-      <td className="px-3 py-2 text-primary">{formatDisplay(entry.assigned_at)}</td>
-      <td className="px-3 py-2 text-primary">{entry.returned_at || 'OPEN'}</td>
+      <td className="px-3 py-2 text-primary">{formatDateTime(entry.assigned_at)}</td>
+      <td className="px-3 py-2 text-primary">{entry.returned_at ? formatDateTime(entry.returned_at) : 'OPEN'}</td>
       <td className="px-3 py-2 text-primary">{formatDisplay(entry.source)}</td>
     </tr>
   )

@@ -60,6 +60,7 @@ def normalize_asset_row(row: dict[str, Any], latest_qr_code: Optional[str] = Non
         "current_employee_name": row.get("current_employee_name"),
         "current_employee_email": row.get("current_employee_email"),
         "current_employee_is_active": row.get("current_employee_is_active"),
+        "current_employee_erp_active": row.get("current_employee_erp_active"),
         "current_employee_department": row.get("current_employee_department"),
         "latest_qr_code": latest_qr_code,
         "created_at": row.get("created_at"),

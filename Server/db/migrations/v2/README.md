@@ -14,17 +14,22 @@ Apply in this exact order:
 10. `10_user_welcome_notification.sql`
 11. `11_soft_delete_recycle_bin.sql`
 12. `12_employee_code_standardization.sql`
+13. `13_asset_audit_and_events.sql`
+14. `14_fn_assign_employee_code_normalize.sql`
+15. `15_fn_assign_assigned_at_coalesce.sql`
+16. `16_employee_erp_active.sql`
 
 ## Notes
 
+- **`16_employee_erp_active.sql`:** When replacing `v_asset_inventory`, new columns must be **appended** at the end of the `SELECT` list so `CREATE OR REPLACE VIEW` does not trip PostgreSQL’s “cannot change name of view column” error. The file keeps `current_employee_erp_active` after `updated_by`.
 - All scripts are idempotent and safe to re-run.
-- If you already applied these migrations once, re-run `03_views.sql`, `04_rls_policies.sql`, `07_admin_audit.sql`, `08_it_ops_rbac.sql`, `09_warranty_notifications.sql`, `10_user_welcome_notification.sql`, `11_soft_delete_recycle_bin.sql`, and `12_employee_code_standardization.sql` after pulling latest changes.
+- If you already applied these migrations once, re-run `03_views.sql`, `04_rls_policies.sql`, `07_admin_audit.sql`, `08_it_ops_rbac.sql`, `09_warranty_notifications.sql`, `10_user_welcome_notification.sql`, `11_soft_delete_recycle_bin.sql`, `12_employee_code_standardization.sql`, `13_asset_audit_and_events.sql`, `14_fn_assign_employee_code_normalize.sql`, `15_fn_assign_assigned_at_coalesce.sql`, and `16_employee_erp_active.sql` after pulling latest changes.
 - Seed uses conflict-safe inserts/upserts.
 - Asset status is derived from assignment state via DB trigger.
-- `ERP Status` maps to `employees.is_active` only.
+- `employees.is_active` = employee / account active; `employees.erp_active` = ERP entitlement (see `16_employee_erp_active.sql`).
 - `ERP Status` must never be used to set `assets.status`.
 - Runtime assign/return must use DB RPCs: `fn_assign_asset` and `fn_return_asset`.
-- Public QR scan uses RPC `fn_public_scan_asset` (granted to `anon`).
+- Public QR scan uses RPC `fn_public_scan_asset(p_asset_tag, p_user_agent optional)` (granted to `anon`); records `qr_scanned` in `asset_events`.
 - Privileged runtime access uses `employees.role` (and keeps `metadata.role` in sync via trigger after `08_it_ops_rbac.sql`).
 
 ## Auth Domain Restriction

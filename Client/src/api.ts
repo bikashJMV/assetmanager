@@ -1458,9 +1458,28 @@ async function createLogForAsset(assetId: string, assetTag: string, note: string
   return data
 }
 
+/**
+ * Origin embedded in asset QR codes (`/scan/{tag}`).
+ * Set `VITE_PUBLIC_APP_ORIGIN` when dev URL is not reachable from the scanner (e.g. localhost vs phone on LAN).
+ * Production: omit it and the current browser origin is used.
+ */
+export function getScanPageBaseUrl(): string {
+  const raw = import.meta.env.VITE_PUBLIC_APP_ORIGIN
+  if (typeof raw === 'string') {
+    const trimmed = raw.trim().replace(/\/$/, '')
+    if (trimmed && /^https?:\/\//i.test(trimmed)) {
+      return trimmed
+    }
+  }
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    return window.location.origin
+  }
+  return ''
+}
+
 async function buildAssetQrDataUri(assetTag: string): Promise<string> {
-  const baseOrigin = typeof window !== 'undefined' ? window.location.origin : ''
-  const scanUrl = `${baseOrigin}/scan/${encodeURIComponent(assetTag)}`
+  const base = getScanPageBaseUrl()
+  const scanUrl = `${base}/scan/${encodeURIComponent(assetTag)}`
   return QRCode.toDataURL(scanUrl, { margin: 2, width: 320 })
 }
 
@@ -1565,7 +1584,16 @@ export function subscribeDashboardRealtime(onChange: () => void) {
   }
 }
 
-export async function getPublicScanAsset(assetTag: string) {
+/** Payload from `fn_public_scan_asset` (anonymous QR): basic identity + inventory status only. */
+export type PublicScanAsset = {
+  asset_tag: string | null
+  category: string | null
+  manufacturer: string | null
+  model: string | null
+  status: string
+}
+
+export async function getPublicScanAsset(assetTag: string): Promise<PublicScanAsset> {
   const normalizedTag = assetTag.trim()
   if (!normalizedTag) {
     throw new Error('Asset not found')
@@ -1587,7 +1615,14 @@ export async function getPublicScanAsset(assetTag: string) {
     throw new Error('Asset not found')
   }
 
-  return payload
+  const p = payload as Record<string, unknown>
+  return {
+    asset_tag: typeof p.asset_tag === 'string' ? p.asset_tag : null,
+    category: typeof p.category === 'string' ? p.category : null,
+    manufacturer: typeof p.manufacturer === 'string' ? p.manufacturer : null,
+    model: typeof p.model === 'string' ? p.model : null,
+    status: typeof p.status === 'string' ? p.status : String(p.status ?? ''),
+  }
 }
 
 export { ERP_ACTIVE_LABEL, ERP_INACTIVE_LABEL }

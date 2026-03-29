@@ -45,6 +45,7 @@ Employees have a canonical `employees.role`: `employee`, `admin`, or `it_ops` (h
 
 ## Recent platform updates
 
+- **Public QR scan:** Migration `17_fn_public_scan_minimal.sql` limits `fn_public_scan_asset` to basic fields (`asset_tag`, category, manufacturer, model, inventory `status`) and restores `qr_scanned` audit events. Full holder/location/custom data remains on authenticated asset views.
 - **Employee flags:** `employees.is_active` (employment / account) and `employees.erp_active` (ERP entitlement) are separate after migration `16_employee_erp_active.sql`. Assignment RPCs still require an **employment-active** employee; asset lists and scan copy use **ERP** for holder badges and “hide ERP-inactive” filters. The client defaults the employee directory to **employment active + ERP inactive** so that slice is easy to find; new-employee form defaults match unless you change the toggles.
 - Notifications center at `/notifications` with role-aware warranty alerts (`employee` sees scoped alerts; `admin`/`it_ops` see all).
 - First-sign-in welcome prompt support (DB RPC + client fallback).
@@ -67,6 +68,8 @@ cd Client && npm install && npm run dev
 cd Server && pip install -r requirements.txt
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
+
+**Scanning QRs from another device while developing:** default QR links use your current browser origin; `http://localhost:…` only works on that PC. Set `VITE_PUBLIC_APP_ORIGIN` in `Client/.env` to your LAN URL (e.g. `http://192.168.x.x:5173`), restart Vite, then create or refresh the asset QR. See [`Client/CLIENT_README.md`](./Client/CLIENT_README.md) (Environment variables + Running Locally). Production: optional override; align `FRONTEND_URL` on the server for server-generated QRs.
 
 ## Deployment
 

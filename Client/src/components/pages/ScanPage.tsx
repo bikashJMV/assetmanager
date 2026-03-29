@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { getPublicScanAsset, scanAsset } from '../../api'
+import { getPublicScanAsset, scanAsset, type PublicScanAsset } from '../../api'
 import { getUserFacingMessage, logDevError } from '../../utils/errors'
 import { formatDisplay } from '../../utils/formatDisplay'
 
@@ -9,7 +9,8 @@ type BarcodeDetectorInstance = {
 }
 type BarcodeDetectorConstructor = new (options: { formats: string[] }) => BarcodeDetectorInstance
 
-type ScanAsset = {
+/** Logged-in scan (`scanAsset`): full passport fields from `v_asset_inventory`. */
+type AuthenticatedScanAsset = {
   asset_tag: string | null
   category: string | null
   manufacturer: string | null
@@ -32,7 +33,7 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
   const [manualTag, setManualTag] = useState('')
   const [scannerActive, setScannerActive] = useState(false)
   const [scannerError, setScannerError] = useState('')
-  const [asset, setAsset] = useState<ScanAsset | null>(null)
+  const [asset, setAsset] = useState<PublicScanAsset | AuthenticatedScanAsset | null>(null)
   const [error, setError] = useState('')
 
   useEffect(() => {
@@ -42,8 +43,7 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
       return
     }
     const resolver = protectedRoute ? scanAsset : getPublicScanAsset
-    resolver(id)
-      .then((data) => setAsset(data as ScanAsset))
+    resolver(id).then((data) => setAsset(data))
       .catch((err) => {
         logDevError('scan.asset', err)
         setError(getUserFacingMessage(err, 'Asset not found'))
@@ -230,42 +230,52 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
     )
   }
 
-  const customEntries = Object.entries(asset.custom_fields || {})
   const heading = [asset.manufacturer, asset.model]
     .map((value) => formatDisplay(value))
     .filter((value) => value !== '-')
     .join(' ')
 
+  const isFullPassport = protectedRoute && 'custom_fields' in asset
+
   return (
     <main className="min-h-screen bg-app text-primary px-4 py-8">
       <div className="text-center mb-8">
-        <p className="text-accent text-xs uppercase tracking-widest mb-1">Asset Passport</p>
+        <p className="text-accent text-xs uppercase tracking-widest mb-1">
+          {protectedRoute ? 'Asset Passport' : 'Asset'}
+        </p>
         <h1 className="text-2xl font-bold">{heading || '-'}</h1>
         <p className="text-subtle text-sm mt-1">{formatDisplay(asset.asset_tag)}</p>
       </div>
 
       <div className="flex justify-center mb-8">
         <span className="bg-accent text-on-accent border border-[color:var(--accent-soft)] px-4 py-1.5 rounded-full text-sm font-medium">
-          Inventory Status: {asset.status}
+          Current status: {asset.status}
         </span>
       </div>
 
       <div className="grid grid-cols-1 gap-3 max-w-xl mx-auto">
         <Field label="Category" value={formatDisplay(asset.category)} />
-        <Field label="Location" value={formatDisplay(asset.location)} />
-        <Field label="Current Holder" value={formatDisplay(asset.holder)} />
-        <Field label="Holder ERP status" value={asset.holder_erp_status} subtle />
-
-        {customEntries.map(([key, value]) => (
-          <Field key={key} label={key} value={formatDisplay(value)} />
-        ))}
+        {isFullPassport ? (
+          <>
+            <Field label="Location" value={formatDisplay(asset.location)} />
+            <Field label="Current Holder" value={formatDisplay(asset.holder)} />
+            <Field label="Holder ERP status" value={asset.holder_erp_status} subtle />
+            {Object.entries(asset.custom_fields || {}).map(([key, value]) => (
+              <Field key={key} label={key} value={formatDisplay(value)} />
+            ))}
+          </>
+        ) : (
+          <p className="text-subtle text-xs text-center px-2">
+            Sign in for assignment history, location, and full record details.
+          </p>
+        )}
       </div>
 
-      {asset.holder_erp_status.toLowerCase().includes('inactive') && (
+      {isFullPassport && asset.holder_erp_status.toLowerCase().includes('inactive') ? (
         <p className="text-center text-subtle text-xs mt-6">
           Holder ERP inactive flag is an admin audit signal.
         </p>
-      )}
+      ) : null}
 
       {!protectedRoute && asset.asset_tag ? (
         <div className="flex justify-center mt-8">

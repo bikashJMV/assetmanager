@@ -175,6 +175,7 @@ All Vite env vars must be prefixed with `VITE_` to be available in browser code 
 |---|---|---|
 | `VITE_SUPABASE_URL` | ✅ Yes | Your Supabase project URL |
 | `VITE_SUPABASE_ANON_KEY` | ✅ Yes | Supabase anon (public) key |
+| `VITE_PUBLIC_APP_ORIGIN` | ❌ No | **QR scan links:** full site origin with scheme, no trailing slash (e.g. `https://web-assetmanager.vercel.app` or `http://192.168.1.10:5173`). If unset, QR URLs use `window.location.origin` (fine for production; **localhost** is wrong for another device). See [Running Locally](#running-locally). |
 | `VITE_API_URL` | ❌ Unused | Reserved for future FastAPI calls from the browser; not read anywhere today |
 
 **`supabaseClient.ts` throws immediately** (`throw new Error(...)`) at module load time if either required variable is missing — this is intentional fail-fast behavior.
@@ -193,7 +194,15 @@ npm install
 npm run dev
 ```
 
-App starts at `http://localhost:5173`.
+App starts at `http://localhost:5173` (and on your LAN IP—`vite.config.ts` sets `server.host: true`).
+
+### QR codes and other devices
+
+Asset QR codes point at `{origin}/scan/{tag}`. That origin defaults to whatever URL you opened in the browser. On a laptop that is often `http://localhost:5173`, which **does not work on a phone** (the phone’s “localhost” is the phone, not your PC).
+
+**Fix:** In `.env`, set `VITE_PUBLIC_APP_ORIGIN` to a URL your phone can open—typically your machine’s LAN address and Vite port, e.g. `http://192.168.1.10:5173`. Restart `npm run dev`, create or regenerate the asset QR, and scan again. Use the **same** Supabase project from that URL (already true if both devices use the internet).
+
+**Production:** Leave `VITE_PUBLIC_APP_ORIGIN` unset so deployed builds use the real site origin. Align the server’s `FRONTEND_URL` with that origin for server-generated QRs (`Server` `qr_service.py`).
 
 ---
 
@@ -485,11 +494,8 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
 
 **Route:** `/scan/:id` | **Auth:** Public (no login required)
 
-- Calls `getPublicScanAsset(id)` using Supabase RPC `fn_public_scan_asset` (granted to `anon`).
-- Renders "Asset Passport" card:
-  - Heading: manufacturer + model.
-  - Inventory status badge.
-  - Fields: Category, Location, Current Holder, Holder ERP/HR Status, all custom fields.
+- Calls `getPublicScanAsset(id)` using Supabase RPC `fn_public_scan_asset` (granted to `anon`). RPC returns **basic fields only**: tag, category, manufacturer, model, inventory `status` (see migration `17_fn_public_scan_minimal.sql`).
+- **Public** (`/scan/:id`): heading + **Current status** badge + category; short note to sign in for full details. **Authenticated** (`protectedRoute`, e.g. `/assets/scan/:id`): full passport via `scanAsset` — location, holder, ERP label, custom fields.
 - Error handling: "404" heading if not found, generic "Error" otherwise.
 - No sidebar is rendered on this page.
 
@@ -761,7 +767,7 @@ Canonical role is `employees.role` (`employee` | `admin` | `it_ops`). `hasActive
 | Asset created via client | `buildAssetQrDataUri(assetTag)` generates a client-side QR using `qrcode` library. Points to `window.location.origin/scan/{assetTag}`. Stored in `fn_create_asset_with_log` → `asset_logs.qr_code` |
 | Asset created via server API | Server generates QR using `{FRONTEND_URL}/scan/{assetTag}` via `qr_service.py`, also stored in `asset_logs.qr_code` |
 | "View QR" on AllAssets | Calls `getQrDataUriForAssetTag(assetTag)`: reads latest `asset_logs.qr_code`. Falls back to generating client-side QR if none stored |
-| Public scan via QR | `GET /scan/:id` → calls `fn_public_scan_asset` RPC (anon-accessible) → shows asset passport |
+| Public scan via QR | `GET /scan/:id` → `fn_public_scan_asset` (anon) → minimal card (tag, category, make/model, **status**); full record requires login |
 
 ---
 
@@ -804,6 +810,8 @@ All paths are rewritten to `index.html` so React Router deep links (e.g. `/asset
 ```env
 VITE_SUPABASE_URL=https://<your-project-ref>.supabase.co
 VITE_SUPABASE_ANON_KEY=<anon-public-key>
+# Optional canonical origin for QR payloads if previews use a non-production hostname:
+# VITE_PUBLIC_APP_ORIGIN=https://<your-production-domain>
 ```
 
 ### Production reference (this deployment)

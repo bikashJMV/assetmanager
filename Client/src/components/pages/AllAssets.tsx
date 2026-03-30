@@ -5,7 +5,9 @@ import {
   getQrDataUriForAssetTag,
   getSessionEmployee,
   hasActiveAdminAccess,
+  hasActiveItOpsAccess,
   listCategories,
+  regenerateQrDataUriForAssetTag,
   softDeleteAssetById,
   type AssetFilters,
   type AssetInventoryRecord,
@@ -18,8 +20,6 @@ import { getErrorDebugDetail, getUserFacingMessage, logDevError } from '../../ut
 import { formatDisplay } from '../../utils/formatDisplay'
 
 const SEARCH_DEBOUNCE_MS = 300
-/** Set to true to show "Regenerate QR" in the asset QR modal. */
-const SHOW_REGENERATE_QR_BUTTON = false
 const statusFilters = ['assigned', 'in_stock', 'in_repair', 'retired', 'lost', 'disposed']
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
@@ -33,6 +33,7 @@ export default function AllAssets() {
   const [qrLoading, setQrLoading] = useState(false)
   const [categories, setCategories] = useState<CategoryRecord[]>([])
   const [isAdmin, setIsAdmin] = useState(false)
+  const [isItOps, setIsItOps] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<AssetInventoryRecord | null>(null)
   const [scopeEmployeeId, setScopeEmployeeId] = useState<string | null>(null)
   const [accessResolved, setAccessResolved] = useState(false)
@@ -82,16 +83,18 @@ export default function AllAssets() {
     let mounted = true
     void (async () => {
       try {
-        const [rows, adminAllowed, profile] = await Promise.all([
+        const [rows, adminAllowed, profile, itOpsAllowed] = await Promise.all([
           listCategories().catch(() => [] as CategoryRecord[]),
           hasActiveAdminAccess(),
           getSessionEmployee(),
+          hasActiveItOpsAccess(),
         ])
         if (!mounted) return
         const profileAdmin = Boolean(profile?.is_active && profile?.role !== 'employee')
         const effectiveAdmin = adminAllowed || profileAdmin
         setCategories(rows)
         setIsAdmin(effectiveAdmin)
+        setIsItOps(itOpsAllowed)
         setScopeEmployeeId(effectiveAdmin ? null : (profile?.id || null))
       } catch {
         // Keep UI usable even if categories fail.
@@ -376,12 +379,11 @@ export default function AllAssets() {
             </div>
             <p className="text-muted text-xs mt-4">Scan to view asset details</p>
             <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-2">
-              {SHOW_REGENERATE_QR_BUTTON ? (
+              {isItOps ? (
                 <button
                   onClick={async () => {
                     setQrLoading(true)
                     try {
-                      const { regenerateQrDataUriForAssetTag } = await import('../../api')
                       const newQrCode = await regenerateQrDataUriForAssetTag(qrModal.assetTag)
                       setQrModal({ assetTag: qrModal.assetTag, qrCode: newQrCode })
                     } catch (err) {

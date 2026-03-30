@@ -175,7 +175,8 @@ All Vite env vars must be prefixed with `VITE_` to be available in browser code 
 |---|---|---|
 | `VITE_SUPABASE_URL` | ✅ Yes | Your Supabase project URL |
 | `VITE_SUPABASE_ANON_KEY` | ✅ Yes | Supabase anon (public) key |
-| `VITE_PUBLIC_APP_ORIGIN` | ❌ No | **QR scan links:** full site origin with scheme, no trailing slash (e.g. `https://web-assetmanager.vercel.app` or `http://192.168.1.10:5173`). If unset, QR URLs use `window.location.origin` (fine for production; **localhost** is wrong for another device). See [Running Locally](#running-locally). |
+| `VITE_PUBLIC_APP_ORIGIN` | ❌ No | **QR scan links:** overrides the built-in production origin. **Production builds** default to `https://web-assetmanager.vercel.app` (see `PRODUCTION_QR_APP_ORIGIN` in `api.ts`). **Dev** defaults to `window.location.origin`; set to `http://192.168.x.x:5173` for phone-on-LAN testing. Forks should change the constant or set this var. |
+| `VITE_TRUST_STORED_ASSET_QR` | ❌ No | If `true`, the “View QR” path may reuse `asset_logs.qr_code` even when it points at the wrong host. **Do not set in production** unless you know every stored QR is correct. Default behavior: production and dev-with-`VITE_PUBLIC_APP_ORIGIN` **regenerate** the PNG so scans match the current origin. |
 | `VITE_API_URL` | ❌ Unused | Reserved for future FastAPI calls from the browser; not read anywhere today |
 
 **`supabaseClient.ts` throws immediately** (`throw new Error(...)`) at module load time if either required variable is missing — this is intentional fail-fast behavior.

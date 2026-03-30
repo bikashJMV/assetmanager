@@ -2,6 +2,9 @@ import type { Session, User } from '@supabase/supabase-js'
 import QRCode from 'qrcode'
 import { supabase } from './supabaseClient'
 
+/** Production deploy origin embedded in QRs when `npm run build` runs (override with `VITE_PUBLIC_APP_ORIGIN`). */
+const PRODUCTION_QR_APP_ORIGIN = 'https://web-assetmanager.vercel.app'
+
 export type SessionEmployee = {
   id: string
   employee_code: string
@@ -528,6 +531,19 @@ async function assertActiveAdminAccess() {
   const state = await getActiveAdminAccessState()
   if (!state.allowed) {
     throw new Error(state.reason || 'Signed-in account must be linked to an active admin/IT Ops employee record.')
+  }
+}
+
+/** Soft check for UI (does not throw on transient RPC errors). */
+export async function hasActiveItOpsAccess(): Promise<boolean> {
+  try {
+    const profile = await getSessionEmployee()
+    if (profile?.is_active && profile.role === 'it_ops') return true
+    const { data, error } = await supabase.rpc('fn_is_it_ops')
+    if (error) return false
+    return extractRpcScalarBoolean(data, ['fn_is_it_ops']) ?? false
+  } catch {
+    return false
   }
 }
 
@@ -1322,35 +1338,50 @@ export async function getQrDataUriForAssetTag(assetTag: string): Promise<string>
 
   const asset = await getAssetIdentityByTag(normalizedTag)
 
-  const { data, error } = await supabase
-    .from('asset_logs')
-    .select('qr_code,created_at')
-    .eq('asset_id', asset.id)
-    .not('qr_code', 'is', null)
-    .order('created_at', { ascending: false })
-    .limit(100)
+  const hasExplicitPublicOrigin =
+    typeof import.meta.env.VITE_PUBLIC_APP_ORIGIN === 'string' &&
+    import.meta.env.VITE_PUBLIC_APP_ORIGIN.trim() !== ''
 
-  ensureNoSupabaseError(error, 'Unable to fetch QR log')
+  // Stored `asset_logs.qr_code` embeds whatever origin existed at creation time (often localhost
+  // during dev). In production, always render a fresh QR from the current deployment origin so
+  // scans do not open stale hosts. With an explicit VITE_PUBLIC_APP_ORIGIN, same idea for previews.
+  const useStoredFromDb =
+    import.meta.env.VITE_TRUST_STORED_ASSET_QR === 'true' ||
+    (import.meta.env.DEV && !hasExplicitPublicOrigin)
 
-  const storedQr = (data ?? []).find(
-    (row) => typeof row?.qr_code === 'string' && row.qr_code.trim().length > 0
-  )?.qr_code
+  if (useStoredFromDb) {
+    const { data, error } = await supabase
+      .from('asset_logs')
+      .select('qr_code,created_at')
+      .eq('asset_id', asset.id)
+      .not('qr_code', 'is', null)
+      .order('created_at', { ascending: false })
+      .limit(100)
 
-  if (storedQr) return storedQr.trim()
+    ensureNoSupabaseError(error, 'Unable to fetch QR log')
 
-  // Ensure each asset gets an individual persisted QR log, not only an in-memory fallback.
-  const created = await createLogForAsset(
-    asset.id,
-    asset.asset_tag || normalizedTag,
-    'Auto-generated individual QR for asset'
-  )
-  if (typeof created?.qr_code === 'string' && created.qr_code.trim().length > 0) {
-    return created.qr_code.trim()
+    const storedQr = (data ?? []).find(
+      (row) => typeof row?.qr_code === 'string' && row.qr_code.trim().length > 0
+    )?.qr_code
+
+    if (storedQr) return storedQr.trim()
+
+    const created = await createLogForAsset(
+      asset.id,
+      asset.asset_tag || normalizedTag,
+      'Auto-generated individual QR for asset'
+    )
+    if (typeof created?.qr_code === 'string' && created.qr_code.trim().length > 0) {
+      return created.qr_code.trim()
+    }
   }
+
   return buildAssetQrDataUri(asset.asset_tag || normalizedTag)
 }
 
 export async function regenerateQrDataUriForAssetTag(assetTag: string): Promise<string> {
+  await assertActiveItOpsAccess()
+
   const normalizedTag = assetTag.trim()
   if (!normalizedTag) {
     throw new Error('Asset tag is required to generate QR')
@@ -1460,8 +1491,8 @@ async function createLogForAsset(assetId: string, assetTag: string, note: string
 
 /**
  * Origin embedded in asset QR codes (`/scan/{tag}`).
- * Set `VITE_PUBLIC_APP_ORIGIN` when dev URL is not reachable from the scanner (e.g. localhost vs phone on LAN).
- * Production: omit it and the current browser origin is used.
+ * - **Production build:** `https://web-assetmanager.vercel.app` unless `VITE_PUBLIC_APP_ORIGIN` is set (staging / fork).
+ * - **Development:** `window.location.origin`, or set `VITE_PUBLIC_APP_ORIGIN` for LAN phone testing.
  */
 export function getScanPageBaseUrl(): string {
   const raw = import.meta.env.VITE_PUBLIC_APP_ORIGIN
@@ -1471,10 +1502,13 @@ export function getScanPageBaseUrl(): string {
       return trimmed
     }
   }
+  if (import.meta.env.PROD) {
+    return PRODUCTION_QR_APP_ORIGIN
+  }
   if (typeof window !== 'undefined' && window.location?.origin) {
     return window.location.origin
   }
-  return ''
+  return PRODUCTION_QR_APP_ORIGIN
 }
 
 async function buildAssetQrDataUri(assetTag: string): Promise<string> {

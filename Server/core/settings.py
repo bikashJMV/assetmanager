@@ -21,13 +21,18 @@ class Settings:
     SUPABASE_URL: str = field(default_factory=lambda: os.getenv("SUPABASE_URL", os.getenv("VITE_SUPABASE_URL", "")))
     SUPABASE_KEY: str = field(default_factory=lambda: os.getenv("SUPABASE_KEY", os.getenv("VITE_SUPABASE_KEY", "")))
 
-    # FRONTEND_URL: Used for QR code generation (public SPA origin).
-    FRONTEND_URL: str = field(default_factory=lambda: os.getenv("FRONTEND_URL", os.getenv("VITE_FRONTEND_URL", "")))
+    # FRONTEND_URL: Used for QR code generation (public SPA origin). Default matches deployed client.
+    FRONTEND_URL: str = field(
+        default_factory=lambda: os.getenv(
+            "FRONTEND_URL",
+            os.getenv("VITE_FRONTEND_URL", "https://web-assetmanager.vercel.app"),
+        )
+    )
 
     # ALLOWED_ORIGINS: Comma-separated list of allowed origins for CORS.
     ALLOWED_ORIGINS: List[str] = field(
         default_factory=lambda: _parse_origins(
-            os.getenv("ALLOWED_ORIGINS", os.getenv("VITE_ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:3000"))
+            os.getenv("ALLOWED_ORIGINS", os.getenv("VITE_ALLOWED_ORIGINS", ""))
         )
     )
 

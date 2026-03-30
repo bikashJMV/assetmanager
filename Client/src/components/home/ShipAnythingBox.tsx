@@ -7,7 +7,7 @@ const featureChips: FeatureChip[] = [
   { label: 'Google Sign-In', icon: 'log-in', filled: true },
   { label: 'Asset Listing', icon: 'boxes' },
   { label: 'QR Scan', icon: 'scan', filled: true },
-  { label: 'Employee Tracking', icon: 'users' },
+  { label: 'Asset Tracking', icon: 'users' },
   { label: 'Category Breakdown', icon: 'chart-column' },
   { label: 'Realtime Sync', icon: 'refresh-cw', filled: true },
   { label: 'Guide Page', icon: 'guide' },

@@ -117,7 +117,7 @@
 .text-muted,
 .text-subtle,
 .text-accent,
-.text-on-accent,
+.text-white,
 .bg-accent,
 .bg-accent-hover,
 .border-base,
@@ -134,7 +134,7 @@
 .text-muted { color: var(--muted); }
 .text-subtle { color: var(--subtle); }
 .text-accent { color: var(--accent); }
-.text-on-accent { color: var(--on-accent); }
+.text-white { color: var(--on-accent); }
 .bg-accent { background-color: var(--accent); }
 .bg-accent-hover { background-color: var(--accent-hover); }
 .border-base { border-color: var(--border); }
@@ -399,7 +399,7 @@
 @media (prefers-reduced-motion: reduce) {
   html, body, #root,
   .bg-app, .bg-surface, .bg-surface-2, .bg-surface-3,
-  .text-primary, .text-muted, .text-subtle, .text-accent, .text-on-accent,
+  .text-primary, .text-muted, .text-subtle, .text-accent, .text-white,
   .bg-accent, .bg-accent-hover, .border-base, .border-accent-soft, .shadow-accent,
   .ai-icon * {
     transition: none;

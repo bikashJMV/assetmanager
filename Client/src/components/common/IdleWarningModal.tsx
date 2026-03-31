@@ -31,7 +31,7 @@ export default function IdleWarningModal({ onStayLoggedIn, onLogoutNow }: IdleWa
             <button
               type="button"
               onClick={onStayLoggedIn}
-              className="w-full rounded-lg bg-accent px-4 py-2.5 text-sm font-semibold text-on-accent transition hover:bg-accent-hover"
+              className="w-full rounded-lg bg-accent px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-accent-hover"
             >
               Yes, stay logged in
             </button>

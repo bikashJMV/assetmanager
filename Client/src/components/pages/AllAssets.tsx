@@ -16,12 +16,23 @@ import {
 import Error from '../common/Error'
 import RefreshButton from '../common/RefreshButton'
 import ConfirmDialog from '../common/ConfirmDialog'
+import InfoHint from '../common/InfoHint'
+import assetInfoHint from '../../data/assetInfoHint.json'
 import { getErrorDebugDetail, getUserFacingMessage, logDevError } from '../../utils/errors'
 import { formatDisplay } from '../../utils/formatDisplay'
+import IconActionButton from '../common/IconActionButton'
 
 const SEARCH_DEBOUNCE_MS = 300
 const statusFilters = ['assigned', 'in_stock', 'in_repair', 'retired', 'lost', 'disposed']
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+
+type AssetsPageInfoHint = {
+  panelTitle: string
+  ariaLabel: string
+  sections: { heading: string; bullets: string[] }[]
+}
+
+const ASSETS_PAGE_INFO_HINT = assetInfoHint as AssetsPageInfoHint
 
 export default function AllAssets() {
   const [assets, setAssets] = useState<AssetInventoryRecord[]>([])
@@ -254,8 +265,30 @@ export default function AllAssets() {
             />
             Hide ERP-inactive employees
           </label>
-
-          <RefreshButton onClick={handleRefresh} loading={loading} label="Refresh" />
+          <RefreshButton
+            onClick={handleRefresh}
+            loading={loading}
+            iconOnly
+            ariaLabel="Refresh Assets"
+            title={loading ? 'Refreshing assets' : 'Refresh assets'}
+            className="shrink-0"
+          />
+          <InfoHint
+            panelTitle={ASSETS_PAGE_INFO_HINT.panelTitle}
+            ariaLabel={ASSETS_PAGE_INFO_HINT.ariaLabel}
+            className="shrink-0 2xl:ml-auto"
+          >
+            {ASSETS_PAGE_INFO_HINT.sections.map((section) => (
+              <div key={section.heading}>
+                <p className="font-medium text-primary">{section.heading}</p>
+                <ul className="mt-1.5 list-disc space-y-1 pl-4">
+                  {section.bullets.map((text, i) => (
+                    <li key={`${section.heading}-${i}`}>{text}</li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </InfoHint>
         </div>
       </div>
 
@@ -265,7 +298,6 @@ export default function AllAssets() {
         </p>
       )}
 
-      <p className="text-[11px] text-subtle mb-3">Inventory filters here use `assets.status` only.</p>
       {error ? (
         <div className="mb-3">
           <Error
@@ -289,7 +321,7 @@ export default function AllAssets() {
           <table className="w-full text-sm text-left min-w-[940px]">
             <thead className="bg-surface-2 text-subtle text-xs uppercase">
               <tr>
-                {['Asset Tag', 'Category', 'Manufacturer', 'Model', 'Holder', 'ERP Holder Status', 'Inventory Status', 'Assignment', 'Actions'].map((header) => (
+                {['Actions', 'Asset Tag', 'Category', 'Manufacturer', 'Model', 'Holder', 'ERP Holder Status', 'Inventory Status', 'Assignment'].map((header) => (
                   <th key={header} className="px-4 py-3 whitespace-nowrap">{header}</th>
                 ))}
               </tr>
@@ -303,6 +335,40 @@ export default function AllAssets() {
                     if (asset.asset_tag) navigate(`/assets/${asset.asset_tag}`)
                   }}
                 >
+                  <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                    {isAdmin ? (
+                      <div className="flex items-center gap-2 justify-end">
+                        <button
+                          type="button"
+                          onClick={(e) => void handleViewQR(e, asset.asset_tag)}
+                          disabled={qrLoading}
+                          className="text-xs font-semibold border border-[color:var(--accent-soft)] text-accent px-3 py-1.5 rounded-lg hover:bg-[color:var(--accent-soft)]/20 transition whitespace-nowrap disabled:opacity-60 disabled:cursor-not-allowed"
+                        >
+                          View QR
+                        </button>
+                        <IconActionButton
+                          icon="edit"
+                          label="Edit"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            if (asset.asset_tag) navigate(`/assets/${asset.asset_tag}`)
+                          }}
+                          variant="base"
+                        />
+                        <IconActionButton
+                          icon="trash"
+                          label="Delete"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setDeleteTarget(asset)
+                          }}
+                          variant="danger"
+                        />
+                      </div>
+                    ) : (
+                      <span className="text-subtle text-xs">-</span>
+                    )}
+                  </td>
                   <td className="px-4 py-3 text-accent font-medium">{formatDisplay(asset.asset_tag)}</td>
                   <td className="px-4 py-3 text-muted">{formatDisplay(asset.category_name)}</td>
                   <td className="px-4 py-3 text-muted">{formatDisplay(asset.manufacturer_name)}</td>
@@ -310,7 +376,7 @@ export default function AllAssets() {
                   <td className="px-4 py-3">{formatDisplay(asset.current_employee_name)}</td>
                   <td className="px-4 py-3">
                     {asset.current_employee_id ? (
-                      <span className={`px-2 py-0.5 rounded text-xs ${asset.current_employee_erp_active ? 'bg-accent text-on-accent' : 'bg-surface border border-base text-muted'}`}>
+                      <span className={`px-2 py-0.5 rounded text-xs ${asset.current_employee_erp_active ? 'bg-accent text-white' : 'bg-surface border border-base text-muted'}`}>
                         {asset.current_employee_erp_active ? 'ERP Active' : 'ERP Inactive'}
                       </span>
                     ) : (
@@ -318,45 +384,9 @@ export default function AllAssets() {
                     )}
                   </td>
                   <td className="px-4 py-3">
-                    <span className="bg-accent text-on-accent px-2 py-0.5 rounded text-xs">{asset.status}</span>
+                    <span className="bg-accent text-white px-2 py-0.5 rounded text-xs">{asset.status}</span>
                   </td>
                   <td className="px-4 py-3 text-subtle text-xs">{asset.assignment_id ? 'Assigned' : 'No open assignment'}</td>
-                  <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
-                    {isAdmin ? (
-                      <div className="flex items-center gap-2 justify-end">
-                        <button
-                          onClick={(e) => handleViewQR(e, asset.asset_tag)}
-                          disabled={qrLoading}
-                          className="text-xs text-accent border border-[color:var(--accent-soft)] px-3 py-1 rounded hover:bg-[color:var(--accent-soft)]/20 transition disabled:opacity-40 whitespace-nowrap"
-                          type="button"
-                        >
-                          View QR
-                        </button>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            if (asset.asset_tag) navigate(`/assets/${asset.asset_tag}`)
-                          }}
-                          className="text-xs border border-base px-3 py-1 rounded hover:bg-surface-2 transition whitespace-nowrap"
-                          type="button"
-                        >
-                          Edit
-                        </button>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            setDeleteTarget(asset)
-                          }}
-                          className="text-xs border border-base px-3 py-1 rounded hover:bg-surface-2 transition whitespace-nowrap"
-                          type="button"
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    ) : (
-                      <span className="text-subtle text-xs">-</span>
-                    )}
-                  </td>
                 </tr>
               ))}
               {assets.length === 0 && (
@@ -409,7 +439,7 @@ export default function AllAssets() {
               </button>
               <button
                 onClick={() => setQrModal(null)}
-                className="bg-accent text-on-accent font-semibold px-6 py-2 rounded-lg hover:bg-accent-hover transition text-sm w-full shadow-accent"
+                className="bg-accent text-white font-semibold px-6 py-2 rounded-lg hover:bg-accent-hover transition text-sm w-full shadow-accent"
                 type="button"
               >
                 Close

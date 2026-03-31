@@ -19,13 +19,15 @@ Apply in this exact order:
 15. `15_fn_assign_assigned_at_coalesce.sql`
 16. `16_employee_erp_active.sql`
 17. `17_fn_public_scan_minimal.sql`
+18. `18_asset_event_audit_diffs.sql`
 
 ## Notes
 
 - **`17_fn_public_scan_minimal.sql`:** Replaces `fn_public_scan_asset` so anonymous scans return only `asset_tag`, `category`, `manufacturer`, `model`, and `status`, and reinstates `qr_scanned` logging via `fn_internal_record_asset_event` (the SQL-only rewrite in `16` omitted it).
+- **`18_asset_event_audit_diffs.sql`:** Upgrades lifecycle audit payloads with immutable `actor_snapshot`, adds field-level `changes` for `asset_updated`, introduces explicit `asset_deleted` / `asset_restored` event types, and enriches assign/return payloads with employee snapshot details.
 - **`16_employee_erp_active.sql`:** When replacing `v_asset_inventory`, new columns must be **appended** at the end of the `SELECT` list so `CREATE OR REPLACE VIEW` does not trip PostgreSQL’s “cannot change name of view column” error. The file keeps `current_employee_erp_active` after `updated_by`.
 - All scripts are idempotent and safe to re-run.
-- If you already applied these migrations once, re-run `03_views.sql`, `04_rls_policies.sql`, `07_admin_audit.sql`, `08_it_ops_rbac.sql`, `09_warranty_notifications.sql`, `10_user_welcome_notification.sql`, `11_soft_delete_recycle_bin.sql`, `12_employee_code_standardization.sql`, `13_asset_audit_and_events.sql`, `14_fn_assign_employee_code_normalize.sql`, `15_fn_assign_assigned_at_coalesce.sql`, `16_employee_erp_active.sql`, and `17_fn_public_scan_minimal.sql` after pulling latest changes.
+- If you already applied these migrations once, re-run `03_views.sql`, `04_rls_policies.sql`, `07_admin_audit.sql`, `08_it_ops_rbac.sql`, `09_warranty_notifications.sql`, `10_user_welcome_notification.sql`, `11_soft_delete_recycle_bin.sql`, `12_employee_code_standardization.sql`, `13_asset_audit_and_events.sql`, `14_fn_assign_employee_code_normalize.sql`, `15_fn_assign_assigned_at_coalesce.sql`, `16_employee_erp_active.sql`, `17_fn_public_scan_minimal.sql`, and `18_asset_event_audit_diffs.sql` after pulling latest changes.
 - Seed uses conflict-safe inserts/upserts.
 - Asset status is derived from assignment state via DB trigger.
 - `employees.is_active` = employee / account active; `employees.erp_active` = ERP entitlement (see `16_employee_erp_active.sql`).

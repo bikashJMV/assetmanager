@@ -93,7 +93,7 @@ function AppRoutes() {
 
   const { isWarning, stayLoggedIn, logoutNow } = useIdleTimeout({
     isAuthenticated: Boolean(session),
-    onWarn: () => {},
+    onWarn: () => { },
     onIdle: () => void handleAutoLogout(),
   })
 
@@ -106,9 +106,9 @@ function AppRoutes() {
     <div className="min-h-screen bg-app text-primary flex">
       {isWarning && Boolean(session) && (
         <Suspense fallback={null}>
-          <IdleWarningModal 
-            onStayLoggedIn={stayLoggedIn} 
-            onLogoutNow={logoutNow} 
+          <IdleWarningModal
+            onStayLoggedIn={stayLoggedIn}
+            onLogoutNow={logoutNow}
           />
         </Suspense>
       )}
@@ -218,7 +218,7 @@ function SignInScreen({ error }: { error: string }) {
           type="button"
           onClick={() => void handleSignIn()}
           disabled={loading}
-          className="mt-6 w-full bg-accent text-on-accent font-semibold py-2.5 rounded-lg hover:bg-accent-hover transition disabled:opacity-60"
+          className="mt-6 w-full bg-accent text-white font-semibold py-2.5 rounded-lg hover:bg-accent-hover transition disabled:opacity-60"
         >
           {loading ? 'Redirecting...' : 'Continue with Google'}
         </button>

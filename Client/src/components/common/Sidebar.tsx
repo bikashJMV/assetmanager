@@ -182,9 +182,9 @@ function MainNavLink({
         aria-label={item.label}
         aria-current={active ? 'page' : undefined}
         className={`group nav-item flex h-10 w-10 items-center justify-center rounded-xl border transition ${active
-          ? 'nav-item-active border-accent-soft bg-accent text-on-accent shadow-accent'
+          ? 'nav-item-active border-accent-soft bg-accent text-white shadow-accent'
           : accentTone
-            ? 'border-accent-soft bg-[color:var(--accent-soft)] text-accent hover:bg-accent hover:text-on-accent'
+            ? 'border-accent-soft bg-[color:var(--accent-soft)] text-accent hover:bg-accent hover:text-white'
             : 'border-base bg-surface text-muted hover:bg-surface-3 hover:text-primary'
           }`}
       >
@@ -254,7 +254,7 @@ function MainNavAction({
         title={actionLabel}
         aria-label={actionLabel}
         className={`group nav-item flex h-10 w-10 items-center justify-center rounded-xl border transition ${active
-          ? 'nav-item-active border-accent-soft bg-accent text-on-accent shadow-accent'
+          ? 'nav-item-active border-accent-soft bg-accent text-white shadow-accent'
           : 'border-base bg-surface text-muted hover:bg-surface-3 hover:text-primary'
           }`}
       >
@@ -797,7 +797,7 @@ export default function Sidebar({ isAuthenticated }: { isAuthenticated: boolean 
   return (
     <>
       <button
-        className="sm:hidden fixed top-4 left-4 z-30 bg-accent text-on-accent font-semibold px-4 py-2 rounded-xl shadow-accent hover:bg-accent-hover transition"
+        className="sm:hidden fixed top-4 left-4 z-30 bg-accent text-white font-semibold px-4 py-2 rounded-xl shadow-accent hover:bg-accent-hover transition"
         onClick={() => setMobileOpen(true)}
         aria-label="Open navigation"
       >

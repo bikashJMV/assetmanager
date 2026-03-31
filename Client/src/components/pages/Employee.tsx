@@ -3,6 +3,10 @@ import EmployeeForm from '../form/EmployeeForm'
 import Error from '../common/Error'
 import RefreshButton from '../common/RefreshButton'
 import ConfirmDialog from '../common/ConfirmDialog'
+import Loader from '../common/Loader'
+import InfoHint from '../common/InfoHint'
+import IconActionButton from '../common/IconActionButton'
+import AnimatedNavIcon from '../common/AnimatedNavIcon'
 import {
   getCurrentEmployeeAssets,
   getAssets,
@@ -21,6 +25,15 @@ import {
 } from '../../api'
 import { getErrorDebugDetail, getUserFacingMessage, logDevError } from '../../utils/errors'
 import { formatDisplay } from '../../utils/formatDisplay'
+import employeeInfoHint from '../../data/employeeInfoHint.json'
+
+type EmployeePageInfoHint = {
+  panelTitle: string
+  ariaLabel: string
+  sections: { heading: string; bullets: string[] }[]
+}
+
+const EMPLOYEE_PAGE_INFO_HINT = employeeInfoHint as EmployeePageInfoHint
 
 const SEARCH_DEBOUNCE_MS = 300
 const FILTER_STATUS_ALL = 'all' as const
@@ -57,6 +70,12 @@ function formatRoleLabel(role: string): string {
   if (normalized === 'it_ops') return 'IT Ops'
   if (normalized === 'admin') return 'Admin'
   return 'Employee'
+}
+
+function roleChangeConfirmLabel(role: EmployeeRole): string {
+  if (role === 'admin') return 'Set Admin'
+  if (role === 'it_ops') return 'Set IT Ops'
+  return 'Set Employee'
 }
 
 function toApiFilters(input: EmployeeFiltersInput): EmployeeListFilters {
@@ -116,6 +135,9 @@ export default function Employee() {
   const [viewMode, setViewMode] = useState<EmployeeViewMode>(getInitialEmployeeViewMode)
   const [successMessage, setSuccessMessage] = useState('')
   const [deleteTarget, setDeleteTarget] = useState<EmployeeRecord | null>(null)
+  const [grantAdminTarget, setGrantAdminTarget] = useState<EmployeeRecord | null>(null)
+  const [revokeAdminTarget, setRevokeAdminTarget] = useState<EmployeeRecord | null>(null)
+  const [adminPrivilegeLoading, setAdminPrivilegeLoading] = useState(false)
 
   const requestIdRef = useRef(0)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -267,27 +289,65 @@ export default function Employee() {
     }
   }
 
-  const handleGrantAdmin = async (employee: EmployeeRecord) => {
+  const openGrantAdminConfirm = (employee: EmployeeRecord) => {
+    setGrantAdminTarget(employee)
+    setSuccessMessage('')
+    setError('')
+    setErrorDebug(undefined)
+  }
+
+  const closeGrantAdminConfirm = () => {
+    if (adminPrivilegeLoading) return
+    setGrantAdminTarget(null)
+  }
+
+  const openRevokeAdminConfirm = (employee: EmployeeRecord) => {
+    setRevokeAdminTarget(employee)
+    setSuccessMessage('')
+    setError('')
+    setErrorDebug(undefined)
+  }
+
+  const closeRevokeAdminConfirm = () => {
+    if (adminPrivilegeLoading) return
+    setRevokeAdminTarget(null)
+  }
+
+  const handleConfirmGrantAdmin = async () => {
+    if (!grantAdminTarget) return
+    setAdminPrivilegeLoading(true)
+    setError('')
+    setErrorDebug(undefined)
     try {
-      await setEmployeeAdminStatus(employee, true)
-      setSuccessMessage(`${employee.name} is now an admin.`)
+      await setEmployeeAdminStatus(grantAdminTarget, true)
+      setSuccessMessage(`${grantAdminTarget.name} is now an admin.`)
+      setGrantAdminTarget(null)
       await fetchEmployees(filtersRef.current)
     } catch (err) {
       logDevError('employees.grant_admin', err)
       setError(getUserFacingMessage(err, 'Unable to update admin privileges right now.'))
       setErrorDebug(getErrorDebugDetail(err))
+    } finally {
+      setAdminPrivilegeLoading(false)
     }
   }
 
-  const handleRevokeAdmin = async (employee: EmployeeRecord) => {
+  const handleConfirmRevokeAdmin = async () => {
+    if (!revokeAdminTarget) return
+    setAdminPrivilegeLoading(true)
+    setError('')
+    setErrorDebug(undefined)
     try {
-      await setEmployeeAdminStatus(employee, false)
-      setSuccessMessage(`${employee.name} is now an employee.`)
+      await setEmployeeAdminStatus(revokeAdminTarget, false)
+      setSuccessMessage(`${revokeAdminTarget.name} is now an employee.`)
+      setRevokeAdminTarget(null)
       await fetchEmployees(filtersRef.current)
     } catch (err) {
       logDevError('employees.revoke_admin', err)
       setError(getUserFacingMessage(err, 'Unable to update admin privileges right now.'))
       setErrorDebug(getErrorDebugDetail(err))
+    } finally {
+      setAdminPrivilegeLoading(false)
     }
   }
 
@@ -408,7 +468,7 @@ export default function Employee() {
               </span>
               <span>Filters</span>
               {activeAdvancedFilterCount > 0 && (
-                <span className="inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-accent px-1.5 py-0.5 text-[11px] font-semibold text-on-accent">
+                <span className="inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-accent px-1.5 py-0.5 text-[11px] font-semibold text-white">
                   {activeAdvancedFilterCount}
                 </span>
               )}
@@ -430,7 +490,7 @@ export default function Employee() {
                 title="Table layout"
                 onClick={() => setViewMode('table')}
                 className={`inline-flex h-8 w-8 items-center justify-center rounded-md transition ${viewMode === 'table'
-                  ? 'bg-accent text-on-accent'
+                  ? 'bg-accent text-white'
                   : 'text-muted hover:bg-surface-3 hover:text-primary'
                   }`}
               >
@@ -442,13 +502,32 @@ export default function Employee() {
                 title="Grid layout"
                 onClick={() => setViewMode('grid')}
                 className={`inline-flex h-8 w-8 items-center justify-center rounded-md transition ${viewMode === 'grid'
-                  ? 'bg-accent text-on-accent'
+                  ? 'bg-accent text-white'
                   : 'text-muted hover:bg-surface-3 hover:text-primary'
                   }`}
               >
                 <GridViewIcon />
               </button>
             </div>
+
+            {accessResolved && canManageEmployees ? (
+              <InfoHint
+                panelTitle={EMPLOYEE_PAGE_INFO_HINT.panelTitle}
+                ariaLabel={EMPLOYEE_PAGE_INFO_HINT.ariaLabel}
+                className="shrink-0"
+              >
+                {EMPLOYEE_PAGE_INFO_HINT.sections.map((section) => (
+                  <div key={section.heading}>
+                    <p className="font-medium text-primary">{section.heading}</p>
+                    <ul className="mt-1.5 list-disc space-y-1 pl-4">
+                      {section.bullets.map((text, i) => (
+                        <li key={`${section.heading}-${i}`}>{text}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ))}
+              </InfoHint>
+            ) : null}
           </div>
         </div>
 
@@ -544,7 +623,7 @@ export default function Employee() {
                 <p className="text-xs text-subtle uppercase tracking-[0.12em]">Asset</p>
                 <p className="text-sm font-semibold text-primary mt-1">{formatDisplay(asset.asset_tag)}</p>
                 <p className="text-xs text-muted mt-1">{formatDisplay(asset.model)}</p>
-                <span className="inline-flex mt-2 text-[11px] px-2 py-0.5 rounded bg-accent text-on-accent">{asset.status}</span>
+                <span className="inline-flex mt-2 text-[11px] px-2 py-0.5 rounded bg-accent text-white">{asset.status}</span>
               </div>
             ))}
           </div>
@@ -577,13 +656,9 @@ export default function Employee() {
         </div>
       ) : null}
 
-      {accessResolved && loading && <p className="text-subtle text-sm mb-4">Loading employees...</p>}
-
       <section className="min-w-0">
-        {!accessResolved ? (
-          <div className="rounded-xl border border-base bg-surface px-4 py-6 text-sm text-subtle">
-            Loading...
-          </div>
+        {!accessResolved || (loading && employees.length === 0) ? (
+          <Loader embedded />
         ) : viewMode === 'table' ? (
           <div className="overflow-x-auto rounded-xl border border-base">
             <table className="w-full min-w-[980px] text-sm text-left">
@@ -608,12 +683,12 @@ export default function Employee() {
                     <td className="px-4 py-3 text-primary">{formatDisplay(employee.department)}</td>
                     <td className="px-4 py-3 text-primary">{formatRoleLabel(employee.role)}</td>
                     <td className="px-4 py-3">
-                      <span className={`text-xs px-2 py-1 rounded ${employee.is_active ? 'bg-accent text-on-accent' : 'bg-surface border border-base text-muted'}`}>
+                      <span className={`text-xs px-2 py-1 rounded ${employee.is_active ? 'bg-accent text-white' : 'bg-surface border border-base text-muted'}`}>
                         {employee.is_active ? 'Active' : 'Not active'}
                       </span>
                     </td>
                     <td className="px-4 py-3">
-                      <span className={`text-xs px-2 py-1 rounded ${employee.erp_active ? 'bg-accent text-on-accent' : 'bg-surface border border-base text-muted'}`}>
+                      <span className={`text-xs px-2 py-1 rounded ${employee.erp_active ? 'bg-accent text-white' : 'bg-surface border border-base text-muted'}`}>
                         {employee.erp_active ? 'ERP Active' : 'ERP Inactive'}
                       </span>
                     </td>
@@ -626,8 +701,8 @@ export default function Employee() {
                           bulkQrEmployeeId={bulkQrEmployeeId}
                           onEdit={setEditEmployee}
                           onSetRole={openRoleChange}
-                          onGrantAdmin={handleGrantAdmin}
-                          onRevokeAdmin={handleRevokeAdmin}
+                          onGrantAdmin={openGrantAdminConfirm}
+                          onRevokeAdmin={openRevokeAdminConfirm}
                           onDownloadQrs={handleDownloadEmployeeQrs}
                           onDelete={setDeleteTarget}
                           align="end"
@@ -654,10 +729,10 @@ export default function Employee() {
                     <p className="text-sm text-muted">{formatDisplay(employee.email)}</p>
                   </div>
                   <div className="flex flex-col items-end gap-1 shrink-0">
-                    <span className={`text-xs px-2 py-1 rounded ${employee.is_active ? 'bg-accent text-on-accent' : 'bg-surface border border-base text-muted'}`}>
+                    <span className={`text-xs px-2 py-1 rounded ${employee.is_active ? 'bg-accent text-white' : 'bg-surface border border-base text-muted'}`}>
                       {employee.is_active ? 'Active employee' : 'Not active'}
                     </span>
-                    <span className={`text-xs px-2 py-1 rounded ${employee.erp_active ? 'bg-accent text-on-accent' : 'bg-surface border border-base text-muted'}`}>
+                    <span className={`text-xs px-2 py-1 rounded ${employee.erp_active ? 'bg-accent text-white' : 'bg-surface border border-base text-muted'}`}>
                       {employee.erp_active ? 'ERP Active' : 'ERP Inactive'}
                     </span>
                   </div>
@@ -679,8 +754,8 @@ export default function Employee() {
                       bulkQrEmployeeId={bulkQrEmployeeId}
                       onEdit={setEditEmployee}
                       onSetRole={openRoleChange}
-                      onGrantAdmin={handleGrantAdmin}
-                      onRevokeAdmin={handleRevokeAdmin}
+                      onGrantAdmin={openGrantAdminConfirm}
+                      onRevokeAdmin={openRevokeAdminConfirm}
                       onDownloadQrs={handleDownloadEmployeeQrs}
                       onDelete={setDeleteTarget}
                     />
@@ -721,37 +796,56 @@ export default function Employee() {
         </div>
       )}
 
-      {roleChangeTarget && roleChangeTargetRole && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 px-4">
-          <div className="w-full max-w-md bg-surface-2 border border-base rounded-xl p-5">
-            <h3 className="text-base font-semibold text-primary">
-              Confirm Role Change
-            </h3>
-            <p className="text-sm text-subtle mt-2">
-              {`Are you sure you want to set ${roleChangeTarget.name} as ${roleChangeTargetRole.replace('_', ' ')}?`}
-            </p>
-            <p className="text-xs text-subtle mt-2">Employee Code: {roleChangeTarget.employee_code}</p>
-            <div className="mt-5 flex gap-2">
-              <button
-                type="button"
-                onClick={closeRoleChange}
-                disabled={roleChangeLoading}
-                className="flex-1 border border-base text-muted py-2 rounded-lg hover:bg-surface-3 transition text-sm disabled:opacity-60"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => void handleConfirmRoleChange()}
-                disabled={roleChangeLoading}
-                className="flex-1 bg-accent text-on-accent py-2 rounded-lg hover:bg-accent-hover transition text-sm disabled:opacity-60"
-              >
-                {roleChangeLoading ? 'Updating...' : 'Confirm'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <ConfirmDialog
+        open={Boolean(roleChangeTarget && roleChangeTargetRole)}
+        title="Confirm role change"
+        message={
+          roleChangeTarget && roleChangeTargetRole
+            ? `Are you sure you want to set ${roleChangeTarget.name} as ${formatRoleLabel(roleChangeTargetRole)}? Employee code: ${roleChangeTarget.employee_code}.`
+            : ''
+        }
+        confirmLabel={
+          roleChangeTargetRole ? roleChangeConfirmLabel(roleChangeTargetRole) : 'Confirm'
+        }
+        loading={roleChangeLoading}
+        showDismissIcon
+        onClose={closeRoleChange}
+        onConfirm={() => {
+          void handleConfirmRoleChange()
+        }}
+      />
+      <ConfirmDialog
+        open={Boolean(grantAdminTarget)}
+        title="Make admin"
+        message={
+          grantAdminTarget
+            ? `Grant full admin privileges to ${grantAdminTarget.name}? Employee code: ${grantAdminTarget.employee_code}.`
+            : ''
+        }
+        confirmLabel="Make Admin"
+        loading={adminPrivilegeLoading}
+        showDismissIcon
+        onClose={closeGrantAdminConfirm}
+        onConfirm={() => {
+          void handleConfirmGrantAdmin()
+        }}
+      />
+      <ConfirmDialog
+        open={Boolean(revokeAdminTarget)}
+        title="Revoke admin"
+        message={
+          revokeAdminTarget
+            ? `Remove admin privileges from ${revokeAdminTarget.name}? They will return to the employee role. Employee code: ${revokeAdminTarget.employee_code}.`
+            : ''
+        }
+        confirmLabel="Revoke Admin"
+        loading={adminPrivilegeLoading}
+        showDismissIcon
+        onClose={closeRevokeAdminConfirm}
+        onConfirm={() => {
+          void handleConfirmRevokeAdmin()
+        }}
+      />
       <ConfirmDialog
         open={Boolean(deleteTarget)}
         title="Move Employee to Recycle Bin"
@@ -778,8 +872,8 @@ type EmployeeActionsProps = {
   align?: 'start' | 'end'
   onEdit: (employee: EmployeeRecord) => void
   onSetRole: (employee: EmployeeRecord, role: EmployeeRole) => void
-  onGrantAdmin: (employee: EmployeeRecord) => Promise<void>
-  onRevokeAdmin: (employee: EmployeeRecord) => Promise<void>
+  onGrantAdmin: (employee: EmployeeRecord) => void
+  onRevokeAdmin: (employee: EmployeeRecord) => void
   onDownloadQrs: (employee: EmployeeRecord) => Promise<void>
   onDelete: (employee: EmployeeRecord) => void
 }
@@ -797,90 +891,106 @@ function EmployeeActions({
   onDownloadQrs,
   onDelete,
 }: EmployeeActionsProps) {
-  const secondaryButtonClass = 'border border-base text-muted py-1.5 px-3 rounded-lg hover:bg-surface-3 transition text-xs disabled:opacity-50 disabled:cursor-not-allowed'
-  const primaryButtonClass = 'bg-accent text-on-accent py-1.5 px-3 rounded-lg hover:bg-accent-hover transition text-xs'
+  const primaryButtonClass = 'bg-accent text-white py-1.5 px-3 rounded-lg hover:bg-accent-hover transition text-xs'
+  const dangerOutlineButtonClass =
+    'border border-base text-accent py-1.5 px-3 rounded-lg hover:bg-surface-2 transition text-xs disabled:opacity-50 disabled:cursor-not-allowed'
+
+  const showSetEmployee = isItOps && employee.role !== 'employee'
+  const showMakeAdmin = !isItOps && employee.role !== 'it_ops' && employee.role !== 'admin'
+  const showRevokeAdmin = employee.role === 'admin'
+  const showSetAdmin = isItOps && employee.role !== 'admin'
+  const showSetItOps = isItOps && employee.role !== 'it_ops'
+  const hasRoleManagementControl =
+    showSetEmployee || showMakeAdmin || showRevokeAdmin || showSetAdmin || showSetItOps
+  const showYouBadge =
+    Boolean(sessionEmployeeId) && employee.id === sessionEmployeeId && !hasRoleManagementControl
 
   return (
-    <div className={`flex flex-wrap gap-2 ${align === 'end' ? 'justify-end' : 'justify-start'}`}>
-      <button
-        onClick={() => onEdit(employee)}
-        className={secondaryButtonClass}
-        type="button"
-      >
-        Edit
-      </button>
-      {isItOps && employee.role !== 'employee' && (
-        <button
+    <div className={`flex flex-wrap gap-2 items-center ${align === 'end' ? 'justify-end' : 'justify-start'}`}>
+      {showYouBadge ? (
+        <span
+          className="inline-flex h-8 min-w-[3.25rem] items-center justify-center rounded-lg border border-base bg-surface-2 px-3 text-xs font-semibold tracking-wide text-muted"
+          aria-label="This row is your account"
+        >
+          YOU
+        </span>
+      ) : null}
+      {showSetEmployee ? (
+        <IconActionButton
+          icon="users"
+          label="Set Employee"
           onClick={() => onSetRole(employee, 'employee')}
           disabled={employee.id === sessionEmployeeId && employee.role === 'it_ops'}
-          className={secondaryButtonClass}
-          type="button"
-        >
-          Set Employee
-        </button>
-      )}
-      {!isItOps && employee.role !== 'it_ops' && employee.role !== 'admin' && (
+          variant="base"
+        />
+      ) : null}
+      {showMakeAdmin ? (
         <button
           onClick={() => {
-            void onGrantAdmin(employee)
+            onGrantAdmin(employee)
           }}
           className={primaryButtonClass}
           type="button"
         >
           Make Admin
         </button>
-      )}
-      {!isItOps && employee.role === 'admin' && (
+      ) : null}
+      {showRevokeAdmin ? (
         <button
+          type="button"
           onClick={() => {
-            void onRevokeAdmin(employee)
+            onRevokeAdmin(employee)
           }}
           disabled={employee.id === sessionEmployeeId}
-          className={secondaryButtonClass}
-          type="button"
+          className={dangerOutlineButtonClass}
         >
           Revoke Admin
         </button>
-      )}
-      {isItOps && employee.role !== 'admin' && (
-        <button
+      ) : null}
+      {showSetAdmin ? (
+        <IconActionButton
+          icon="users"
+          label="Set Admin"
           onClick={() => onSetRole(employee, 'admin')}
-          className={primaryButtonClass}
-          type="button"
-        >
-          Set Admin
-        </button>
-      )}
-      {isItOps && employee.role !== 'it_ops' && (
-        <button
+          variant="accent"
+        />
+      ) : null}
+      {showSetItOps ? (
+        <IconActionButton
+          icon="users"
+          label="Set IT Ops"
           onClick={() => onSetRole(employee, 'it_ops')}
-          className={secondaryButtonClass}
-          type="button"
-        >
-          Set IT Ops
-        </button>
-      )}
+          variant="base"
+        />
+      ) : null}
+      <IconActionButton
+        icon="edit"
+        label="Edit"
+        onClick={() => onEdit(employee)}
+        variant="base"
+      />
       <button
+        type="button"
         onClick={() => {
           void onDownloadQrs(employee)
         }}
         disabled={bulkQrEmployeeId === employee.id}
-        className={`${secondaryButtonClass} disabled:opacity-60`}
-        type="button"
-        title="Download QR codes for all assets assigned to this employee"
+        title={bulkQrEmployeeId === employee.id ? 'Preparing QR downloads…' : 'Download QR images for all assets assigned to this employee'}
+        aria-label={bulkQrEmployeeId === employee.id ? 'Preparing QR downloads' : 'Download QR codes for assigned assets'}
+        className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-[color:var(--accent-soft)] bg-surface px-2.5 text-xs font-semibold text-accent transition hover:bg-[color:var(--accent-soft)]/20 disabled:cursor-not-allowed disabled:opacity-50"
       >
-        {bulkQrEmployeeId === employee.id ? 'Preparing QRs...' : 'Download QRs'}
+        <span className={`flex h-4 w-4 shrink-0 items-center justify-center ${bulkQrEmployeeId === employee.id ? 'refresh-spin' : ''}`}>
+          <AnimatedNavIcon name={bulkQrEmployeeId === employee.id ? 'refresh-cw' : 'download'} />
+        </span>
+        <span>QR</span>
       </button>
-      <button
-        onClick={() => {
-          onDelete(employee)
-        }}
+      <IconActionButton
+        icon="trash"
+        label="Delete"
+        onClick={() => onDelete(employee)}
         disabled={employee.id === sessionEmployeeId}
-        className={secondaryButtonClass}
-        type="button"
-      >
-        Delete
-      </button>
+        variant="danger"
+      />
     </div>
   )
 }

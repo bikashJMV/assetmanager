@@ -18,10 +18,10 @@ export default function RightAccessBox({ className = '' }: { className?: string 
       <div className="space-y-4">
         <div className="flex flex-wrap gap-2">
           <div className="inline-flex items-center gap-2 rounded-lg bg-[#0A0A0A] px-4 py-2 text-xs font-semibold text-white">
-            <span className="h-1.5 w-1.5 rounded-full bg-[#F04E0F]" />
+            <span className="h-1.5 w-1.5 rounded-full bg-[color:var(--accent)]" />
             Admin
           </div>
-          <div className="inline-flex items-center gap-2 rounded-lg bg-[#F04E0F] px-4 py-2 text-xs font-semibold text-white">
+          <div className="inline-flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-xs font-semibold text-white">
             <span className="h-1.5 w-1.5 rounded-full bg-white/60" />
             IT Ops
           </div>

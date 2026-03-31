@@ -5,6 +5,7 @@ export type IconName =
   | 'guide'
   | 'boxes'
   | 'scan'
+  | 'edit'
   | 'users'
   | 'plus'
   | 'chart-column'
@@ -16,6 +17,7 @@ export type IconName =
   | 'text-font'
   | 'list-chevrons-up-down'
   | 'refresh-cw'
+  | 'download'
   | 'settings'
   | 'logout'
   | 'sun'
@@ -129,6 +131,15 @@ export default function AnimatedNavIcon({ name }: { name: IconName }) {
     )
   }
 
+  if (name === 'edit') {
+    return (
+      <BaseIcon>
+        <path d="M12 20h9" />
+        <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4 11.5-11.5Z" />
+      </BaseIcon>
+    )
+  }
+
   if (name === 'log-in') {
     return (
       <BaseIcon>
@@ -185,6 +196,16 @@ export default function AnimatedNavIcon({ name }: { name: IconName }) {
       <BaseIcon>
         <path className="ai-refresh-arc" d="M21 12a9 9 0 1 1-2.64-6.36" />
         <path className="ai-refresh-arrow" d="M21 3v6h-6" />
+      </BaseIcon>
+    )
+  }
+
+  if (name === 'download') {
+    return (
+      <BaseIcon>
+        <path className="ai-download-arrow" d="M12 4.5v9.5" />
+        <path className="ai-download-arrow" d="m8.2 12.3 3.8 3.8 3.8-3.8" />
+        <path className="ai-download-tray" d="M5 20.5h14" />
       </BaseIcon>
     )
   }

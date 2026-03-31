@@ -39,7 +39,7 @@ export default function Error({
               <button
                 type="button"
                 onClick={onRetry}
-                className="bg-accent text-on-accent font-semibold px-4 py-2 rounded-lg hover:bg-accent-hover transition text-sm"
+                className="bg-accent text-white font-semibold px-4 py-2 rounded-lg hover:bg-accent-hover transition text-sm"
               >
                 Try again
               </button>

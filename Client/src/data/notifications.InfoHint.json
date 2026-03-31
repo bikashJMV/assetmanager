@@ -1,0 +1,21 @@
+{
+  "panelTitle": "About notifications",
+  "ariaLabel": "Open help: warranty notifications page",
+  "sections": [
+    {
+      "heading": "What you see",
+      "bullets": [
+        "This page lists warranty-related alerts for assets in your visibility window (up to the To date when you refresh).",
+        "Admins and IT Ops see alerts for all relevant assets. Employees only see alerts for assets currently assigned to them.",
+        "Use the date range to narrow by warranty end date. Clear resets the range filters; the backend window still follows the To field used when loading."
+      ]
+    },
+    {
+      "heading": "Actions",
+      "bullets": [
+        "Refresh reloads alerts from the server. Open asset goes to the asset detail page.",
+        "Welcome text may appear once for new sessions. Each row shows Expired or Due soon and a clear warranty summary."
+      ]
+    }
+  ]
+}

@@ -454,7 +454,7 @@ export default function AssetForm({
           <button
             type="submit"
             disabled={loading}
-            className="flex-1 bg-accent text-on-accent font-semibold py-2 rounded-lg hover:bg-accent-hover transition text-sm disabled:opacity-60 shadow-accent"
+            className="flex-1 bg-accent text-white font-semibold py-2 rounded-lg hover:bg-accent-hover transition text-sm disabled:opacity-60 shadow-accent"
           >
             {loading ? 'Saving...' : isEditing ? 'Save Changes' : 'Create Asset'}
           </button>

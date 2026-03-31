@@ -21,7 +21,9 @@ export default function AssignReturnBox({ className = '' }: { className?: string
           <div className="rounded-full border border-white/20 bg-[#1E1E1E] px-4 py-1 text-xs">Lifecycle</div>
           <div className="rounded-full border border-white/20 bg-[#1E1E1E] px-4 py-1 text-xs">Audit</div>
         </div>
-        <div className="w-full max-w-md rounded-xl bg-[#F04E0F] px-5 py-2 text-center text-sm font-bold">Full Ownership History</div>
+        <div className="w-full max-w-md rounded-xl bg-accent px-5 py-2 text-center text-sm font-bold text-white shadow-accent">
+          Full Ownership History
+        </div>
       </div>
     </StoryCard>
   )

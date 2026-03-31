@@ -6,7 +6,7 @@ import ActBeforeItBreaksBox from '../home/ActBeforeItBreaksBox'
 import AssignReturnBox from '../home/AssignReturnBox'
 import HomeHero from '../home/HomeHero'
 import OverviewKpisBox from '../home/OverviewKpisBox'
-import QuickFactCard from '../home/QuickFactCard'
+import QuickFactsRow from '../home/QuickFactsRow'
 import RightAccessBox from '../home/RightAccessBox'
 import ShipAnythingBox from '../home/ShipAnythingBox'
 
@@ -58,36 +58,26 @@ export default function Home({ isAuthenticated = false }: { isAuthenticated?: bo
         <div className="mx-auto w-full max-w-[1320px] px-4 pb-16 sm:px-6 lg:px-7">
           <section className="hidden xl:block">
             <div className="mx-auto max-w-[1180px] space-y-6">
-              <div className="flex justify-center">
-                <div className="rounded-full border border-[#E2DED6] bg-white/85 px-4 py-1 text-[11px] font-bold uppercase tracking-[0.08em] text-[#5B5B5B]">
-                  Dashboard Overview
-                </div>
-              </div>
 
               <div className="space-y-8">
-                <div className="grid grid-cols-[minmax(0,1.18fr)_minmax(280px,0.82fr)] gap-6 items-center">
+                <div className="grid grid-cols-1 gap-6 items-center">
                   <OverviewKpisBox isAuthenticated={isAuthenticated} publicSummary={publicSummary} />
-                  <QuickFactCard fact={quickFacts.overview} className="self-center" />
                 </div>
 
-                <div className="grid grid-cols-[minmax(280px,0.82fr)_minmax(0,1.18fr)] gap-6 items-center">
-                  <QuickFactCard fact={quickFacts.lifecycle} className="self-center" />
+                <div className="grid grid-cols-1 gap-6 items-center">
                   <AssignReturnBox />
                 </div>
 
-                <div className="grid grid-cols-[minmax(0,1.18fr)_minmax(280px,0.82fr)] gap-6 items-center">
+                <div className="grid grid-cols-1 gap-6 items-center">
                   <ShipAnythingBox />
-                  <QuickFactCard fact={quickFacts.features} className="self-center" />
                 </div>
 
-                <div className="grid grid-cols-[minmax(280px,0.82fr)_minmax(0,1.18fr)] gap-6 items-center">
-                  <QuickFactCard fact={quickFacts.alerts} className="self-center" />
+                <div className="grid grid-cols-1 gap-6 items-center">
                   <ActBeforeItBreaksBox />
                 </div>
 
-                <div className="grid grid-cols-[minmax(0,1.18fr)_minmax(280px,0.82fr)] gap-6 items-center">
+                <div className="grid grid-cols-1 gap-6 items-center">
                   <RightAccessBox />
-                  <QuickFactCard fact={quickFacts.access} className="self-center" />
                 </div>
               </div>
             </div>
@@ -95,16 +85,21 @@ export default function Home({ isAuthenticated = false }: { isAuthenticated?: bo
 
           <section className="space-y-4 xl:hidden">
             <OverviewKpisBox isAuthenticated={isAuthenticated} publicSummary={publicSummary} />
-            <QuickFactCard fact={quickFacts.overview} />
             <AssignReturnBox />
-            <QuickFactCard fact={quickFacts.lifecycle} />
             <ShipAnythingBox />
-            <QuickFactCard fact={quickFacts.features} />
             <ActBeforeItBreaksBox />
-            <QuickFactCard fact={quickFacts.alerts} />
             <RightAccessBox />
-            <QuickFactCard fact={quickFacts.access} />
           </section>
+
+          <QuickFactsRow
+            facts={[
+              quickFacts.overview,
+              quickFacts.lifecycle,
+              quickFacts.features,
+              quickFacts.alerts,
+              quickFacts.access,
+            ]}
+          />
         </div>
       </main>
       <Footer />

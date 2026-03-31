@@ -168,7 +168,7 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
                 onClick={() => {
                   void startScanner()
                 }}
-                className="w-full bg-accent text-on-accent font-semibold px-4 py-2.5 rounded-lg hover:bg-accent-hover transition text-sm"
+                className="w-full bg-accent text-white font-semibold px-4 py-2.5 rounded-lg hover:bg-accent-hover transition text-sm"
               >
                 Start Camera Scanner
               </button>
@@ -199,7 +199,7 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
             />
             <button
               type="submit"
-              className="bg-accent text-on-accent font-semibold px-4 py-2.5 rounded-lg hover:bg-accent-hover transition text-sm"
+              className="bg-accent text-white font-semibold px-4 py-2.5 rounded-lg hover:bg-accent-hover transition text-sm"
             >
               Lookup
             </button>
@@ -248,7 +248,7 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
       </div>
 
       <div className="flex justify-center mb-8">
-        <span className="bg-accent text-on-accent border border-[color:var(--accent-soft)] px-4 py-1.5 rounded-full text-sm font-medium">
+        <span className="bg-accent text-white border border-[color:var(--accent-soft)] px-4 py-1.5 rounded-full text-sm font-medium">
           Current status: {asset.status}
         </span>
       </div>
@@ -285,7 +285,7 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
               const next = `/assets/${asset.asset_tag}`
               navigate(`/login?next=${encodeURIComponent(next)}`)
             }}
-            className="bg-accent text-on-accent font-semibold px-6 py-2.5 rounded-lg hover:bg-accent-hover transition text-sm shadow-accent"
+            className="bg-accent text-white font-semibold px-6 py-2.5 rounded-lg hover:bg-accent-hover transition text-sm shadow-accent"
           >
             See more
           </button>

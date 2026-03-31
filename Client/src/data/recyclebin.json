@@ -1,0 +1,20 @@
+﻿{
+  "panelTitle": "About the Recycle Bin",
+  "ariaLabel": "Open help: Recycle Bin soft-deleted records",
+  "sections": [
+    {
+      "heading": "What this is",
+      "bullets": [
+        "The Recycle Bin lists employees and assets that were soft-deleted from the app. Records stay here until someone restores them; they do not disappear on a timer.",
+        "Each row shows the item type, what was deleted (first name or model / id), when it was deleted, and who deleted it (first name / employee code when available)."
+      ]
+    },
+    {
+      "heading": "Admin and IT Ops",
+      "bullets": [
+        "Restore puts the record back into normal use. Use Refresh to reload the list after changes.",
+        "If you do not see the Recycle Bin in navigation, your account does not have access."
+      ]
+    }
+  ]
+}

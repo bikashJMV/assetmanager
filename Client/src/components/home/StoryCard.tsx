@@ -16,7 +16,7 @@ export default function StoryCard({ tone, eyebrow, title, description, className
     tone === 'dark'
       ? 'border border-[#1B1B1B] bg-[#0A0A0A] text-white shadow-[0_24px_44px_rgba(10,10,10,0.2)]'
       : tone === 'accent'
-        ? 'border border-[#DB480D] bg-[#F04E0F] text-white shadow-[0_24px_44px_rgba(240,78,15,0.22)]'
+        ? 'border border-accent-soft bg-accent text-white shadow-accent'
         : 'border border-[#E8E4DC] bg-white text-[#0A0A0A] shadow-[0_24px_44px_rgba(10,10,10,0.08)]'
 
   const eyebrowTone =

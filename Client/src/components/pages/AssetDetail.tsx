@@ -8,7 +8,6 @@ import {
   softDeleteAssetById,
   type AssetAssignmentRecord,
   type AssetDetailRecord,
-  type AssetLifecycleEvent,
 } from '../../api'
 import AssetForm from '../form/AssetForm'
 import Error from '../common/Error'
@@ -16,6 +15,8 @@ import Loader from '../common/Loader'
 import ConfirmDialog from '../common/ConfirmDialog'
 import { getErrorDebugDetail, getUserFacingMessage, logDevError } from '../../utils/errors'
 import { formatDateTime, formatDisplay } from '../../utils/formatDisplay'
+import IconActionButton from '../common/IconActionButton'
+import AssetChangeHistory from '../asset/AssetChangeHistory'
 
 export default function AssetDetail() {
   const { id } = useParams()
@@ -192,35 +193,42 @@ export default function AssetDetail() {
 
   return (
     <main className="min-h-screen bg-app text-primary px-4 sm:px-6 py-6 sm:py-8">
-      <div className="flex flex-wrap items-center gap-3 bg-surface px-4 sm:px-6 py-4 border border-base rounded-xl">
+      <div className="flex flex-wrap items-center gap-3 px-4 sm:px-6 py-4 ">
         <button
           onClick={() => navigate('/assets')}
           className="text-muted hover:text-primary text-sm transition"
           type="button"
         >
-          Back
+          &larr; Back
         </button>
         <h1 className="text-lg sm:text-xl font-semibold flex items-center gap-2">
-          <span className="text-accent">{formatDisplay(asset.asset_tag)}</span>
+          <span className="text-accent">{formatDisplay(asset.asset_tag)}</span> /
           <span className="text-subtle text-sm">{formatDisplay(asset.category_name)}</span>
         </h1>
         {canManage ? (
           <div className="ml-auto flex items-center gap-2">
-            <button
+            <IconActionButton
+              icon="edit"
+              label="Edit Asset"
               onClick={() => setShowEdit(true)}
-              className="bg-accent text-on-accent font-semibold px-4 py-2 rounded-lg hover:bg-accent-hover transition text-sm shadow-accent"
-              type="button"
-            >
-              Edit Asset
-            </button>
-            <button
-              onClick={() => setDeleteDialogOpen(true)}
+              variant="accent"
               disabled={actionLoading}
-              className="border border-base px-4 py-2 rounded-lg hover:bg-surface-2 transition text-sm disabled:opacity-60"
-              type="button"
-            >
-              Delete
-            </button>
+            />
+            <IconActionButton
+              icon="trash"
+              label="Delete Asset"
+              onClick={() => setDeleteDialogOpen(true)}
+              variant="danger"
+              disabled={actionLoading}
+            />
+            {/* Add a refresh button without lebel refresh */}
+            <IconActionButton
+              icon="refresh-cw"
+              label="Refresh"
+              onClick={() => void refresh()}
+              variant="base"
+              disabled={actionLoading}
+            />
           </div>
         ) : null}
       </div>
@@ -232,7 +240,7 @@ export default function AssetDetail() {
             inventory.
           </p>
           <div className="flex flex-wrap items-center gap-2">
-            <span className="px-3 py-1 text-xs font-semibold rounded-full bg-accent text-on-accent uppercase">{asset.status}</span>
+            <span className="px-3 py-1 text-xs font-semibold rounded-full bg-accent text-white uppercase">{asset.status}</span>
             {asset.current_employee_id ? (
               <span className={`px-3 py-1 text-xs font-semibold rounded-full ${asset.current_employee_erp_active ? 'bg-surface border border-base text-muted' : 'bg-surface border border-base text-accent'}`}>
                 Holder ERP: {asset.current_employee_erp_active ? 'Active' : 'Inactive'}
@@ -242,7 +250,7 @@ export default function AssetDetail() {
           <div>
             <p className="text-muted text-xs uppercase tracking-wide">Inventory</p>
             <p className="text-xl sm:text-2xl font-bold leading-tight mt-1">{assetTitle}</p>
-            <p className="text-sm text-subtle mt-1">{formatDisplay(asset.location_name)}</p>
+            <p className="text-sm text-subtle mt-1">Location: {formatDisplay(asset.location_name)}</p>
           </div>
         </div>
 
@@ -272,7 +280,7 @@ export default function AssetDetail() {
               <button
                 onClick={() => void handleAssign()}
                 disabled={actionLoading || !canManage}
-                className="flex-1 bg-accent text-on-accent font-semibold px-3 py-2.5 rounded-lg text-sm disabled:opacity-60"
+                className="flex-1 bg-accent text-white font-semibold px-3 py-2.5 rounded-lg text-sm disabled:opacity-60"
                 type="button"
               >
                 Assign
@@ -422,29 +430,7 @@ export default function AssetDetail() {
             </>
           }
         >
-          {detail.lifecycle_events.length === 0 ? (
-            <p className="text-sm text-subtle py-4 text-center border border-dashed border-base rounded-lg">
-              No events yet, or none visible for your role.
-            </p>
-          ) : (
-            <div className="overflow-x-auto rounded-lg border border-base">
-              <table className="w-full min-w-[720px] text-sm">
-                <thead className="bg-surface-2 text-muted uppercase text-xs">
-                  <tr>
-                    <th className="px-3 py-2 text-left">When</th>
-                    <th className="px-3 py-2 text-left">Type</th>
-                    <th className="px-3 py-2 text-left">Who</th>
-                    <th className="px-3 py-2 text-left">Details</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {detail.lifecycle_events.map((ev) => (
-                    <LifecycleEventRow key={ev.id} event={ev} />
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+          <AssetChangeHistory events={detail.lifecycle_events} isCapped={detail.lifecycle_is_capped} />
         </Section>
       </div>
 
@@ -513,141 +499,6 @@ function formatAuthUserRef(id: string | null | undefined): string {
   return id.length > 10 ? `${id.slice(0, 8)}…` : id
 }
 
-function formatLifecycleWho(event: AssetLifecycleEvent): { primary: string; sub?: string } {
-  const dept = event.actor_department_name?.trim()
-  if (event.actor_name || event.actor_employee_code) {
-    const name = event.actor_name?.trim() || '—'
-    const code = event.actor_employee_code?.trim()
-    const bits = [code ? `${name} · ${code}` : name]
-    if (dept) bits.push(dept)
-    return { primary: bits.join(' · ') }
-  }
-  if (event.actor_id) {
-    return {
-      primary: 'Unknown user',
-      sub: `Auth ref ${formatAuthUserRef(event.actor_id)}`,
-    }
-  }
-  return { primary: 'System / public' }
-}
-
-function payloadStr(payload: Record<string, unknown>, key: string): string | null {
-  const v = payload[key]
-  if (typeof v === 'string' && v.trim()) return v.trim()
-  if (v != null && typeof v !== 'object') return String(v)
-  return null
-}
-
-/** Bold highlight for codes, tags, and other identifiers in lifecycle copy. */
-function DetailStrong({ children }: { children: string }) {
-  return <strong className="font-semibold text-primary">{children}</strong>
-}
-
-function renderLifecycleDetails(event: AssetLifecycleEvent): ReactNode {
-  const p = event.payload || {}
-  const tag = payloadStr(p, 'asset_tag')
-  switch (event.event_type) {
-    case 'asset_created': {
-      const cat = payloadStr(p, 'category_slug')
-      if (cat && tag) {
-        return (
-          <>
-            New asset <DetailStrong>{tag}</DetailStrong> · category <DetailStrong>{cat}</DetailStrong>
-          </>
-        )
-      }
-      if (tag) {
-        return (
-          <>
-            New asset <DetailStrong>{tag}</DetailStrong>
-          </>
-        )
-      }
-      return 'Asset created'
-    }
-    case 'asset_updated': {
-      const sn = payloadStr(p, 'serial_number')
-      if (tag && sn) {
-        return (
-          <>
-            Updated <DetailStrong>{tag}</DetailStrong> · serial <DetailStrong>{sn}</DetailStrong>
-          </>
-        )
-      }
-      if (tag) {
-        return (
-          <>
-            Updated asset <DetailStrong>{tag}</DetailStrong>
-          </>
-        )
-      }
-      return 'Asset details updated'
-    }
-    case 'assigned': {
-      const code = payloadStr(p, 'employee_code')
-      if (code && tag) {
-        return (
-          <>
-            Assigned to employee <DetailStrong>{code}</DetailStrong> · asset <DetailStrong>{tag}</DetailStrong>
-          </>
-        )
-      }
-      if (code) {
-        return (
-          <>
-            Assigned to employee <DetailStrong>{code}</DetailStrong>
-          </>
-        )
-      }
-      if (tag) {
-        return (
-          <>
-            Assigned · <DetailStrong>{tag}</DetailStrong>
-          </>
-        )
-      }
-      return 'Assigned to employee'
-    }
-    case 'unassigned': {
-      if (tag) {
-        return (
-          <>
-            Returned / unassigned · <DetailStrong>{tag}</DetailStrong>
-          </>
-        )
-      }
-      return 'Returned / unassigned'
-    }
-    case 'qr_scanned': {
-      if (tag) {
-        return (
-          <>
-            QR code scanned · <DetailStrong>{tag}</DetailStrong>
-          </>
-        )
-      }
-      return 'QR code scanned (public)'
-    }
-    default:
-      return formatDisplay(event.event_type)
-  }
-}
-
-function LifecycleEventRow({ event }: { event: AssetLifecycleEvent }) {
-  const who = formatLifecycleWho(event)
-  return (
-    <tr className="border-t border-base">
-      <td className="px-3 py-2 text-primary whitespace-nowrap">{formatDateTime(event.created_at)}</td>
-      <td className="px-3 py-2 text-primary font-medium">{formatDisplay(event.event_type)}</td>
-      <td className="px-3 py-2 text-primary text-sm">
-        <span className="block">{who.primary}</span>
-        {who.sub ? <span className="block text-[11px] text-subtle mt-0.5">{who.sub}</span> : null}
-      </td>
-      <td className="px-3 py-2 text-muted text-sm max-w-md">{renderLifecycleDetails(event)}</td>
-    </tr>
-  )
-}
-
 function AssignmentRow({ entry }: { entry: AssetAssignmentRecord }) {
   return (
     <tr className="border-t border-base">
@@ -655,7 +506,7 @@ function AssignmentRow({ entry }: { entry: AssetAssignmentRecord }) {
       <td className="px-3 py-2 text-primary">{formatDisplay(entry.employee?.employee_code)}</td>
       <td className="px-3 py-2 text-primary">
         {entry.employee ? (
-          <span className={`text-xs px-2 py-0.5 rounded ${entry.employee.erp_active ? 'bg-accent text-on-accent' : 'bg-surface border border-base text-muted'}`}>
+          <span className={`text-xs px-2 py-0.5 rounded ${entry.employee.erp_active ? 'bg-accent text-white' : 'bg-surface border border-base text-muted'}`}>
             {entry.employee.erp_active ? 'ERP Active' : 'ERP Inactive'}
           </span>
         ) : '-'}

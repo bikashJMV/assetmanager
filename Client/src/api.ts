@@ -143,11 +143,28 @@ export type AssetLifecycleEvent = {
   created_at: string
 }
 
+export type AssetEventActorSnapshot = {
+  actor_id: string | null
+  actor_employee_id: string | null
+  actor_employee_code: string | null
+  actor_name: string | null
+  actor_department_name: string | null
+}
+
+export type AssetFieldChangeEntry = {
+  field: string
+  label: string
+  before: unknown
+  after: unknown
+  truncated?: boolean
+}
+
 export type AssetDetailRecord = {
   asset: AssetInventoryRecord
   assignments: AssetAssignmentRecord[]
   components: AssetComponentRecord[]
   lifecycle_events: AssetLifecycleEvent[]
+  lifecycle_is_capped: boolean
 }
 
 export type PublicDashboardSummary = {
@@ -423,6 +440,21 @@ function isMissingColumnError(error: unknown, tableName: string, columnName: str
     : ''
   const needle = `column ${tableName.toLowerCase()}.${columnName.toLowerCase()}`
   return code === '42703' || message.includes(needle) || message.includes(`${columnName.toLowerCase()} does not exist`)
+}
+
+const ASSET_DETAIL_LIFECYCLE_LIMIT = 100
+
+function parseActorSnapshot(payload: Record<string, unknown>): AssetEventActorSnapshot | null {
+  const raw = payload.actor_snapshot
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const s = raw as Record<string, unknown>
+  return {
+    actor_id: typeof s.actor_id === 'string' ? s.actor_id : null,
+    actor_employee_id: typeof s.actor_employee_id === 'string' ? s.actor_employee_id : null,
+    actor_employee_code: typeof s.actor_employee_code === 'string' ? s.actor_employee_code : null,
+    actor_name: typeof s.actor_name === 'string' ? s.actor_name : null,
+    actor_department_name: typeof s.actor_department_name === 'string' ? s.actor_department_name : null,
+  }
 }
 
 export async function getSession(): Promise<Session | null> {
@@ -1088,7 +1120,7 @@ export async function getAssetDetail(assetTag: string): Promise<AssetDetailRecor
       .select('id,event_type,actor_id,payload,created_at')
       .eq('asset_id', asset.id)
       .order('created_at', { ascending: false })
-      .limit(100),
+      .limit(ASSET_DETAIL_LIFECYCLE_LIMIT),
   ])
 
   ensureNoSupabaseError(componentsResponse.error, 'Unable to load components')
@@ -1140,15 +1172,30 @@ export async function getAssetDetail(assetTag: string): Promise<AssetDetailRecor
   })
 
   const lifecycle_events: AssetLifecycleEvent[] = []
+  let lifecycle_is_capped = false
   if (eventsResponse.error) {
     if (!isMissingTableError(eventsResponse.error, 'asset_events')) {
       ensureNoSupabaseError(eventsResponse.error, 'Unable to load lifecycle events')
     }
   } else if (eventsResponse.data) {
     const rawEvents = eventsResponse.data as Record<string, unknown>[]
+    lifecycle_is_capped = rawEvents.length >= ASSET_DETAIL_LIFECYCLE_LIMIT
     const actorIds = [
       ...new Set(
-        rawEvents.map((r) => r.actor_id).filter((id: unknown): id is string => typeof id === 'string' && id.length > 0),
+        rawEvents
+          .map((r) => {
+            const payload = r.payload && typeof r.payload === 'object' && !Array.isArray(r.payload)
+              ? (r.payload as Record<string, unknown>)
+              : {}
+            const snapshot = parseActorSnapshot(payload)
+            const actorIdFromSnapshot = snapshot?.actor_id
+            if (typeof actorIdFromSnapshot === 'string' && actorIdFromSnapshot.length > 0) {
+              return actorIdFromSnapshot
+            }
+            const rowActor = r.actor_id
+            return typeof rowActor === 'string' && rowActor.length > 0 ? rowActor : null
+          })
+          .filter((id: string | null): id is string => typeof id === 'string' && id.length > 0),
       ),
     ]
     const actorByAuthUserId = new Map<
@@ -1188,23 +1235,30 @@ export async function getAssetDetail(assetTag: string): Promise<AssetDetailRecor
       }
     }
     for (const row of rawEvents) {
-      const aid = (row.actor_id ?? null) as string | null
+      const payload =
+        row.payload && typeof row.payload === 'object' && !Array.isArray(row.payload)
+          ? (row.payload as Record<string, unknown>)
+          : {}
+      const snapshot = parseActorSnapshot(payload)
+      const aid =
+        snapshot?.actor_id ??
+        (typeof row.actor_id === 'string' && row.actor_id.length > 0 ? row.actor_id : null)
       const emp = aid ? actorByAuthUserId.get(aid) : undefined
       lifecycle_events.push({
         id: String(row.id ?? ''),
         event_type: String(row.event_type ?? ''),
         actor_id: aid,
-        actor_employee_id: emp?.id ?? null,
-        actor_name: emp?.name ?? null,
-        actor_employee_code: emp?.employee_code ?? null,
-        actor_department_name: emp?.department_name ?? null,
-        payload: (row.payload && typeof row.payload === 'object' ? row.payload : {}) as Record<string, unknown>,
+        actor_employee_id: snapshot?.actor_employee_id ?? emp?.id ?? null,
+        actor_name: snapshot?.actor_name ?? emp?.name ?? null,
+        actor_employee_code: snapshot?.actor_employee_code ?? emp?.employee_code ?? null,
+        actor_department_name: snapshot?.actor_department_name ?? emp?.department_name ?? null,
+        payload,
         created_at: String(row.created_at ?? ''),
       })
     }
   }
 
-  return { asset, assignments, components, lifecycle_events }
+  return { asset, assignments, components, lifecycle_events, lifecycle_is_capped }
 }
 
 export async function assignAsset(payload: AssignAssetPayload) {

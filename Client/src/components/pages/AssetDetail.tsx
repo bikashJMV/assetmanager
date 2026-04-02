@@ -109,6 +109,8 @@ export default function AssetDetail() {
       setError('Employee code is required for assignment')
       return
     }
+    const confirmed = window.confirm('Assign this asset to the entered employee code?')
+    if (!confirmed) return
 
     setActionLoading(true)
     setError('')
@@ -143,6 +145,8 @@ export default function AssetDetail() {
       setError('Active admin access is required to return assets')
       return
     }
+    const confirmed = window.confirm('Return this asset and close the current assignment?')
+    if (!confirmed) return
 
     setActionLoading(true)
     setError('')

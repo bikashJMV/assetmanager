@@ -134,18 +134,15 @@ function AnalysisInner() {
 
   return (
     <div className="mx-auto max-w-6xl space-y-8">
-        <header className="rounded-2xl border border-base bg-surface-2 p-6 sm:p-8">
-          <p className="text-xs uppercase tracking-[0.22em] text-subtle">Analysis</p>
-          <h1 className="mt-2 text-3xl font-bold tracking-tight sm:text-4xl">
-            Telemetry logs feed
-          </h1>
-          <p className="mt-3 max-w-2xl text-sm text-muted sm:text-base">
-            IT Ops can review recent telemetry events across success/error/general feeds.
+        <div className="">
+          <h1>Logs and Telemetry Analysis</h1>
+          <p className=" max-w-2xl text-muted sm:text-base">
+           Note: IT Ops can review recent telemetry events across success/error/general feeds.
           </p>
-        </header>
+        </div>
 
         {error ? (
-          <section className="rounded-xl border border-base bg-surface-2 p-5">
+          <section className="rounded-xl border border-base bg-surface-2 px-5 py-2">
             <p className="text-sm font-semibold text-accent">Access / load failed</p>
             <p className="mt-2 text-sm text-muted">{error}</p>
           </section>

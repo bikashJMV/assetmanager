@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 
 const CHANNEL_NAME = 'ams-activity'
-const WARN_TIME = 480000 // 8 minutes
-const IDLE_TIME = 600000 // 10 minutes
+const WARN_TIME = 48000000000 // 8 minutes 480000
+const IDLE_TIME = 600000000000000 // 10 minutes 600000
 const WARNING_GRACE_TIME = IDLE_TIME - WARN_TIME
 const ACTIVITY_THROTTLE_MS = 1000
 

@@ -132,8 +132,8 @@ export default function Notifications() {
   const audienceLabel = isPrivileged ? 'Showing alerts for all assets.' : 'Showing only alerts for assets currently assigned to you.'
 
   return (
-    <main className="min-h-screen bg-app text-primary px-4 py-8 sm:px-6">
-      <div className="mx-auto max-w-6xl space-y-6">
+    <main className="min-h-screen bg-app text-primary sm:px-6">
+      <div className="mx-auto max-w-6xl ">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">
             <h1 className="text-lg font-semibold text-primary sm:text-xl">Notifications</h1>
@@ -201,7 +201,7 @@ export default function Notifications() {
           </div>
         </section>
 
-        <section className=" px-4 py-3">
+        <section className=" py-3">
           {welcome ? (
             <div className="rounded-lg border border-accent-soft bg-[color:var(--accent-soft)]/15 px-4 py-3">
               <p className="text-base font-semibold text-primary">{welcome.title}</p>

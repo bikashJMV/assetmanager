@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
 import AnimatedNavIcon from './AnimatedNavIcon'
 import {
   sidebarSections,
@@ -11,14 +11,8 @@ import {
   type SidebarNavSection,
   type SidebarNavVisibility,
 } from './sidebarNav'
-import {
-  getSessionEmployee,
-  hasActiveAdminAccess,
-  signInWithGoogle,
-  signOut,
-  type SessionEmployee,
-} from '../../api'
-import { getUserFacingMessage, logDevError } from '../../utils/errors'
+import { getSessionEmployee, hasActiveAdminAccess } from '../../api'
+import { logDevError } from '../../utils/errors'
 import {
   applyDocumentPreferences,
   getInitialDensity,
@@ -41,24 +35,6 @@ function isNavActionActive(action: SidebarNavActionKind, density: DensityMode, f
   if (action === 'font-serif') return font === 'serif'
   return false
 }
-function sidebarFirstName(name: string): string {
-  const trimmed = name.trim()
-  if (!trimmed) return ''
-  return trimmed.split(/\s+/)[0] ?? trimmed
-}
-
-function sidebarRoleLabel(role: string): string {
-  const normalized = role.trim().toLowerCase()
-  if (normalized === 'it_ops') return 'IT Ops'
-  if (normalized === 'admin') return 'Admin'
-  return 'Employee'
-}
-
-function sidebarInitial(name: string): string {
-  const firstName = sidebarFirstName(name)
-  return (firstName[0] ?? name[0] ?? '?').toUpperCase()
-}
-
 function hasVisibilityAccess(
   visibility: SidebarNavVisibility | undefined,
   isAuthenticated: boolean,
@@ -553,95 +529,23 @@ function SidebarNavigation({
   )
 }
 
-function SidebarFooter({
+export default function Sidebar({
   isAuthenticated,
-  signInLoading,
-  sessionProfile,
-  compact = false,
-  onAuthAction,
-  notice,
+  collapsed,
+  onSetCollapsed,
+  topOffset = 0,
 }: {
   isAuthenticated: boolean
-  signInLoading: boolean
-  sessionProfile: SessionEmployee | null
-  compact?: boolean
-  onAuthAction: () => void
-  notice: string
+  collapsed: boolean
+  onSetCollapsed: (value: boolean) => void
+  topOffset?: number
 }) {
-  const authLabel = isAuthenticated ? 'Sign out' : signInLoading ? 'Redirecting...' : 'Sign in'
-  const authIcon = isAuthenticated ? 'logout' : 'log-in'
-
-  return (
-    <div
-      className={`${compact ? 'px-2 py-3' : 'px-3 py-3.5'} border-t border-base bg-[linear-gradient(0deg,var(--accent-soft)_-30%,transparent_70%)]`}
-    >
-      {sessionProfile ? (
-        compact ? (
-          <div className="mb-3 flex justify-center">
-            <div
-              title={`${sidebarFirstName(sessionProfile.name)}\n${sidebarRoleLabel(sessionProfile.role)}`}
-              className="flex h-10 w-10 items-center justify-center rounded-2xl border border-accent-soft bg-[color:var(--accent-soft)] text-sm font-black text-accent"
-            >
-              {sidebarInitial(sessionProfile.name)}
-            </div>
-          </div>
-        ) : (
-          <div className="mb-2 rounded-2xl border border-base bg-surface-2 p-3 min-w-0">
-            <div className="flex items-center gap-3 min-w-0">
-              <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-2xl border border-accent-soft bg-[color:var(--accent-soft)] text-sm font-black text-accent">
-                {sidebarInitial(sessionProfile.name)}
-              </div>
-              <div className="min-w-0 flex-1 flex items-center justify-between gap-2">
-                <p className="truncate min-w-fit text-sm font-semibold text-primary">
-                  {(sidebarFirstName(sessionProfile.name) || sessionProfile.name) + '|' + sidebarRoleLabel(sessionProfile.role).toUpperCase()}
-                </p>
-                <span
-                  className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border border-base bg-surface text-subtle"
-                  title={isAuthenticated ? 'Signed in' : 'Signed out'}
-                  aria-label={isAuthenticated ? 'Signed in' : 'Signed out'}
-                >
-                  <AnimatedNavIcon name={isAuthenticated ? 'logout' : 'log-in'} />
-                </span>
-              </div>
-            </div>
-          </div>
-        )
-      ) : null}
-
-      <div className={compact ? 'space-y-2' : 'space-y-2.5'}>
-        <button
-          onClick={onAuthAction}
-          disabled={!isAuthenticated && signInLoading}
-          className={`group nav-item rounded-xl border border-base bg-surface-2 font-semibold transition hover:bg-surface-3 disabled:opacity-60 ${compact ? 'mx-auto flex h-10 w-10 items-center justify-center' : 'w-full px-3 py-2.5 text-sm'
-            } flex items-center justify-center gap-2`}
-          type="button"
-          aria-label={authLabel}
-          title={compact ? authLabel : undefined}
-        >
-          <span className="flex h-5 w-5 items-center justify-center rounded-md border border-base shrink-0">
-            <AnimatedNavIcon name={authIcon} />
-          </span>
-          {!compact ? <span>{authLabel}</span> : null}
-        </button>
-
-        {notice ? <p className="text-[11px] text-subtle">{notice}</p> : null}
-      </div>
-    </div>
-  )
-}
-
-export default function Sidebar({ isAuthenticated }: { isAuthenticated: boolean }) {
-  const { pathname, search, hash } = useLocation()
-  const navigate = useNavigate()
+  const { pathname, search } = useLocation()
   const [mobileOpen, setMobileOpen] = useState(false)
-  const [collapsed, setCollapsed] = useState(false)
-  const [settingsNotice, setSettingsNotice] = useState('')
-  const [signInLoading, setSignInLoading] = useState(false)
   const [theme, setTheme] = useState<ThemeMode>(getInitialTheme)
   const [density, setDensity] = useState<DensityMode>(getInitialDensity)
   const [font, setFont] = useState<FontMode>(getInitialFont)
   const [isAdmin, setIsAdmin] = useState(false)
-  const [sessionProfile, setSessionProfile] = useState<SessionEmployee | null>(null)
   const query = useMemo(() => new URLSearchParams(search), [search])
 
   const canManage = isAuthenticated && isAdmin
@@ -655,7 +559,6 @@ export default function Sidebar({ isAuthenticated }: { isAuthenticated: boolean 
 
   useEffect(() => {
     setMobileOpen(false)
-    setSettingsNotice('')
   }, [pathname, search])
 
   useEffect(() => {
@@ -681,7 +584,6 @@ export default function Sidebar({ isAuthenticated }: { isAuthenticated: boolean 
   useEffect(() => {
     if (!isAuthenticated) {
       setIsAdmin(false)
-      setSessionProfile(null)
       return
     }
 
@@ -696,12 +598,10 @@ export default function Sidebar({ isAuthenticated }: { isAuthenticated: boolean 
         const profileAdmin = Boolean(profile?.is_active && profile?.role !== 'employee')
         if (!mounted) return
         setIsAdmin(allowed || profileAdmin)
-        setSessionProfile(profile ?? null)
       } catch (err) {
         logDevError('sidebar.session_profile', err)
         if (!mounted) return
         setIsAdmin(false)
-        setSessionProfile(null)
       }
     })()
 
@@ -710,50 +610,8 @@ export default function Sidebar({ isAuthenticated }: { isAuthenticated: boolean 
     }
   }, [isAuthenticated])
 
-  const handleLogout = async () => {
-    try {
-      await signOut()
-      setSessionProfile(null)
-      setIsAdmin(false)
-      setSettingsNotice('')
-      setTheme(getInitialTheme())
-      setDensity(getInitialDensity())
-      setFont(getInitialFont())
-      navigate('/')
-    } catch (err) {
-      logDevError('sidebar.logout', err)
-      setSettingsNotice(getUserFacingMessage(err, 'Sign out failed. Please try again.'))
-    }
-  }
-
-  const handleSignIn = async () => {
-    setSettingsNotice('')
-    setSignInLoading(true)
-
-    try {
-      const next = `${pathname}${search}${hash}`
-      await signInWithGoogle(next)
-    } catch (err) {
-      logDevError('sidebar.signin', err)
-      setSettingsNotice(getUserFacingMessage(err, 'Google sign-in failed. Please try again.'))
-      setSignInLoading(false)
-    }
-  }
-
-  const handleAuthAction = () => {
-    if (isAuthenticated) {
-      void handleLogout()
-      return
-    }
-    void handleSignIn()
-  }
-
   const closeMobileNav = () => {
     setMobileOpen(false)
-  }
-
-  const toggleCollapsed = () => {
-    setCollapsed((value) => !value)
   }
 
   const toggleTheme = () => {
@@ -768,7 +626,7 @@ export default function Sidebar({ isAuthenticated }: { isAuthenticated: boolean 
   }
 
   const expandGroupFromCompact = (id: string) => {
-    setCollapsed(false)
+    onSetCollapsed(false)
     setOpenGroups((current) => ({
       ...current,
       [id]: true,
@@ -797,55 +655,23 @@ export default function Sidebar({ isAuthenticated }: { isAuthenticated: boolean 
   return (
     <>
       <button
-        className="sm:hidden fixed top-4 left-4 z-30 bg-accent text-white font-semibold px-4 py-2 rounded-xl shadow-accent hover:bg-accent-hover transition"
+        className="sm:hidden fixed top-3 left-4 z-30 text-white font-semibold h-10 w-10 rounded-xl hover:bg-accent-hover transition flex items-center justify-center p-2"
         onClick={() => setMobileOpen(true)}
         aria-label="Open navigation"
+        title="Open navigation"
       >
-        Menu
+        <AnimatedNavIcon name="list-chevrons-up-down" />
       </button>
 
       <aside
         className={`hidden sm:block shrink-0 transition-[width] duration-300 ease-in-out motion-reduce:transition-none ${collapsed ? 'w-[60px]' : 'w-[230px]'
           }`}
       >
-        <div className="sticky top-0 flex h-screen flex-col overflow-x-visible overflow-y-hidden border-r border-base bg-surface shadow-[0_18px_40px_rgba(0,0,0,0.22)]">
-          <div
-            className={`${collapsed ? 'px-2 py-3' : 'px-4 py-4'} border-b border-base bg-[linear-gradient(160deg,var(--accent-soft)_0%,transparent_72%)] transition-[padding] duration-300 ease-in-out motion-reduce:transition-none`}
-          >
-            {collapsed ? (
-              <div className="flex flex-col items-center gap-2">
+        <div
+          className="sticky flex h-screen flex-col overflow-x-visible overflow-y-hidden border-r border-base bg-surface shadow-[0_18px_40px_rgba(0,0,0,0.22)]"
+          style={{ top: topOffset }}
+        >
 
-                <button
-                  onClick={toggleCollapsed}
-                  className="group nav-item flex h-9 w-9 items-center justify-center rounded-xl border border-base bg-surface-2 text-muted hover:text-primary hover:bg-surface-3 transition"
-                  aria-label="Expand sidebar"
-                  title="Expand sidebar"
-                  type="button"
-                >
-                  <AnimatedNavIcon name="list-chevrons-up-down" />
-                </button>
-              </div>
-            ) : (
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="text-[11px] uppercase tracking-[0.18em] text-subtle">Workspace</p>
-                  <p className="mt-1 text-xl font-bold tracking-tight text-primary truncate">
-                    Asset Manager
-                  </p>
-                </div>
-
-                <button
-                  onClick={toggleCollapsed}
-                  className="group nav-item flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-base bg-surface-2 text-muted hover:text-primary hover:bg-surface-3 transition"
-                  aria-label="Collapse sidebar"
-                  title="Collapse sidebar"
-                  type="button"
-                >
-                  <AnimatedNavIcon name="list-chevrons-up-down" />
-                </button>
-              </div>
-            )}
-          </div>
 
           <div
             className={`flex-1 overflow-y-auto ${collapsed ? 'px-2 py-3' : 'px-3 py-4'} transition-[padding] duration-300 ease-in-out motion-reduce:transition-none`}
@@ -866,14 +692,6 @@ export default function Sidebar({ isAuthenticated }: { isAuthenticated: boolean 
             />
           </div>
 
-          <SidebarFooter
-            isAuthenticated={isAuthenticated}
-            signInLoading={signInLoading}
-            sessionProfile={sessionProfile}
-            compact={collapsed}
-            onAuthAction={handleAuthAction}
-            notice={settingsNotice}
-          />
         </div>
       </aside>
 
@@ -886,24 +704,25 @@ export default function Sidebar({ isAuthenticated }: { isAuthenticated: boolean 
             aria-label="Close navigation overlay"
           />
           <div className="relative flex h-full w-[20rem] max-w-[88vw] flex-col border-r border-base bg-app shadow-2xl shadow-black/40">
-            <div className="border-b border-base bg-[linear-gradient(160deg,var(--accent-soft)_0%,transparent_72%)] px-4 py-4">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="text-[11px] uppercase tracking-[0.18em] text-subtle">Workspace</p>
-                  <p className="mt-1 text-xl font-bold tracking-tight text-primary truncate">
-                    Asset Manager
-                  </p>
-                </div>
-
-                <button
-                  className="flex h-9 w-9 items-center justify-center rounded-xl border border-base bg-surface text-muted hover:text-primary hover:bg-surface-3 transition"
-                  onClick={closeMobileNav}
-                  aria-label="Close navigation"
-                  type="button"
-                >
-                  x
-                </button>
-              </div>
+            <div className="border-b border-base bg-[linear-gradient(160deg,var(--accent-soft)_0%,transparent_72%)] px-4 py-4 flex items-center justify-between gap-3">
+              <button
+                className="flex h-9 w-9 items-center justify-center rounded-xl border border-base bg-surface text-muted hover:text-primary hover:bg-surface-3 transition"
+                onClick={closeMobileNav}
+                aria-label="Collapse sidebar"
+                title="Collapse sidebar"
+                type="button"
+              >
+                <AnimatedNavIcon name="list-chevrons-up-down" />
+              </button>
+              <button
+                className="flex h-9 w-9 items-center justify-center rounded-xl border border-base bg-surface text-muted hover:text-primary hover:bg-surface-3 transition"
+                onClick={closeMobileNav}
+                aria-label="Close"
+                title="Close"
+                type="button"
+              >
+                <span className="text-lg leading-none">&times;</span>
+              </button>
             </div>
 
             <div className="flex-1 overflow-y-auto px-3 py-4">
@@ -922,13 +741,6 @@ export default function Sidebar({ isAuthenticated }: { isAuthenticated: boolean 
               />
             </div>
 
-            <SidebarFooter
-              isAuthenticated={isAuthenticated}
-              signInLoading={signInLoading}
-              sessionProfile={sessionProfile}
-              onAuthAction={handleAuthAction}
-              notice={settingsNotice}
-            />
           </div>
         </div>
       ) : null}

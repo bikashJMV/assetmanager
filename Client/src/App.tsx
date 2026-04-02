@@ -1,11 +1,15 @@
-import { lazy, Suspense, useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import type { Session } from '@supabase/supabase-js'
 import Sidebar from './components/common/Sidebar'
 import { getSession, onAuthStateChange, signInWithGoogle, signOut } from './api'
 import { startTelemetryBuffer, trackTelemetryEvent } from './telemetry'
+import { getSessionEmployee, type SessionEmployee } from './api'
 import { applyDocumentPreferences, applyStoredPreferences, getInitialDensity, getInitialFont, getInitialTheme } from './utils/theme'
 import { getUserFacingMessage, logDevError } from './utils/errors'
+import AnimatedNavIcon from './components/common/AnimatedNavIcon'
+import Breadcrumbs from './components/common/Breadcrumbs'
+import ScrollTopButton from './components/common/ScrollTopButton'
 import './index.css'
 
 const Home = lazy(() => import('./components/pages/Home'))
@@ -36,8 +40,10 @@ function AppRoutes() {
   const navigate = useNavigate()
   const isPublicScan = location.pathname.startsWith('/scan/')
   const [session, setSession] = useState<Session | null>(null)
+  const [sessionEmployee, setSessionEmployee] = useState<SessionEmployee | null>(null)
   const [authLoading, setAuthLoading] = useState(true)
   const [authError, setAuthError] = useState('')
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
 
   useEffect(() => {
     applyStoredPreferences()
@@ -74,6 +80,9 @@ function AppRoutes() {
         const next = await getSession()
         if (!mounted) return
         setSession(next)
+        const employee = await getSessionEmployee(next?.user)
+        if (!mounted) return
+        setSessionEmployee(employee)
       } catch (err) {
         if (!mounted) return
         logDevError('app.session', err)
@@ -84,13 +93,22 @@ function AppRoutes() {
     })()
 
     const unsubscribe = onAuthStateChange((nextSession) => {
-      setSession(nextSession)
-      setAuthLoading(false)
-    })
+    setSession(nextSession)
+    setAuthLoading(false)
+    void (async () => {
+      try {
+        const emp = await getSessionEmployee(nextSession?.user)
+        setSessionEmployee(emp)
+      } catch (err) {
+        logDevError('app.sessionEmployee', err)
+        setSessionEmployee(null)
+      }
+    })()
+  })
 
-    return () => {
-      mounted = false
-      unsubscribe()
+  return () => {
+    mounted = false
+    unsubscribe()
     }
   }, [])
 
@@ -111,12 +129,14 @@ function AppRoutes() {
   })
 
   const showSidebar = !isPublicScan
+  const showTopBar = !isPublicScan
+  const showBreadcrumbs = !isPublicScan && location.pathname !== '/login'
   const nextFromQuery = new URLSearchParams(location.search).get('next')
   const loginReturnPath =
     typeof nextFromQuery === 'string' && nextFromQuery.trim().startsWith('/') ? nextFromQuery.trim() : '/'
 
   return (
-    <div className="min-h-screen bg-app text-primary flex">
+    <div className="min-h-screen bg-app text-primary flex flex-col">
       {isWarning && Boolean(session) && (
         <Suspense fallback={null}>
           <IdleWarningModal
@@ -125,54 +145,227 @@ function AppRoutes() {
           />
         </Suspense>
       )}
-      {showSidebar && <Sidebar isAuthenticated={Boolean(session)} />}
-      <div className={`flex-1 overflow-y-auto ${showSidebar ? 'pt-16 sm:pt-0' : ''}`}>
-        <Suspense fallback={<AuthLoadingScreen />}>
-          <Routes>
-            <Route path="/" element={<Home isAuthenticated={Boolean(session)} />} />
-            <Route path="/dashboard/home" element={<Home isAuthenticated={Boolean(session)} />} />
-            <Route path="/scan/:id" element={<ScanPage />} />
-            <Route path="/guide" element={<Guide />} />
-            <Route
-              path="/login"
-              element={
-                authLoading
-                  ? <AuthLoadingScreen />
-                  : (session ? <Navigate to={loginReturnPath} replace /> : <SignInScreen error={authError} />)
-              }
-            />
 
-            <Route element={<RequireAuth session={session} authLoading={authLoading} />}>
-              <Route path="/assets/scan" element={<ScanPage protectedRoute />} />
-              <Route path="/assets/scan/:id" element={<ScanPage protectedRoute />} />
-              <Route path="/assets" element={<AllAssets />} />
-              <Route path="/assets/new" element={<NewAsset />} />
-              <Route path="/assets/:id" element={<AssetDetail />} />
-              <Route path="/404" element={<PageNotFound />} />
-              <Route path="/employee" element={<Employee />} />
-              <Route path="/employee/new" element={<NewEmployee />} />
-              <Route path="/analysis" element={<Analysis />} />
-              <Route path="/notifications" element={<Notifications />} />
-              <Route path="/recycle-bin" element={<RecycleBin />} />
-            </Route>
+      {showTopBar && (
+        <TopBar
+          sidebarCollapsed={sidebarCollapsed}
+          onToggleSidebar={() => setSidebarCollapsed((v) => !v)}
+          sessionEmployee={sessionEmployee}
+          onSignOut={handleAutoLogout}
+          navigate={navigate}
+        />
+      )}
 
-            <Route
-              path="*"
-              element={
-                <Navigate
-                  to={
-                    session
-                      ? '/404'
-                      : `/login?next=${encodeURIComponent(`${location.pathname}${location.search}${location.hash}`)}`
-                  }
-                  replace
-                />
-              }
-            />
-          </Routes>
-        </Suspense>
+      <div className="flex flex-1">
+        {showSidebar && (
+          <Sidebar
+            isAuthenticated={Boolean(session)}
+            collapsed={sidebarCollapsed}
+            onSetCollapsed={setSidebarCollapsed}
+            topOffset={showTopBar ? 64 : 0}
+          />
+        )}
+        <div
+          className="flex-1 overflow-y-auto"
+          onClick={() => {
+            if (showSidebar && !sidebarCollapsed) {
+              setSidebarCollapsed(true)
+            }
+          }}
+        >
+          {showBreadcrumbs && <Breadcrumbs />}
+          <Suspense fallback={<AuthLoadingScreen />}>
+            <Routes>
+              <Route path="/" element={<Home isAuthenticated={Boolean(session)} />} />
+              <Route path="/dashboard/home" element={<Home isAuthenticated={Boolean(session)} />} />
+              <Route path="/scan/:id" element={<ScanPage />} />
+              <Route path="/guide" element={<Guide />} />
+              <Route
+                path="/login"
+                element={
+                  authLoading
+                    ? <AuthLoadingScreen />
+                    : (session ? <Navigate to={loginReturnPath} replace /> : <SignInScreen error={authError} />)
+                }
+              />
+
+              <Route element={<RequireAuth session={session} authLoading={authLoading} />}>
+                <Route path="/assets/scan" element={<ScanPage protectedRoute />} />
+                <Route path="/assets/scan/:id" element={<ScanPage protectedRoute />} />
+                <Route path="/assets" element={<AllAssets />} />
+                <Route path="/assets/new" element={<NewAsset />} />
+                <Route path="/assets/:id" element={<AssetDetail />} />
+                <Route path="/404" element={<PageNotFound />} />
+                <Route path="/employee" element={<Employee />} />
+                <Route path="/employee/new" element={<NewEmployee />} />
+                <Route path="/analysis" element={<Analysis />} />
+                <Route path="/notifications" element={<Notifications />} />
+                <Route path="/recycle-bin" element={<RecycleBin />} />
+              </Route>
+
+              <Route
+                path="*"
+                element={
+                  <Navigate
+                    to={
+                      session
+                        ? '/404'
+                        : `/login?next=${encodeURIComponent(`${location.pathname}${location.search}${location.hash}`)}`
+                    }
+                    replace
+                  />
+                }
+              />
+            </Routes>
+          </Suspense>
+          <ScrollTopButton />
+        </div>
       </div>
     </div>
+  )
+}
+
+function TopBar({
+  sidebarCollapsed,
+  onToggleSidebar,
+  sessionEmployee,
+  onSignOut,
+  navigate,
+}: {
+  sidebarCollapsed: boolean
+  onToggleSidebar: () => void
+  sessionEmployee: SessionEmployee | null
+  onSignOut: () => Promise<void>
+  navigate: ReturnType<typeof useNavigate>
+}) {
+  const [userMenuOpen, setUserMenuOpen] = useState(false)
+  const [notifOpen, setNotifOpen] = useState(false)
+  const userMenuRef = useRef<HTMLDivElement | null>(null)
+  const notifRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    const onDocumentClick = (event: MouseEvent) => {
+      const target = event.target as Node | null
+      const userHas = userMenuRef.current?.contains(target ?? null)
+      const notifHas = notifRef.current?.contains(target ?? null)
+      if (!userHas && !notifHas) {
+        setUserMenuOpen(false)
+        setNotifOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', onDocumentClick)
+    return () => document.removeEventListener('mousedown', onDocumentClick)
+  }, [])
+
+  return (
+    <header className="sticky top-0 z-20 border-b border-base bg-surface-2/95 backdrop-blur supports-[backdrop-filter]:bg-surface-2/80">
+      <div className="flex items-center justify-between px-4 py-2 gap-3">
+        <div className="flex items-center gap-3 min-w-0">
+          <button
+            type="button"
+            onClick={onToggleSidebar}
+            className="icon-btn text-muted"
+            aria-label={sidebarCollapsed ? 'Expand navigation' : 'Collapse navigation'}
+            title={sidebarCollapsed ? 'Expand navigation' : 'Collapse navigation'}
+          >
+            <AnimatedNavIcon name="list-chevrons-up-down" className="h-7 w-7" />
+          </button>
+          <button
+            type="button"
+            onClick={() => navigate('/')}
+            className="text-lg font-semibold text-primary truncate hover:text-accent"
+            title="Go to Home"
+          >
+            Asset Manager
+          </button>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <div className="relative" ref={userMenuRef}>
+            <button
+              type="button"
+            onClick={() => {
+              setUserMenuOpen((v) => !v)
+              setNotifOpen(false)
+            }}
+            className={`icon-btn ${userMenuOpen ? 'icon-btn-active' : ''}`}
+            aria-label="User menu"
+            title="User menu"
+          >
+            <AnimatedNavIcon name="user-circle" className="h-7 w-7" />
+          </button>
+          {userMenuOpen && (
+            <div className="absolute right-0 mt-3 w-52 rounded-xl border border-base bg-surface-3/95 backdrop-blur shadow-2xl p-3 space-y-2">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <AnimatedNavIcon name="users" />
+                  <button
+                    type="button"
+                    className="text-left text-sm font-semibold text-primary truncate hover:text-accent hover:underline hover:decoration-accent hover:decoration-2 hover:decoration-solid"
+                    onClick={() => {
+                      setUserMenuOpen(false)
+                      navigate('/employee')
+                    }}
+                  >
+                    {sessionEmployee?.name || 'Unknown user'}
+                  </button>
+                </div>
+                <div className="flex items-center gap-2 text-xs text-subtle truncate">
+                  <AnimatedNavIcon name="boxes" />
+                  <span>{sessionEmployee?.department || 'Department n/a'}</span>
+                </div>
+                <div className="flex items-center gap-2 text-xs text-muted uppercase tracking-wide">
+                  <AnimatedNavIcon name="settings" />
+                  <span>{sessionEmployee?.role ? sessionEmployee.role : 'Role n/a'}</span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setUserMenuOpen(false)
+                    void onSignOut()
+                  }}
+                  className="w-full rounded-lg bg-accent text-white text-sm font-semibold py-1 hover:bg-accent-hover transition"
+                >
+                  Sign out
+                </button>
+              </div>
+            )}
+          </div>
+
+          <div className="relative" ref={notifRef}>
+            <button
+              type="button"
+            onClick={() => {
+              setNotifOpen((v) => !v)
+              setUserMenuOpen(false)
+            }}
+            className={`icon-btn ${notifOpen ? 'icon-btn-active' : ''}`}
+            aria-label="Notifications"
+            title="Notifications"
+          >
+            <AnimatedNavIcon name="bell" className="h-7 w-7" />
+          </button>
+            {notifOpen && (
+              <div className="absolute right-0 mt-2 w-64 rounded-xl border border-base bg-surface-3/95 backdrop-blur shadow-2xl p-3 space-y-3">
+                <p className="text-sm font-semibold text-primary">Notifications</p>
+                <p className="text-sm text-muted">No new notifications.</p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNotifOpen(false)
+                    navigate('/notifications')
+                  }}
+                  className="w-full rounded-lg border border-base bg-surface-2 text-sm font-semibold py-2 hover:bg-surface-3 transition"
+                >
+                  Show more
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </header>
   )
 }
 

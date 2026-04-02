@@ -60,6 +60,54 @@
   }
 }
 
+:root {
+  --btn-icon-size: 1.75rem;
+}
+
+@layer components {
+  .icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 2.75rem;
+    width: 2.75rem;
+    color: var(--text);
+    transition: color 160ms ease, background-color 160ms ease;
+  }
+
+  .icon-btn:hover,
+  .icon-btn:focus-visible {
+    color: var(--accent);
+  }
+
+  .icon-btn.icon-btn-active {
+    color: var(--accent);
+  }
+
+  .btn-ghost {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    border-radius: 0.6rem;
+    font-weight: 600;
+    color: var(--text);
+    border: 1px solid transparent;
+    transition: color 160ms ease, background-color 160ms ease, border-color 160ms ease;
+  }
+
+  .btn-ghost:hover,
+  .btn-ghost:focus-visible {
+    background: var(--surface-3);
+    color: var(--text);
+  }
+
+  .btn-ghost:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+}
+
 @layer base {
   *, *::before, *::after {
     box-sizing: border-box;

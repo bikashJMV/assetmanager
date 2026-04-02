@@ -243,7 +243,12 @@ function removeByIds(eventIds: Set<string>) {
 }
 
 function toPayloadEvents(batch: BufferedTelemetryEvent[]): TelemetryEvent[] {
-  return batch.map(({ attempts: _attempts, next_retry_at: _nextRetryAt, ...event }) => event)
+  return batch.map((item) => {
+    const { attempts, next_retry_at, ...event } = item
+    void attempts
+    void next_retry_at
+    return event
+  })
 }
 
 async function flushInternal() {

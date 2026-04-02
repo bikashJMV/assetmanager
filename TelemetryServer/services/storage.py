@@ -154,7 +154,8 @@ class Storage:
                       source, event_id, event_name, event_domain, route_pattern, operation_name, table_or_rpc,
                       actor_role, session_id, request_id, trace_id, environment, priority, sample_rate, metadata, created_at
                     ) VALUES (
-                      $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15::timestamptz
+                      $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
+                      $15::jsonb,$16::timestamptz
                     )
                     """,
                     event.source,

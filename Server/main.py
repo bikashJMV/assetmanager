@@ -10,7 +10,7 @@ from core.auth import require_backend_api_key, _resolve_request_role
 from core.settings import settings
 from core.errors import custom_http_exception_handler, generic_exception_handler
 from core.deps import get_db
-from routers import assets, logs, health, assignments, employees
+from routers import assets, logs, health, assignments, employees, analysis
 
 def create_app() -> FastAPI:
     app = FastAPI(
@@ -39,6 +39,8 @@ def create_app() -> FastAPI:
     app.include_router(logs.router, dependencies=protected_dependencies)
     app.include_router(assignments.router, dependencies=protected_dependencies)
     app.include_router(employees.router, dependencies=protected_dependencies)
+    # Role-based auth inside the router; do not require BACKEND_API_KEY for browser usage.
+    app.include_router(analysis.router)
     
     # Root-level scan endpoint kept for direct QR navigation compatibility.
     @app.get("/scan/{asset_ref}", tags=["Assets"], response_model=assets.AssetOut)

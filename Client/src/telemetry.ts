@@ -192,6 +192,10 @@ async function fetchIngestToken() {
     const { data: sessionData } = await supabase.auth.getSession()
     const token = sessionData?.session?.access_token
 
+    // If the user is not signed in (or session not ready yet),
+    // avoid calling the backend since it will respond 401.
+    if (!token) return null
+
     const headers: Record<string, string> = { Accept: 'application/json' }
     if (token) {
       headers.Authorization = `Bearer ${token}`

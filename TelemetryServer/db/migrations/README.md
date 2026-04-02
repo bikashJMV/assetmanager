@@ -6,4 +6,4 @@ Run scripts in order on the **dedicated telemetry Supabase** (or Postgres) proje
 |------|--------|
 | `001_telemetry_schema.sql` | Creates schema `telemetry` and all tables + indexes expected by `TelemetryServer`. |
 
-After applying, set `TELEMETRY_DATABASE_URL` in `TelemetryServer/.env` and start the app.
+Set `TELEMETRY_DATABASE_URL` in `TelemetryServer/.env` and start the app.

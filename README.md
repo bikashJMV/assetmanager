@@ -9,8 +9,10 @@ Centralized platform for tracking, managing, and auditing digital and physical a
 
 ```
 assetmanager/
-├── Client/   — React 19 + Vite + TypeScript frontend
-└── Server/   — FastAPI backend (Supabase service-role, QR generation)
+├── Client/          — React 19 + Vite + TypeScript frontend
+├── Server/          — FastAPI backend (Supabase service-role, QR generation, telemetry ingest-token)
+├── TelemetryServer/ — Standalone FastAPI service (event ingest, IT Ops query APIs; optional Vercel project)
+└── Telemetry.plan.md — Architecture and rollout notes for engineering telemetry
 ```
 
 ## Request flow
@@ -26,10 +28,15 @@ flowchart TD
     Browser -->|"fn_assign_asset\nfn_return_asset\nfn_is_admin_or_it_ops\nfn_set_employee_role\nfn_public_scan_asset\netc."| SupaRPC["Supabase RPC\n(PostgreSQL functions)"]
     Browser -->|"INSERT/UPDATE events\n(dashboard counters)"| SupaRT["Supabase Realtime"]
 
-    Browser -. "NOT called at runtime" .-> Server["FastAPI Server\n(Vercel Python)"]
+    Browser -. "NOT primary\nHTTP path" .-> Server["FastAPI Server\n(Vercel Python)"]
+    Browser -->|"optional: signed ingest\n+HMAC token"| TEL["Telemetry Server\n(ingest + IT Ops queries)"]
     Server -->|"service-role key\nbypasses RLS"| SupaDB
 
     Server -->|"Generates QR PNG\nstored via fn_create_asset_with_log"| SupaRPC
+
+    subgraph TelemetryOptional["Telemetry (optional)"]
+        TEL
+    end
 
     subgraph Supabase
         SupaAuth
@@ -52,11 +59,14 @@ Employees have a canonical `employees.role`: `employee`, `admin`, or `it_ops` (h
 - Soft delete for assets/employees (admin + IT Ops), with centralized Recycle Bin and restore workflow.
 - Shared confirmation dialog for destructive actions (replaces browser confirm prompts).
 - Shared refresh patterns across core pages (`RefreshButton` + refresh loader hook).
+- **Engineering telemetry (optional):** Client-side buffered events (`Client/src/telemetry.ts`) can POST to `TelemetryServer` using a short-lived HMAC token issued by `POST /telemetry/ingest-token` on the main `Server`. IT Ops–oriented query APIs and retention live on `TelemetryServer`; see [`Telemetry.plan.md`](./Telemetry.plan.md) and [`TelemetryServer/TELEMETRY_SERVER_README.md`](./TelemetryServer/TELEMETRY_SERVER_README.md).
 
 ## Detailed documentation
 
-- [`Client/CLIENT_README.md`](./Client/CLIENT_README.md) — full client reference (routing, pages, components, API layer, styles, deployment)
-- [`Server/SERVER_README.md`](./Server/SERVER_README.md) — full server reference (routers, schemas, settings, auth, DB migrations, deployment)
+- [`Client/CLIENT_README.md`](./Client/CLIENT_README.md) — full client reference (routing, pages, components, API layer, telemetry env, styles, deployment)
+- [`Server/SERVER_README.md`](./Server/SERVER_README.md) — full server reference (routers, telemetry token route, schemas, settings, auth, DB migrations, deployment)
+- [`TelemetryServer/TELEMETRY_SERVER_README.md`](./TelemetryServer/TELEMETRY_SERVER_README.md) — ingest/query API, auth headers, Supabase Postgres (`telemetry` schema), Vercel notes
+- [`Telemetry.plan.md`](./Telemetry.plan.md) — product and reliability design for IT Ops telemetry
 
 ## Quick start
 
@@ -67,13 +77,19 @@ cd Client && npm install && npm run dev
 # Server
 cd Server && pip install -r requirements.txt
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
+
+# Telemetry (optional, separate process)
+cd TelemetryServer && pip install -r requirements.txt
+uvicorn main:app --reload --host 0.0.0.0 --port 8010
 ```
+
+Configure `TELEMETRY_DATABASE_URL` (telemetry Supabase project) plus client env vars (`VITE_TELEMETRY_*`) and align `TELEMETRY_INGEST_TOKEN_SECRET` / `TELEMETRY_ENV` between `Server` and `TelemetryServer`. Run [`TelemetryServer/db/migrations/001_telemetry_schema.sql`](./TelemetryServer/db/migrations/001_telemetry_schema.sql) on that database first. Details: [`TelemetryServer/TELEMETRY_SERVER_README.md`](./TelemetryServer/TELEMETRY_SERVER_README.md).
 
 **Scanning QRs from another device while developing:** default QR links use your current browser origin; `http://localhost:…` only works on that PC. Set `VITE_PUBLIC_APP_ORIGIN` in `Client/.env` to your LAN URL (e.g. `http://192.168.x.x:5173`), restart Vite, then create or refresh the asset QR. See [`Client/CLIENT_README.md`](./Client/CLIENT_README.md) (Environment variables + Running Locally). Production: optional override; align `FRONTEND_URL` on the server for server-generated QRs.
 
 ## Deployment
 
-Two separate Vercel projects — `Client/` and `Server/`. Each has its own `vercel.json` and environment variables. See the individual READMEs for exact env var checklists.
+Up to **three** Vercel projects: `Client/`, `Server/`, and optionally `TelemetryServer/`. Each has its own `vercel.json` and environment variables. See the individual READMEs for exact env var checklists.
 
 ### Production URLs (example)
 
@@ -83,9 +99,11 @@ These are the live deployments for this fork; replace with your own domains if y
 | --- | --- | --- |
 | Frontend (Vite) | `https://web-assetmanager.vercel.app` | Set as `FRONTEND_URL` on the server and in Supabase Auth redirect allowlist |
 | Backend (FastAPI) | `https://assetmanager-backend.vercel.app` | API root; Swagger UI is at `/docs` — do **not** use `/docs` as the API base URL |
+| Telemetry (FastAPI) | *(your deploy)* | Ingest base e.g. `https://…/telemetry/events`; see [TelemetryServer/TELEMETRY_SERVER_README.md](./TelemetryServer/TELEMETRY_SERVER_README.md) |
 
 ### Environment alignment
 
-- **Client Vercel:** `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` only (see [Client/CLIENT_README.md](./Client/CLIENT_README.md)).
-- **Server Vercel:** `SUPABASE_URL`, `SUPABASE_KEY` (service role), `FRONTEND_URL` (must match the deployed client origin), `ALLOWED_ORIGINS` (comma-separated, include the client origin), `ENV=production`, and a non-empty `BACKEND_API_KEY` for internet-facing APIs (see [Server/SERVER_README.md](./Server/SERVER_README.md)).
+- **Client Vercel:** `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` (see [Client/CLIENT_README.md](./Client/CLIENT_README.md)). If telemetry is enabled in production, also set `VITE_TELEMETRY_ENABLED`, `VITE_TELEMETRY_INGEST_URL`, and `VITE_TELEMETRY_TOKEN_URL` (full URL to the **main** backend’s `POST /telemetry/ingest-token`, not the Vite dev server).
+- **Server Vercel:** `SUPABASE_URL`, `SUPABASE_KEY` (service role), `FRONTEND_URL` (must match the deployed client origin), `ALLOWED_ORIGINS` (comma-separated, include the client origin), `ENV=production`, and a non-empty `BACKEND_API_KEY` for internet-facing APIs; plus shared telemetry signing: `TELEMETRY_INGEST_TOKEN_SECRET`, `TELEMETRY_ENV`, `TELEMETRY_TOKEN_TTL_SECONDS` (see [Server/SERVER_README.md](./Server/SERVER_README.md)).
+- **TelemetryServer Vercel (optional):** `TELEMETRY_DATABASE_URL`, `TELEMETRY_INGEST_TOKEN_SECRET` (must match main Server), `TELEMETRY_INGEST_SERVER_TOKEN`, `TELEMETRY_ITOPS_QUERY_KEY`, `TELEMETRY_ENV`, `TELEMETRY_ALLOWED_ORIGINS` (include the client origin for browser ingest). Use Supabase Postgres for durable storage — see [TelemetryServer/TELEMETRY_SERVER_README.md](./TelemetryServer/TELEMETRY_SERVER_README.md).
 - **Supabase:** Under Authentication → URL configuration, add the production site URL and redirect URLs for your client origin (e.g. `https://web-assetmanager.vercel.app` and `https://web-assetmanager.vercel.app/**` as needed).

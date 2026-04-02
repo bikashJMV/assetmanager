@@ -41,6 +41,18 @@ class Settings:
 
     # ENVIRONMENT: local | production
     ENV: str = field(default_factory=lambda: os.getenv("ENV", os.getenv("VITE_ENV", "local")))
+    TELEMETRY_INGEST_TOKEN_SECRET: str = field(
+        default_factory=lambda: os.getenv(
+            "TELEMETRY_INGEST_TOKEN_SECRET",
+            os.getenv("VITE_TELEMETRY_INGEST_TOKEN_SECRET", ""),
+        )
+    )
+    TELEMETRY_TOKEN_TTL_SECONDS: int = field(
+        default_factory=lambda: int(os.getenv("TELEMETRY_TOKEN_TTL_SECONDS", "600"))
+    )
+    TELEMETRY_ENV: str = field(
+        default_factory=lambda: os.getenv("TELEMETRY_ENV", os.getenv("VITE_TELEMETRY_ENV", "local")).strip().lower()
+    )
 
     def __post_init__(self):
         # Basic validation

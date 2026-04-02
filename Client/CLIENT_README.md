@@ -5,6 +5,7 @@
 
 ## Latest updates (current implementation)
 
+- **Engineering telemetry (opt-in):** `src/telemetry.ts` buffers engagement-style events in memory + `localStorage`, flushes on a ~30s timer (and on batch size / high priority), and uses `navigator.sendBeacon` on tab close. Ingest requires `VITE_TELEMETRY_ENABLED=true` plus URLs for the TelemetryServer ingest endpoint and the **main** FastAPI `POST /telemetry/ingest-token` (so the browser never calls `telemetry/ingest-token` on the Vite host by mistake). Metadata keys matching a denylist are redacted before send.
 - **Employee / ERP split:** `EmployeeRecord` carries both `is_active` and `erp_active`. The Employees page filters both dimensions; **default filters** are employment **Active** and ERP **Inactive**. **New employee** form defaults to the same (`is_active: true`, `erp_active: false`). Asset inventory exposes `current_employee_is_active` and `current_employee_erp_active`; list filters and holder badges use ERP where labeled “ERP”.
 - Added protected `Notifications` page (`/notifications`) with:
   - role-aware warranty alerts from DB RPC
@@ -26,8 +27,9 @@
 7. [Entry Point & App Bootstrap](#entry-point--app-bootstrap)
 8. [Routing & Auth (`App.tsx`)](#routing--auth-apptsx)
 9. [API Layer (`api.ts`)](#api-layer-apits)
-10. [Supabase Client (`supabaseClient.ts`)](#supabase-client-supabaseclientts)
-11. [Pages (`components/pages/`)](#pages-componentspages)
+10. [Client telemetry (`telemetry.ts`)](#client-telemetry-telemetryts)
+11. [Supabase Client (`supabaseClient.ts`)](#supabase-client-supabaseclientts)
+12. [Pages (`components/pages/`)](#pages-componentspages)
     - [Home](#home)
     - [AllAssets](#allassets)
     - [AssetDetail](#assetdetail)
@@ -37,7 +39,7 @@
     - [ScanPage](#scanpage)
     - [Notifications](#notifications)
     - [RecycleBin](#recyclebin)
-12. [Common Components (`components/common/`)](#common-components-componentscommon)
+13. [Common Components (`components/common/`)](#common-components-componentscommon)
     - [Sidebar](#sidebar)
     - [Error](#error)
     - [Loader](#loader)
@@ -47,22 +49,22 @@
     - [AnimatedNavIcon](#animatednavicon)
     - [ConfirmDialog](#confirmdialog)
     - [sidebarNav.ts](#sidebarnav-ts)
-13. [Form Components (`components/form/`)](#form-components-componentsform)
+14. [Form Components (`components/form/`)](#form-components-componentsform)
     - [AssetForm](#assetform)
     - [EmployeeForm](#employeeform)
-14. [Utilities (`utils/`)](#utilities-utils)
+15. [Utilities (`utils/`)](#utilities-utils)
     - [errors.ts](#errorsts)
     - [formatDisplay.ts](#formatdisplayts)
-15. [Hooks (`hooks/`)](#hooks-hooks)
+16. [Hooks (`hooks/`)](#hooks-hooks)
     - [useRefreshableLoader.ts](#userefreshableloaderts)
-16. [Styles (`styles/`)](#styles-styles)
+17. [Styles (`styles/`)](#styles-styles)
     - [theme.css](#themecss)
     - [global.css](#globalcss)
-17. [Privileged access](#privileged-access)
-18. [QR Code Behavior](#qr-code-behavior)
-19. [Realtime & Dashboard Stats](#realtime--dashboard-stats)
-20. [Vercel Deployment](#vercel-deployment)
-21. [Known Issues & Notes](#known-issues--notes)
+18. [Privileged access](#privileged-access)
+19. [QR Code Behavior](#qr-code-behavior)
+20. [Realtime & Dashboard Stats](#realtime--dashboard-stats)
+21. [Vercel Deployment](#vercel-deployment)
+22. [Known Issues & Notes](#known-issues--notes)
 
 ---
 
@@ -79,9 +81,13 @@ Browser
   │
   └─► FastAPI Server (optional at runtime)
         └─ Used when integrations call the REST API; QR in DB may be produced server-side with `FRONTEND_URL`
+        └─ Issues short-lived telemetry ingest tokens (`POST /telemetry/ingest-token`) when telemetry is enabled
+  │
+  └─► Telemetry Server (optional)
+        └─ Receives batched browser events with `X-Telemetry-Ingest-Token` (separate origin/port in dev)
 ```
 
-- The SPA **does not use `fetch` to the FastAPI base URL** for normal screens: lists, detail, assign/return, and auth all go through Supabase (anon key + RLS + RPC). The FastAPI server still matters for server-side QR embedding and for any tooling that uses the HTTP API.
+- The SPA **does not use `fetch` to the FastAPI base URL** for normal screens: lists, detail, assign/return, and auth all go through Supabase (anon key + RLS + RPC). The FastAPI server still matters for server-side QR embedding, optional **telemetry token** issuance, and any tooling that uses the HTTP API.
 - Privileged UI actions use `hasActiveAdminAccess()` (RPC `fn_is_admin_or_it_ops`, aligned with `employees.role`). IT Ops-only flows use `setEmployeeRole` → `fn_set_employee_role`.
 
 ---
@@ -105,6 +111,7 @@ Client/
     ├── index.css                   # Global CSS imports
     ├── App.tsx                     # Router, auth state, route tree
     ├── api.ts                      # All Supabase calls, types, helpers
+    ├── telemetry.ts              # Opt-in buffered engineering telemetry (local buffer + ingest)
     ├── supabaseClient.ts           # Supabase client singleton
     │
     ├── components/
@@ -177,7 +184,10 @@ All Vite env vars must be prefixed with `VITE_` to be available in browser code 
 | `VITE_SUPABASE_ANON_KEY` | ✅ Yes | Supabase anon (public) key |
 | `VITE_PUBLIC_APP_ORIGIN` | ❌ No | **QR scan links:** overrides the built-in production origin. **Production builds** default to `https://web-assetmanager.vercel.app` (see `PRODUCTION_QR_APP_ORIGIN` in `api.ts`). **Dev** defaults to `window.location.origin`; set to `http://192.168.x.x:5173` for phone-on-LAN testing. Forks should change the constant or set this var. |
 | `VITE_TRUST_STORED_ASSET_QR` | ❌ No | If `true`, the “View QR” path may reuse `asset_logs.qr_code` even when it points at the wrong host. **Do not set in production** unless you know every stored QR is correct. Default behavior: production and dev-with-`VITE_PUBLIC_APP_ORIGIN` **regenerate** the PNG so scans match the current origin. |
-| `VITE_API_URL` | ❌ Unused | Reserved for future FastAPI calls from the browser; not read anywhere today |
+| `VITE_TELEMETRY_ENABLED` | ❌ No | If `true`, `telemetry.ts` runs: buffered events flush to `VITE_TELEMETRY_INGEST_URL`. Default off if unset. |
+| `VITE_TELEMETRY_INGEST_URL` | When telemetry on | Full URL to TelemetryServer batch ingest (e.g. `http://localhost:8010/telemetry/events`). |
+| `VITE_TELEMETRY_TOKEN_URL` | When telemetry on | Full URL to **main** FastAPI `POST /telemetry/ingest-token` (e.g. `http://localhost:8000/telemetry/ingest-token`). **Do not** leave this as a relative path in dev unless you add a Vite proxy; otherwise the browser will call the Vite origin and get 404. |
+| `VITE_API_URL` | ❌ Unused | Reserved for future FastAPI calls from the browser; not read by `telemetry.ts` (that module uses `VITE_TELEMETRY_TOKEN_URL` instead). |
 
 **`supabaseClient.ts` throws immediately** (`throw new Error(...)`) at module load time if either required variable is missing — this is intentional fail-fast behavior.
 
@@ -378,6 +388,17 @@ App
 | `getPublicScanAsset(ref)` | Calls `fn_public_scan_asset` RPC (anon-accessible). Returns minimal asset info for QR scan page |
 | `getQrDataUriForAssetTag(assetTag)` | Gets latest `asset_logs.qr_code` for the asset. Falls back to generating a client-side QR via `qrcode` package if none stored |
 | `buildAssetQrDataUri(assetTag)` | Internal. Always generates client-side QR code (used during createAsset) |
+
+---
+
+## Client telemetry (`telemetry.ts`)
+
+- **Purpose:** Non-blocking engineering telemetry (e.g. route views, future client operation timings) with offline-friendly buffering. Does not replace Supabase RLS or business audit logs.
+- **Activation:** `VITE_TELEMETRY_ENABLED=true` and valid `VITE_TELEMETRY_INGEST_URL` / `VITE_TELEMETRY_TOKEN_URL`.
+- **Flow:** On flush, obtains a short-lived signed token via `POST` to the token URL with `Authorization: Bearer <Supabase access_token>`. Sends batches to ingest with `X-Telemetry-Ingest-Token` and `Content-Type: application/json`.
+- **Privacy:** Denylist-based redaction on `metadata` keys; buffer persisted under `localStorage` key `ams.telemetry.buffer.v1` (events only — no raw console dumps).
+- **Lifecycle:** `startTelemetryBuffer()` is invoked from `App.tsx` on mount; route changes enqueue `route_viewed` with `priority: 'LOW'`.
+- **Reference:** Server-side contract and ops runbook — [`TelemetryServer/TELEMETRY_SERVER_README.md`](../TelemetryServer/TELEMETRY_SERVER_README.md).
 
 ---
 

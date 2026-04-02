@@ -1,0 +1,3 @@
+// This is a navbar take the first row and it is common in all pages, following the order menu icon(while we click it opens sidebar other wise it will hide), app name(Asset Manager), Notification icon(shows any new notification came it will update with alert with link see now link), user logon(signin user name, department belongs to, user role, with signout button if user already signed in otherwise signin option).
+// Implement breadcrumb on every page to show the current page location in the app, it should be dynamic and update based on the current page following all route from home page to current page.
+// use red and green color icon instead of active or inactive icon. 

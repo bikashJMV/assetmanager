@@ -18,6 +18,28 @@ import { formatDateTime, formatDisplay } from '../../utils/formatDisplay'
 import IconActionButton from '../common/IconActionButton'
 import AssetChangeHistory from '../asset/AssetChangeHistory'
 
+// function formatInventryStatus=(status:string)=>{
+//   if(status.toLowerCase()==='in_stock'){
+//     return 'In Stock'
+//   } else if(status.toLowerCase()==='assigned'){
+//     return 'Assigned'
+//   }
+//   else if(status.toLowerCase()==='lost'){
+//     return 'Lost/Can\'t Locate'
+//   }
+  
+//   else if(status.toLowerCase()==='retired'){
+//     return 'Retired/Decommissioned'
+//   }
+//   else if(status.toLowerCase()==='lost'){
+//     return 'Lost/Can\'t Locate'
+//   }
+//   else if(status.toLowerCase()==='disposed'){
+//     return 'Disposed'
+//   }
+  
+// }
+
 export default function AssetDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
@@ -234,7 +256,7 @@ export default function AssetDetail() {
       </div>
 
       <div className="max-w-7xl mx-auto mt-5 space-y-5">
-        <div className="bg-gradient-to-r from-[color:var(--surface-2)] via-[color:var(--bg)] to-[color:var(--surface-3)] border border-base rounded-xl p-4 sm:p-5 flex flex-col gap-4">
+        <div className="bg-gradient-to-r from-[color:var(--surface-2)] via-[color:var(--bg)] to-[color:var(--surface-3)] p-4 sm:p-5 flex flex-col gap-4">
           <p className="text-xs text-subtle leading-relaxed">
             At-a-glance snapshot: lifecycle status, holder ERP entitlement when someone is assigned, and how this device is labeled in
             inventory.
@@ -424,7 +446,7 @@ export default function AssetDetail() {
           title="Lifecycle log"
           description={
             <>
-              This timeline records what happened to the asset over time—new records, field changes, assignments and returns. Entries are
+             <b>Note:</b> This timeline records what happened to the asset over time—new records, field changes, assignments and returns. Entries are
               append-only (nothing is deleted or rewritten), so you can reconstruct custody and spot unusual patterns. Admins and IT Ops
               can view the full log; other roles may see a limited or empty history.
             </>

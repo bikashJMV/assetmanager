@@ -1,6 +1,12 @@
-from fastapi import FastAPI, HTTPException, Depends
+import base64
+import hashlib
+import hmac
+import json
+import time
+
+from fastapi import FastAPI, HTTPException, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
-from core.auth import require_backend_api_key
+from core.auth import require_backend_api_key, _resolve_request_role
 from core.settings import settings
 from core.errors import custom_http_exception_handler, generic_exception_handler
 from core.deps import get_db
@@ -47,6 +53,54 @@ def create_app() -> FastAPI:
     @app.get("/", tags=["System"])
     def root():
         return {"message": "AMS API is running", "env": settings.ENV}
+
+    @app.post("/telemetry/ingest-token", tags=["Telemetry"])
+    def issue_telemetry_ingest_token(
+        role: str = Depends(_resolve_request_role),
+        authorization: str | None = Header(default=None),
+        db=Depends(get_db),
+    ):
+        if not settings.TELEMETRY_INGEST_TOKEN_SECRET.strip():
+            raise HTTPException(status_code=503, detail="Telemetry ingest token secret is not configured.")
+        if not authorization or not authorization.strip().lower().startswith("bearer "):
+            raise HTTPException(status_code=401, detail="Missing bearer token.")
+
+        jwt_token = authorization.strip()[7:].strip()
+        if not jwt_token:
+            raise HTTPException(status_code=401, detail="Missing bearer token.")
+
+        try:
+            user_response = db.auth.get_user(jwt_token)
+        except Exception as exc:
+            raise HTTPException(status_code=401, detail="Invalid bearer token.") from exc
+
+        auth_user = getattr(user_response, "user", None)
+        auth_user_id = getattr(auth_user, "id", None)
+        if not auth_user_id:
+            raise HTTPException(status_code=401, detail="Unable to resolve authenticated user.")
+
+        allowed_sources = ["client_engagement", "client_data"]
+        if role == "it_ops":
+            allowed_sources.append("telemetry_internal")
+
+        now = int(time.time())
+        payload = {
+            "aud": "telemetry_ingest",
+            "sub": str(auth_user_id),
+            "environment": settings.TELEMETRY_ENV,
+            "allowed_sources": allowed_sources,
+            "iat": now,
+            "exp": now + max(settings.TELEMETRY_TOKEN_TTL_SECONDS, 60),
+        }
+        payload_json = json.dumps(payload, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+        payload_b64 = base64.urlsafe_b64encode(payload_json).decode("utf-8").rstrip("=")
+        signature = hmac.new(
+            settings.TELEMETRY_INGEST_TOKEN_SECRET.encode("utf-8"),
+            payload_b64.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+        token = f"{payload_b64}.{signature}"
+        return {"token": token, "expires_in": max(settings.TELEMETRY_TOKEN_TTL_SECONDS, 60)}
 
     return app
 

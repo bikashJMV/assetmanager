@@ -13,8 +13,8 @@ export default function AssetHistoryTable({ events }: Props) {
         <thead className="bg-surface-2 text-muted uppercase text-xs">
           <tr>
             <th className="px-3 py-2 text-left">When</th>
-            <th className="px-3 py-2 text-left">Type</th>
-            <th className="px-3 py-2 text-left">Who</th>
+            <th className="px-3 py-2 text-left">Action</th>
+            <th className="px-3 py-2 text-left">By</th>
             <th className="px-3 py-2 text-left">Field</th>
             <th className="px-3 py-2 text-left">Before</th>
             <th className="px-3 py-2 text-left">After</th>
@@ -56,7 +56,7 @@ export default function AssetHistoryTable({ events }: Props) {
                 </td>
                 <td className="px-3 py-2 text-primary">{change.label}</td>
                 <td className="px-3 py-2 text-muted">{formatChangeValue(change.before, change.truncated)}</td>
-                <td className="px-3 py-2 text-muted">{formatChangeValue(change.after, change.truncated)}</td>
+                <td className="px-3 py-2 text-muted">{formatChangeValue(change.after, change.truncated)} </td>
                 <td className="px-3 py-2 text-subtle">{idx === 0 ? getEventSummary(event) : ''}</td>
               </tr>
             ))

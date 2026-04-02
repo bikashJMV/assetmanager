@@ -12,3 +12,5 @@ Context.md
 note.txt
 ./Notes/read_docx.py    
 ./Notes/extract_clean.py    
+TelemetryServer/.env
+Telemetry.plan.md

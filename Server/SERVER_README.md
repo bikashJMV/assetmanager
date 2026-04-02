@@ -64,7 +64,7 @@ Client (Vite React)
 ```
 Server/
 ├── app.py                      # Legacy compat entrypoint — re-exports main.app
-├── main.py                     # FastAPI app factory (create_app), CORS, routers
+├── main.py                     # FastAPI app factory (create_app), CORS, routers + POST /telemetry/ingest-token
 ├── requirements.txt            # Python dependencies
 ├── vercel.json                 # Vercel serverless config
 ├── .env                        # Local environment variables (gitignored)
@@ -141,6 +141,9 @@ Copy `.env.example` to `.env` for local use. Never commit `.env`.
 | `ALLOWED_ORIGINS` | ✅ In prod | `http://localhost:5173,http://localhost:3000` | Comma-separated list of CORS origins |
 | `ENV` | Recommended | `local` | `local` or `production`. Controls error detail verbosity and API key enforcement |
 | `BACKEND_API_KEY` | Recommended in prod | `""` | Shared secret to protect all routes except `/` and `/health`. Empty = open access |
+| `TELEMETRY_INGEST_TOKEN_SECRET` | When browser telemetry enabled | `""` | HMAC secret shared with `TelemetryServer` (`TELEMETRY_INGEST_TOKEN_SECRET` there must match). If empty, `POST /telemetry/ingest-token` returns 503. |
+| `TELEMETRY_TOKEN_TTL_SECONDS` | Optional | `600` | Lifetime of signed browser ingest tokens (minimum 60 enforced in handler). |
+| `TELEMETRY_ENV` | Recommended | `local` | Claim embedded in signed tokens; must match `TelemetryServer`’s `TELEMETRY_ENV` when that service enforces environment on tokens. |
 | `PORT` | Optional | `8000` | Port for local Uvicorn (not used by Vercel) |
 
 > **⚠️ Production critical:** If `FRONTEND_URL` is not set in Vercel, server-generated QR codes will embed `http://localhost:5173/...` in the QR image — making them broken. Always set this before deploying.
@@ -485,6 +488,16 @@ GET    /          — {"message": "AMS API is running", "env": "..."}
 GET    /health    — {"api": "running", "database": "connected|error: ..."}
 ```
 
+### Telemetry token (browser ingest)
+
+```
+POST   /telemetry/ingest-token — {"token": "<base64url_payload>.<hmac_hex>", "expires_in": <seconds>}
+```
+
+- **Not** protected by `BACKEND_API_KEY`. Requires `Authorization: Bearer <Supabase access token>` (same session JWT the client uses for Supabase).
+- Validates the user via `db.auth.get_user(jwt)`; includes `allowed_sources` in the signed payload (`client_engagement`, `client_data`, and `telemetry_internal` for `it_ops` only).
+- Returns **503** if `TELEMETRY_INGEST_TOKEN_SECRET` is unset. The client passes the returned `token` to TelemetryServer as header `X-Telemetry-Ingest-Token`.
+
 ---
 
 ## Authentication & Route Protection
@@ -492,6 +505,7 @@ GET    /health    — {"api": "running", "database": "connected|error: ..."}
 1. **`BACKEND_API_KEY`** — optional; if set, required on protected routes alongside normal usage.
 2. **Supabase RLS** — enforced for the browser (anon key). The server uses the service-role key and bypasses RLS.
 3. **Bearer user JWT + `employees.role`** — selected writes (`POST/PUT` assets, POST logs, POST employees, POST assignments, etc.) require `Authorization: Bearer` with a valid Supabase session access token and an active employee row with `admin` or `it_ops`. IT Ops-only endpoints use `it_ops` only.
+4. **`POST /telemetry/ingest-token`** — requires a valid Supabase bearer JWT only (no API key). Used to mint short-lived HMAC tokens for the optional TelemetryServer browser ingest path.
 
 ---
 
@@ -548,6 +562,9 @@ See `db/migrations/v2/README.md` and `STAGING_RUNBOOK.md` for detailed migration
 | `ALLOWED_ORIGINS` | Comma-separated CORS origins; must include the same client origin (e.g. `https://web-assetmanager.vercel.app`). |
 | `ENV` | Set to `production` for generic error messages and stricter API-key expectations. |
 | `BACKEND_API_KEY` | Set a strong secret in production so only callers with `x-api-key` or `Authorization: Bearer` can hit protected routes. |
+| `TELEMETRY_INGEST_TOKEN_SECRET` | Strong random secret; **same value** as on TelemetryServer. |
+| `TELEMETRY_ENV` | e.g. `production` — align with TelemetryServer’s `TELEMETRY_ENV`. |
+| `TELEMETRY_TOKEN_TTL_SECONDS` | Optional TTL window for browser ingest tokens. |
 
 ### API base URL for callers
 
@@ -557,7 +574,7 @@ The backend **base URL** is the deployment origin only (e.g. `https://assetmanag
 
 ## Frontend integration note
 
-The React client talks to Supabase directly for almost all runtime operations. The FastAPI server is used for admin-style HTTP APIs and for QR generation when assets or logs are created through that API. For QR payloads to open the correct SPA route, `FRONTEND_URL` on the server must match the deployed client.
+The React client talks to Supabase directly for almost all runtime operations. The FastAPI server is used for admin-style HTTP APIs and for QR generation when assets or logs are created through that API. When client telemetry is enabled, the browser also calls this server at `POST /telemetry/ingest-token` (full URL in `VITE_TELEMETRY_TOKEN_URL`) to obtain a signed token for TelemetryServer. For QR payloads to open the correct SPA route, `FRONTEND_URL` on the server must match the deployed client.
 
 ---
 
@@ -567,5 +584,6 @@ The React client talks to Supabase directly for almost all runtime operations. T
 - [ ] `BACKEND_API_KEY` set when the API is exposed on the public internet.
 - [ ] Supabase Auth redirect URLs include the production client origin.
 - [ ] Migrations applied in order on the target Supabase project (`db/migrations/v2/`).
+- [ ] If using browser telemetry: `TELEMETRY_INGEST_TOKEN_SECRET` and `TELEMETRY_ENV` match TelemetryServer; client env points token URL at this API, not the Vite dev server.
 
 ---

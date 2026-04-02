@@ -43,17 +43,17 @@ class Settings:
     ENV: str = field(default_factory=lambda: os.getenv("ENV", os.getenv("VITE_ENV", "local")))
 
     # TelemetryServer (telemetry ingestion/query backend) integration
-    # - Keep TELEMETRY_ITOPS_QUERY_KEY on the server only (never expose to browser).
+    # - Keep TELEMETRY_ITOPS_QUERY_KEY_NEW on the server only (never expose to browser).
     TELEMETRY_SERVER_BASE_URL: str = field(
         default_factory=lambda: os.getenv(
             "TELEMETRY_SERVER_BASE_URL",
             os.getenv("VITE_TELEMETRY_SERVER_BASE_URL", "http://localhost:8010"),
         ).rstrip("/"),
     )
-    TELEMETRY_ITOPS_QUERY_KEY: str = field(
+    TELEMETRY_ITOPS_QUERY_KEY_NEW: str = field(
         default_factory=lambda: os.getenv(
-            "TELEMETRY_ITOPS_QUERY_KEY",
-            os.getenv("VITE_TELEMETRY_ITOPS_QUERY_KEY", ""),
+            "TELEMETRY_ITOPS_QUERY_KEY_NEW",
+            os.getenv("VITE_TELEMETRY_ITOPS_QUERY_KEY_NEW", ""),
         ).strip(),
     )
     TELEMETRY_INGEST_TOKEN_SECRET: str = field(

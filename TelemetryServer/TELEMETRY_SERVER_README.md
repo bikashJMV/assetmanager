@@ -67,7 +67,7 @@ All values read from environment at import time. Dataclass `Settings` is instant
 | `TELEMETRY_INGEST_MAX_BATCH_BYTES` | `1048576` | Max size of entire batch JSON body |
 | `TELEMETRY_INGEST_SERVER_TOKEN` | `""` | Shared secret for server-to-server ingest header |
 | `TELEMETRY_INGEST_TOKEN_SECRET` | `""` | HMAC secret for browser signed tokens |
-| `TELEMETRY_ITOPS_QUERY_KEY` | `""` | Shared secret for protected query/retention endpoints |
+| `TELEMETRY_ITOPS_QUERY_KEY_NEW` | `""` | Shared secret for protected query/retention endpoints |
 | `TELEMETRY_SAMPLE_SERVER_SUCCESS` | `0.25` | Probability bucket for sampling `server_api` successes (after bypass rules) |
 | `TELEMETRY_SAMPLE_CLIENT_DATA_SUCCESS` | `0.20` | Same for `client_data` successes |
 | `TELEMETRY_SAMPLE_CLIENT_ENGAGEMENT` | `0.10` | Same for `client_engagement` / other sampled streams |
@@ -82,7 +82,7 @@ All values read from environment at import time. Dataclass `Settings` is instant
 | `TELEMETRY_ALLOWED_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173` | Comma-separated CORS origins for browser `fetch` / preflight to ingest and query routes |
 | `TELEMETRY_LOG_LEVEL` | `INFO` | Python `logging` level name for startup and router logs |
 
-**Security note:** If `TELEMETRY_INGEST_SERVER_TOKEN` or `TELEMETRY_ITOPS_QUERY_KEY` is empty, the corresponding `hmac.compare_digest` branch never succeeds for that method — ingest/query will 401 unless the other auth path works (e.g. browser token for ingest).
+**Security note:** If `TELEMETRY_INGEST_SERVER_TOKEN` or `TELEMETRY_ITOPS_QUERY_KEY_NEW` is empty, the corresponding `hmac.compare_digest` branch never succeeds for that method — ingest/query will 401 unless the other auth path works (e.g. browser token for ingest).
 
 ---
 
@@ -107,7 +107,7 @@ Returns `{"kind": "browser", "claims": payload, "credential_key": str(payload.ge
 
 ### 5.2 Query — `require_itops_query_key`
 
-- Header `X-Telemetry-Query-Key` must match `TELEMETRY_ITOPS_QUERY_KEY` (timing-safe).
+- Header `X-Telemetry-Query-Key` must match `TELEMETRY_ITOPS_QUERY_KEY_NEW` (timing-safe).
 - Used by: `GET /telemetry/overview`, `GET /telemetry/overview/events`, `GET /telemetry/alerts`, `POST /telemetry/retention/run`.
 - **Not** used by: `GET /telemetry/health`, `GET /telemetry/metrics` (currently public).
 
@@ -331,7 +331,7 @@ In the Vercel project dashboard → Settings → Environment Variables, set at l
 - `TELEMETRY_ENV` — e.g. `production` (must match signed token `environment` when tokens enforce it)
 - `TELEMETRY_INGEST_SERVER_TOKEN` — strong random string
 - `TELEMETRY_INGEST_TOKEN_SECRET` — strong random secret (same as main app uses to sign browser tokens)
-- `TELEMETRY_ITOPS_QUERY_KEY` — strong random string for query/retention
+- `TELEMETRY_ITOPS_QUERY_KEY_NEW` — strong random string for query/retention
 - Optional: `TELEMETRY_DATABASE_SCHEMA`, pool sizes, `TELEMETRY_DB_SSL`, queue sizes, sampling, rate limits, retention days
 
 **Python version:** Match `@vercel/python` supported runtime; pin in `package.json` or Vercel project settings if required.

@@ -20,12 +20,12 @@ async def analysis_events(
 
     This endpoint is protected by AMS IT Ops role (bearer JWT).
     It then server-to-server calls TelemetryServer using the dedicated
-    TELEMETRY_ITOPS_QUERY_KEY secret header.
+    TELEMETRY_ITOPS_QUERY_KEY_NEW secret header.
     """
 
-    telemetry_key = settings.TELEMETRY_ITOPS_QUERY_KEY
+    telemetry_key = settings.TELEMETRY_ITOPS_QUERY_KEY_NEW
     if not telemetry_key:
-        raise HTTPException(status_code=503, detail="TELEMETRY_ITOPS_QUERY_KEY is not configured on AMS Server.")
+        raise HTTPException(status_code=503, detail="TELEMETRY_ITOPS_QUERY_KEY_NEW is not configured on AMS Server.")
 
     telemetry_base = settings.TELEMETRY_SERVER_BASE_URL
     if not telemetry_base:

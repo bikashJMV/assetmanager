@@ -5,6 +5,7 @@ import InfoHint from "../common/InfoHint"
 import recycleBinInfoHint from "../../data/recyclebin.json"
 import { getErrorDebugDetail, getUserFacingMessage, logDevError } from "../../utils/errors"
 import { useRefreshableLoader } from "../../hooks/useRefreshableLoader"
+import { useToast } from "../common/ToastProvider"
 
 type RecycleBinPageInfoHint = {
   panelTitle: string
@@ -60,7 +61,7 @@ function formatDeletedByActor(entry: RecycleBinEntry): string {
 export default function RecycleBin() {
   const [rows, setRows] = useState<RecycleBinEntry[]>([])
   const [restoringId, setRestoringId] = useState<string | null>(null)
-  const [successMessage, setSuccessMessage] = useState("")
+  const { showToast } = useToast()
   const { loading, error, setError, run } = useRefreshableLoader({
     defaultErrorMessage: "Unable to load recycle bin right now.",
     onError: (err) => {
@@ -82,11 +83,10 @@ export default function RecycleBin() {
   const handleRestore = async (entryId: string) => {
     setRestoringId(entryId)
     setError("")
-    setSuccessMessage("")
     try {
       await restoreRecycleBinEntry(entryId)
       await load()
-      setSuccessMessage("Item restored successfully.")
+      showToast({ message: "Item restored successfully.", variant: "success" })
     } catch (err) {
       logDevError("recycleBin.restore", err)
       const debugDetail = getErrorDebugDetail(err)
@@ -143,12 +143,6 @@ export default function RecycleBin() {
             {error}
           </section>
         ) : null}
-        {successMessage ? (
-          <section className="rounded-xl border border-[color:var(--accent-soft)] bg-[color:var(--accent-soft)]/15 px-4 py-3 text-sm text-primary">
-            {successMessage}
-          </section>
-        ) : null}
-
         <section className="overflow-x-auto rounded-xl border border-base bg-surface">
           <table className="w-full min-w-[860px] text-sm text-left">
             <thead className="bg-surface-2 text-subtle text-xs uppercase">

@@ -163,7 +163,7 @@ export default function EmployeeForm({ prefill, onClose, onSubmit, departmentOpt
                 aria-label="Employee active or not active"
               >
                 <option value="active" className="bg-surface-2 text-primary">Active employee</option>
-                <option value="inactive" className="bg-surface-2 text-primary">Not active employee</option>
+                <option value="inactive" className="bg-surface-2 text-primary">Inactive employee</option>
               </select>
               <p className="text-[11px] text-muted mt-1">Employment / account flag. Assignment is blocked when not active.</p>
             </div>
@@ -175,8 +175,8 @@ export default function EmployeeForm({ prefill, onClose, onSubmit, departmentOpt
                 className="w-full bg-app border border-base rounded-lg px-3 py-2.5 text-primary text-sm outline-none focus:border-[color:var(--accent)] focus:ring-2 focus:ring-[color:var(--accent-soft)] transition"
                 aria-label="ERP platform status"
               >
-                <option value="active" className="bg-surface-2 text-white">ERP Active</option>
-                <option value="inactive" className="bg-surface-2 text-white">ERP Inactive</option>
+                <option value="active" className="bg-surface-2 text-white">Active</option>
+                <option value="inactive" className="bg-surface-2 text-white">Inactive</option>
               </select>
               <p className="text-[11px] text-muted mt-1">Independent of employee status. Drives holder ERP labels and filters.</p>
             </div>

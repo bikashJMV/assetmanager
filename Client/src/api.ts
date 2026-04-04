@@ -1,4 +1,4 @@
-import type { Session, User } from '@supabase/supabase-js'
+import type { AuthChangeEvent, Session, User } from '@supabase/supabase-js'
 import QRCode from 'qrcode'
 import { supabase } from './supabaseClient'
 
@@ -49,6 +49,16 @@ export type EmployeeListFilters = {
   erp_active?: boolean | 'all'
   department?: string
   role?: string
+}
+
+export type EmployeePageOptions = {
+  offset?: number
+  limit?: number
+}
+
+export type EmployeePageResult = {
+  rows: EmployeeRecord[]
+  total: number
 }
 
 export type EmployeeRole = 'it_ops' | 'admin' | 'employee'
@@ -200,6 +210,17 @@ export type AssetFilters = {
   category_slug?: string
   hideHeldByInactive?: boolean
   current_employee_id?: string
+  exclude_category_slugs?: string[]
+}
+
+export type AssetPageOptions = {
+  offset?: number
+  limit?: number
+}
+
+export type AssetPageResult = {
+  rows: AssetInventoryRecord[]
+  total: number
 }
 
 export type AssignAssetPayload = {
@@ -463,12 +484,85 @@ export async function getSession(): Promise<Session | null> {
   return data.session
 }
 
-export function onAuthStateChange(callback: (session: Session | null) => void) {
-  const { data } = supabase.auth.onAuthStateChange((_event, session) => {
-    callback(session)
+export function onAuthStateChange(
+  callback: (session: Session | null, event: AuthChangeEvent) => void,
+) {
+  const { data } = supabase.auth.onAuthStateChange((event, session) => {
+    callback(session, event)
   })
   return () => {
     data.subscription.unsubscribe()
+  }
+}
+
+/**
+ * Set in `signInWithGoogle` before OAuth redirect.
+ * Consumed once on next authenticated `INITIAL_SESSION` or `SIGNED_IN` within the TTL.
+ */
+export const AMS_PENDING_POST_SIGNIN_INTRO = 'ams-pending-post-signin-intro'
+const AMS_PENDING_POST_SIGNIN_INTRO_TTL_MS = 12 * 60 * 1000
+
+type PendingIntroPayload = { at: number }
+
+function setPendingPostSignInIntro() {
+  try {
+    const payload: PendingIntroPayload = { at: Date.now() }
+    sessionStorage.setItem(AMS_PENDING_POST_SIGNIN_INTRO, JSON.stringify(payload))
+  } catch {
+    // private / storage disabled
+  }
+}
+
+/**
+ * In-memory repeat of the last `takePendingPostSignInIntro` result for this JS load.
+ * React 18 Strict Mode runs effects twice in dev: the first pass removes sessionStorage,
+ * so the second pass must still see the same outcome without re-reading storage.
+ * Cleared on sign-out and after the intro animation is dismissed (see App).
+ */
+let postSignInIntroBootstrapResult: boolean | undefined
+
+export function resetPostSignInIntroBootstrapClaim() {
+  postSignInIntroBootstrapResult = undefined
+}
+
+/**
+ * True when Google OAuth just completed: valid pending marker within TTL.
+ * Clears the storage key on first successful read; repeat calls reuse the memo until reset.
+ */
+export function takePendingPostSignInIntro(): boolean {
+  if (postSignInIntroBootstrapResult !== undefined) {
+    return postSignInIntroBootstrapResult
+  }
+  try {
+    const raw = sessionStorage.getItem(AMS_PENDING_POST_SIGNIN_INTRO)
+    if (raw == null) {
+      postSignInIntroBootstrapResult = false
+      return false
+    }
+    sessionStorage.removeItem(AMS_PENDING_POST_SIGNIN_INTRO)
+    if (raw === '1') {
+      postSignInIntroBootstrapResult = false
+      return false
+    }
+    const parsed = JSON.parse(raw) as PendingIntroPayload
+    if (typeof parsed?.at !== 'number' || Number.isNaN(parsed.at)) {
+      postSignInIntroBootstrapResult = false
+      return false
+    }
+    if (Date.now() - parsed.at > AMS_PENDING_POST_SIGNIN_INTRO_TTL_MS) {
+      postSignInIntroBootstrapResult = false
+      return false
+    }
+    postSignInIntroBootstrapResult = true
+    return true
+  } catch {
+    try {
+      sessionStorage.removeItem(AMS_PENDING_POST_SIGNIN_INTRO)
+    } catch {
+      // ignore
+    }
+    postSignInIntroBootstrapResult = false
+    return false
   }
 }
 
@@ -480,6 +574,8 @@ export async function signInWithGoogle(nextPath?: string) {
 
   const redirectTo = `${window.location.origin}${normalizedNextPath}`
 
+  setPendingPostSignInIntro()
+
   const { error } = await supabase.auth.signInWithOAuth({
     provider: 'google',
     options: {
@@ -489,10 +585,24 @@ export async function signInWithGoogle(nextPath?: string) {
       },
     },
   })
-  ensureNoSupabaseError(error, 'Unable to start Google sign-in')
+  if (error) {
+    try {
+      sessionStorage.removeItem(AMS_PENDING_POST_SIGNIN_INTRO)
+    } catch {
+      // ignore
+    }
+    resetPostSignInIntroBootstrapClaim()
+    ensureNoSupabaseError(error, 'Unable to start Google sign-in')
+  }
 }
 
 export async function signOut() {
+  resetPostSignInIntroBootstrapClaim()
+  try {
+    sessionStorage.removeItem(AMS_PENDING_POST_SIGNIN_INTRO)
+  } catch {
+    // ignore
+  }
   const { error } = await supabase.auth.signOut()
   ensureNoSupabaseError(error, 'Unable to sign out')
 }
@@ -686,10 +796,19 @@ const EMPLOYEE_LIST_SELECT_WITHOUT_ERP =
 
 async function runEmployeeListQuery(
   filters: EmployeeListFilters,
-  options: { includeErpColumn: boolean; includeDeletedGuard: boolean },
+  options: {
+    includeErpColumn: boolean
+    includeDeletedGuard: boolean
+    countExact?: boolean
+    offset?: number
+    limit?: number
+  },
 ) {
   const selectCols = options.includeErpColumn ? EMPLOYEE_LIST_SELECT_WITH_ERP : EMPLOYEE_LIST_SELECT_WITHOUT_ERP
-  let q = supabase.from('employees').select(selectCols).order('name', { ascending: true })
+  let q = supabase
+    .from('employees')
+    .select(selectCols, options.countExact ? { count: 'exact' } : undefined)
+    .order('name', { ascending: true })
 
   if (options.includeDeletedGuard) {
     q = q.eq('is_deleted', false)
@@ -710,8 +829,18 @@ async function runEmployeeListQuery(
 
   if (filters.department?.trim()) {
     const departmentId = await resolveDepartmentIdByName(filters.department)
-    if (!departmentId) return { data: [], error: null }
+    if (!departmentId) return { data: [], error: null, count: 0 }
     q = q.eq('department_id', departmentId)
+  }
+
+  if (filters.role?.trim()) {
+    q = q.eq('role', filters.role.trim().toLowerCase())
+  }
+
+  const offset = Math.max(0, options.offset ?? 0)
+  const limit = Math.max(1, options.limit ?? 0)
+  if (limit > 0) {
+    q = q.range(offset, offset + limit - 1)
   }
 
   return q
@@ -751,6 +880,97 @@ export async function listEmployees(filters: EmployeeListFilters = {}): Promise<
   }
 
   return rows
+}
+
+export async function listEmployeesPage(
+  filters: EmployeeListFilters = {},
+  options: EmployeePageOptions = {}
+): Promise<EmployeePageResult> {
+  const queryOptions = {
+    countExact: true,
+    offset: Math.max(0, options.offset ?? 0),
+    limit: Math.max(1, options.limit ?? 50),
+  }
+
+  let {
+    data,
+    error,
+    count,
+  }: {
+    data: unknown[] | null
+    error: unknown
+    count: number | null
+  } = await runEmployeeListQuery(filters, {
+    includeErpColumn: true,
+    includeDeletedGuard: true,
+    ...queryOptions,
+  }) as {
+    data: unknown[] | null
+    error: unknown
+    count: number | null
+  }
+
+  if (error && isMissingColumnError(error, 'employees', 'erp_active')) {
+    const retry = await runEmployeeListQuery(filters, {
+      includeErpColumn: false,
+      includeDeletedGuard: true,
+      ...queryOptions,
+    }) as {
+      data: unknown[] | null
+      error: unknown
+      count: number | null
+    }
+    data = retry.data
+    error = retry.error
+    count = retry.count ?? count
+  }
+
+  if (error && isMissingColumnError(error, 'employees', 'is_deleted')) {
+    const fallback = await runEmployeeListQuery(filters, {
+      includeErpColumn: true,
+      includeDeletedGuard: false,
+      ...queryOptions,
+    }) as {
+      data: unknown[] | null
+      error: unknown
+      count: number | null
+    }
+    data = fallback.data
+    error = fallback.error
+    count = fallback.count ?? count
+    if (error && isMissingColumnError(error, 'employees', 'erp_active')) {
+      const retry = await runEmployeeListQuery(filters, {
+        includeErpColumn: false,
+        includeDeletedGuard: false,
+        ...queryOptions,
+      }) as {
+        data: unknown[] | null
+        error: unknown
+        count: number | null
+      }
+      data = retry.data
+      error = retry.error
+      count = retry.count ?? count
+    }
+  }
+
+  ensureNoSupabaseError(error, 'Unable to load employees')
+
+  let rows = (data ?? []).map((r) => normalizeEmployeeRow(r as unknown as Record<string, unknown>))
+
+  if (filters.erp_active !== undefined && filters.erp_active !== 'all') {
+    rows = rows.filter((row) => row.erp_active === filters.erp_active)
+  }
+
+  if (filters.role?.trim()) {
+    const targetRole = filters.role.trim().toLowerCase()
+    rows = rows.filter((row) => row.role === targetRole)
+  }
+
+  return {
+    rows,
+    total: count ?? rows.length,
+  }
 }
 
 async function getOrCreateDepartmentId(name: string | null | undefined): Promise<string | null> {
@@ -1084,9 +1304,77 @@ export async function getAssets(filters: AssetFilters = {}): Promise<AssetInvent
     query = query.eq('current_employee_id', filters.current_employee_id.trim())
   }
 
+  const excludedCategorySlugs = (filters.exclude_category_slugs ?? [])
+    .map((slug) => slug.trim().toLowerCase())
+    .filter(Boolean)
+
+  if (excludedCategorySlugs.length > 0) {
+    query = query.not(
+      'category_slug',
+      'in',
+      `(${excludedCategorySlugs.map((slug) => `"${slug}"`).join(',')})`
+    )
+  }
+
   const { data, error } = await query
   ensureNoSupabaseError(error, 'Unable to fetch assets')
   return (data ?? []) as AssetInventoryRecord[]
+}
+
+export async function getAssetsPage(
+  filters: AssetFilters = {},
+  options: AssetPageOptions = {}
+): Promise<AssetPageResult> {
+  const offset = Math.max(0, options.offset ?? 0)
+  const limit = Math.max(1, options.limit ?? 50)
+
+  let query = supabase
+    .from('v_asset_inventory')
+    .select('*', { count: 'exact' })
+    .order('updated_at', { ascending: false })
+
+  if (filters.status?.trim()) {
+    query = query.eq('status', filters.status.trim())
+  }
+
+  if (filters.category_slug?.trim()) {
+    query = query.eq('category_slug', filters.category_slug.trim().toLowerCase())
+  }
+
+  if (filters.search?.trim()) {
+    const s = filters.search.trim()
+    query = query.or(
+      `asset_tag.ilike.%${s}%,model.ilike.%${s}%,manufacturer_name.ilike.%${s}%,current_employee_name.ilike.%${s}%`
+    )
+  }
+
+  if (filters.hideHeldByInactive) {
+    query = query.or('assignment_id.is.null,current_employee_erp_active.is.true')
+  }
+
+  if (filters.current_employee_id?.trim()) {
+    query = query.eq('current_employee_id', filters.current_employee_id.trim())
+  }
+
+  const excludedCategorySlugs = (filters.exclude_category_slugs ?? [])
+    .map((slug) => slug.trim().toLowerCase())
+    .filter(Boolean)
+
+  if (excludedCategorySlugs.length > 0) {
+    query = query.not(
+      'category_slug',
+      'in',
+      `(${excludedCategorySlugs.map((slug) => `"${slug}"`).join(',')})`
+    )
+  }
+
+  const { data, error, count } = await query.range(offset, offset + limit - 1)
+  ensureNoSupabaseError(error, 'Unable to fetch assets')
+
+  return {
+    rows: (data ?? []) as AssetInventoryRecord[],
+    total: count ?? 0,
+  }
 }
 
 export async function getAsset(assetTag: string): Promise<AssetInventoryRecord> {

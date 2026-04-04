@@ -10,6 +10,20 @@ export function formatDisplay(value: unknown): string {
 }
 
 /**
+ * Converts enum-like values (`in_stock`, `it_ops`, `in-repair`) into
+ * readable labels for end users (`In Stock`, `It Ops`, `In Repair`).
+ */
+export function formatEnumLabel(value: unknown): string {
+  const raw = formatDisplay(value)
+  if (raw === '-') return raw
+  return raw
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\b\w/g, (ch) => ch.toUpperCase())
+}
+
+/**
  * Formats ISO-8601 / Postgres timestamptz strings for the UI (user's locale, medium date + short time).
  */
 export function formatDateTime(value: unknown): string {

@@ -2,7 +2,14 @@ import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import type { Session } from '@supabase/supabase-js'
 import Sidebar from './components/common/Sidebar'
-import { getSession, onAuthStateChange, signInWithGoogle, signOut } from './api'
+import {
+  getSession,
+  onAuthStateChange,
+  resetPostSignInIntroBootstrapClaim,
+  signInWithGoogle,
+  signOut,
+  takePendingPostSignInIntro,
+} from './api'
 import { startTelemetryBuffer, trackTelemetryEvent } from './telemetry'
 import { getSessionEmployee, type SessionEmployee } from './api'
 import { applyDocumentPreferences, applyStoredPreferences, getInitialDensity, getInitialFont, getInitialTheme } from './utils/theme'
@@ -10,6 +17,7 @@ import { getUserFacingMessage, logDevError } from './utils/errors'
 import AnimatedNavIcon from './components/common/AnimatedNavIcon'
 import Breadcrumbs from './components/common/Breadcrumbs'
 import ScrollTopButton from './components/common/ScrollTopButton'
+import { ToastProvider } from './components/common/ToastProvider'
 import './index.css'
 
 const Home = lazy(() => import('./components/pages/Home'))
@@ -29,9 +37,11 @@ const NewEmployee = lazy(() => import('./components/pages/NewEmployee'))
 
 export default function App() {
   return (
-    <BrowserRouter>
-      <AppRoutes />
-    </BrowserRouter>
+    <ToastProvider>
+      <BrowserRouter>
+        <AppRoutes />
+      </BrowserRouter>
+    </ToastProvider>
   )
 }
 
@@ -39,11 +49,14 @@ function AppRoutes() {
   const location = useLocation()
   const navigate = useNavigate()
   const isPublicScan = location.pathname.startsWith('/scan/')
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null)
   const [session, setSession] = useState<Session | null>(null)
   const [sessionEmployee, setSessionEmployee] = useState<SessionEmployee | null>(null)
   const [authLoading, setAuthLoading] = useState(true)
   const [authError, setAuthError] = useState('')
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  /** OAuth returns to `/` (not `/login`), so router state is missing — flip this on `SIGNED_IN` only. */
+  const [showIntroAfterSignIn, setShowIntroAfterSignIn] = useState(false)
 
   useEffect(() => {
     applyStoredPreferences()
@@ -92,19 +105,28 @@ function AppRoutes() {
       }
     })()
 
-    const unsubscribe = onAuthStateChange((nextSession) => {
-    setSession(nextSession)
-    setAuthLoading(false)
-    void (async () => {
-      try {
-        const emp = await getSessionEmployee(nextSession?.user)
-        setSessionEmployee(emp)
-      } catch (err) {
-        logDevError('app.sessionEmployee', err)
-        setSessionEmployee(null)
+    const unsubscribe = onAuthStateChange((nextSession, event) => {
+      setSession(nextSession)
+      setAuthLoading(false)
+      if (nextSession && (event === 'SIGNED_IN' || event === 'INITIAL_SESSION')) {
+        if (takePendingPostSignInIntro()) {
+          setShowIntroAfterSignIn(true)
+        }
       }
-    })()
-  })
+      if (event === 'SIGNED_OUT') {
+        resetPostSignInIntroBootstrapClaim()
+        setShowIntroAfterSignIn(false)
+      }
+      void (async () => {
+        try {
+          const emp = await getSessionEmployee(nextSession?.user)
+          setSessionEmployee(emp)
+        } catch (err) {
+          logDevError('app.sessionEmployee', err)
+          setSessionEmployee(null)
+        }
+      })()
+    })
 
   return () => {
     mounted = false
@@ -156,7 +178,7 @@ function AppRoutes() {
         />
       )}
 
-      <div className="flex flex-1">
+      <div className="flex flex-1 min-h-0 min-w-0">
         {showSidebar && (
           <Sidebar
             isAuthenticated={Boolean(session)}
@@ -166,7 +188,8 @@ function AppRoutes() {
           />
         )}
         <div
-          className="flex-1 overflow-y-auto"
+          ref={scrollContainerRef}
+          className="min-h-0 min-w-0 w-full flex-1 overflow-x-hidden overflow-y-auto"
           onClick={() => {
             if (showSidebar && !sidebarCollapsed) {
               setSidebarCollapsed(true)
@@ -176,8 +199,34 @@ function AppRoutes() {
           {showBreadcrumbs && <Breadcrumbs />}
           <Suspense fallback={<AuthLoadingScreen />}>
             <Routes>
-              <Route path="/" element={<Home isAuthenticated={Boolean(session)} />} />
-              <Route path="/dashboard/home" element={<Home isAuthenticated={Boolean(session)} />} />
+              <Route
+                path="/"
+                element={(
+                  <Home
+                    isAuthenticated={Boolean(session)}
+                    userId={session?.user.id ?? null}
+                    wantPostSignInIntro={showIntroAfterSignIn}
+                    onPostSignInIntroConsumed={() => {
+                      resetPostSignInIntroBootstrapClaim()
+                      setShowIntroAfterSignIn(false)
+                    }}
+                  />
+                )}
+              />
+              <Route
+                path="/dashboard/home"
+                element={(
+                  <Home
+                    isAuthenticated={Boolean(session)}
+                    userId={session?.user.id ?? null}
+                    wantPostSignInIntro={showIntroAfterSignIn}
+                    onPostSignInIntroConsumed={() => {
+                      resetPostSignInIntroBootstrapClaim()
+                      setShowIntroAfterSignIn(false)
+                    }}
+                  />
+                )}
+              />
               <Route path="/scan/:id" element={<ScanPage />} />
               <Route path="/guide" element={<Guide />} />
               <Route
@@ -185,7 +234,11 @@ function AppRoutes() {
                 element={
                   authLoading
                     ? <AuthLoadingScreen />
-                    : (session ? <Navigate to={loginReturnPath} replace /> : <SignInScreen error={authError} />)
+                    : (session ? (
+                      <Navigate to={loginReturnPath} replace state={{ showPostSignInIntro: true }} />
+                    ) : (
+                      <SignInScreen error={authError} />
+                    ))
                 }
               />
 
@@ -218,9 +271,9 @@ function AppRoutes() {
               />
             </Routes>
           </Suspense>
-          <ScrollTopButton />
         </div>
       </div>
+      <ScrollTopButton scrollContainerRef={scrollContainerRef} />
     </div>
   )
 }
@@ -295,28 +348,28 @@ function TopBar({
             <AnimatedNavIcon name="user-circle" className="h-7 w-7" />
           </button>
           {userMenuOpen && (
-            <div className="absolute right-0 mt-3 w-52 rounded-xl border border-base bg-surface-3/95 backdrop-blur shadow-2xl p-3 space-y-2">
+            <div className="absolute right-[-3rem] mt-3 w-52 rounded-xl border border-base bg-app shadow-2xl p-3 space-y-2">
               <div className="space-y-1">
                 <div className="flex items-center gap-2">
                   <AnimatedNavIcon name="users" />
                   <button
                     type="button"
-                    className="text-left text-sm font-semibold text-primary truncate hover:text-accent hover:underline hover:decoration-accent hover:decoration-2 hover:decoration-solid"
+                    className="text-left text-sm font-semibold text-primary truncate hover:text-accent hover:underline hover:decoration-accent hover:decoration-1 hover:decoration-solid"
                     onClick={() => {
                       setUserMenuOpen(false)
                       navigate('/employee')
                     }}
                   >
-                    {sessionEmployee?.name || 'Unknown user'}
+                    {sessionEmployee?.name || 'Not signed in'}
                   </button>
                 </div>
                 <div className="flex items-center gap-2 text-xs text-subtle truncate">
                   <AnimatedNavIcon name="boxes" />
-                  <span>{sessionEmployee?.department || 'Department n/a'}</span>
+                  <span>{sessionEmployee?.department || 'Department: N/A'}</span>
                 </div>
                 <div className="flex items-center gap-2 text-xs text-muted uppercase tracking-wide">
                   <AnimatedNavIcon name="settings" />
-                  <span>{sessionEmployee?.role ? sessionEmployee.role : 'Role n/a'}</span>
+                  <span>Role:{sessionEmployee?.role ? sessionEmployee.role : 'N/A'}</span>
                 </div>
               </div>
               <button
@@ -327,7 +380,7 @@ function TopBar({
                   }}
                   className="w-full rounded-lg bg-accent text-white text-sm font-semibold py-1 hover:bg-accent-hover transition"
                 >
-                  Sign out
+                 {sessionEmployee?.name ? 'Sign Out' : 'Sign In'}
                 </button>
               </div>
             )}
@@ -347,7 +400,7 @@ function TopBar({
             <AnimatedNavIcon name="bell" className="h-7 w-7" />
           </button>
             {notifOpen && (
-              <div className="absolute right-0 mt-2 w-64 rounded-xl border border-base bg-surface-3/95 backdrop-blur shadow-2xl p-3 space-y-3">
+              <div className="absolute right-0 mt-3 w-52 rounded-xl border border-base bg-app shadow-2xl p-2 space-y-3">
                 <p className="text-sm font-semibold text-primary">Notifications</p>
                 <p className="text-sm text-muted">No new notifications.</p>
                 <button
@@ -356,9 +409,9 @@ function TopBar({
                     setNotifOpen(false)
                     navigate('/notifications')
                   }}
-                  className="w-full rounded-lg border border-base bg-surface-2 text-sm font-semibold py-2 hover:bg-surface-3 transition"
+                  className="w-full rounded-lg bg-accent text-white text-sm font-semibold py-1 hover:bg-accent-hover transition"
                 >
-                  Show more
+                  View all
                 </button>
               </div>
             )}

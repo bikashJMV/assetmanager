@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { getPublicScanAsset, scanAsset, type PublicScanAsset } from '../../api'
 import { getUserFacingMessage, logDevError } from '../../utils/errors'
 import { formatDisplay } from '../../utils/formatDisplay'
+import InventoryStatusBadge from '../common/InventoryStatusBadge'
 
 type BarcodeDetectorInstance = {
   detect: (image: HTMLVideoElement) => Promise<Array<{ rawValue?: string }>>
@@ -248,9 +249,10 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
       </div>
 
       <div className="flex justify-center mb-8">
-        <span className="bg-accent text-white border border-[color:var(--accent-soft)] px-4 py-1.5 rounded-full text-sm font-medium">
-          Current status: {asset.status}
-        </span>
+        <div className="inline-flex items-center gap-2">
+          <span className="text-sm text-subtle">Current status:</span>
+          <InventoryStatusBadge status={asset.status} size="md" />
+        </div>
       </div>
 
       <div className="grid grid-cols-1 gap-3 max-w-xl mx-auto">

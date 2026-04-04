@@ -10,6 +10,7 @@ import {
 } from '../../api'
 import { getUserFacingMessage, logDevError } from '../../utils/errors'
 import { getCatalogLocationLabels } from '../../utils/locationAddressCatalog'
+import { useToast } from '../common/ToastProvider'
 
 type Props = {
   prefill?: Partial<AssetWriteInput>
@@ -100,7 +101,7 @@ export default function AssetForm({
   const [categories, setCategories] = useState<CategoryRecord[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [message, setMessage] = useState('')
+  const { showToast } = useToast()
 
   useEffect(() => {
     if (lockCategory) return
@@ -147,7 +148,6 @@ export default function AssetForm({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
-    setMessage('')
 
     if (!form.category_slug.trim()) {
       setError('Category is required')
@@ -225,8 +225,11 @@ export default function AssetForm({
         ? await updateAsset(prefill.asset_tag, payload)
         : await createAsset(payload)
 
+      showToast({
+        message: isEditing ? 'Asset updated successfully.' : 'Asset created successfully.',
+        variant: 'success',
+      })
       onSuccess(result)
-      setMessage(isEditing ? 'Asset updated successfully.' : 'Asset created successfully.')
 
       if (!isEditing) {
         setForm(defaultForm)
@@ -434,7 +437,6 @@ export default function AssetForm({
         </section>
 
         {error && <p className="text-accent text-sm">{error}</p>}
-        {message && <p className="text-primary text-sm">{message}</p>}
 
         <p className="text-[11px] text-muted leading-relaxed border-t border-base pt-2.5 mt-1">
           <span className="text-accent font-semibold">*</span> All starred fields are required before you can save (Notes is optional).

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { createAsset, listCategories, slugifyCategoryLabel } from '../../api'
 import { getUserFacingMessage, logDevError } from '../../utils/errors'
+import { useToast } from '../common/ToastProvider'
 
 type KvRow = { key: string; value: string }
 
@@ -21,7 +22,7 @@ export default function OtherAssetForm({ onClose, onSuccess, variant = 'panel' }
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState('')
   const [error, setError] = useState('')
-  const [message, setMessage] = useState('')
+  const { showToast } = useToast()
 
   const slugPreview = useMemo(() => slugifyCategoryLabel(categoryName), [categoryName])
 
@@ -58,7 +59,6 @@ export default function OtherAssetForm({ onClose, onSuccess, variant = 'panel' }
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
-    setMessage('')
 
     const nameTrim = categoryName.trim()
     if (!nameTrim) {
@@ -104,7 +104,7 @@ export default function OtherAssetForm({ onClose, onSuccess, variant = 'panel' }
         status: 'in_stock',
         custom_fields: customFields,
       })
-      setMessage('Asset created successfully.')
+      showToast({ message: 'Asset created successfully.', variant: 'success' })
       onSuccess(result)
     } catch (err) {
       logDevError('otherAssetForm.submit', err)
@@ -206,7 +206,6 @@ export default function OtherAssetForm({ onClose, onSuccess, variant = 'panel' }
         </div>
 
         {error ? <p className="text-accent text-sm">{error}</p> : null}
-        {message ? <p className="text-primary text-sm">{message}</p> : null}
 
         <div className="flex flex-col sm:flex-row gap-2 pt-1">
           <button

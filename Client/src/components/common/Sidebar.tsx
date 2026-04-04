@@ -174,7 +174,7 @@ function MainNavLink({
       to={item.to}
       onClick={onNavigate}
       aria-current={active ? 'page' : undefined}
-      className={`group nav-item relative flex items-center gap-3 rounded-xl px-3 py-2.5 transition ${active ? 'nav-item-active bg-surface-3 text-primary' : ''
+      className={`group nav-item relative flex items-center gap-3 rounded-xl px-3 transition ${active ? 'nav-item-active text-primary' : ''
         }${active
           ? ''
           : accentTone
@@ -243,7 +243,7 @@ function MainNavAction({
     <button
       type="button"
       onClick={() => onAction(item.action)}
-      className={`group nav-item relative flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition ${active ? 'nav-item-active bg-surface-3 text-primary' : 'text-muted hover:bg-surface-3 hover:text-primary'
+      className={`group nav-item relative flex w-full items-center gap-3 rounded-xl px-3 text-left transition ${active ? 'nav-item-active text-primary' : 'text-muted hover:bg-surface-3 hover:text-primary'
         }`}
     >
       <span
@@ -282,7 +282,7 @@ function SubNavLink({
       to={item.to}
       onClick={onNavigate}
       aria-current={active ? 'page' : undefined}
-      className={`group nav-item flex items-center gap-3 rounded-lg py-1.5 pl-12 pr-2.5 text-sm transition ${active ? 'nav-item-active bg-surface-3 text-primary' : ''
+      className={`group nav-item flex items-center gap-3 rounded-lg  pl-12 pr-2.5 text-sm transition ${active ? 'nav-item-active  text-primary' : ''
         }${active
           ? ''
           : accentTone
@@ -328,7 +328,7 @@ function SubNavAction({
     <button
       type="button"
       onClick={() => onAction(item.action)}
-      className={`group nav-item flex w-full items-center gap-3 rounded-lg py-1.5 pl-12 pr-2.5 text-sm transition ${active ? 'nav-item-active bg-surface-3 text-primary' : 'text-muted hover:bg-surface-3 hover:text-primary'
+      className={`group nav-item flex w-full items-center gap-3 rounded-lg  pl-12 pr-2.5 text-sm transition ${active ? 'nav-item-active text-primary' : 'text-muted hover:bg-surface-3 hover:text-primary'
         }`}
     >
       <span className={`flex h-4 w-4 shrink-0 items-center justify-center ${active ? 'text-accent' : 'text-subtle'}`}>
@@ -377,7 +377,7 @@ function GroupNavItem({
         title={item.label}
         aria-label={`Expand ${item.label}`}
         className={`group nav-item flex h-10 w-10 items-center justify-center rounded-xl border transition ${active || open
-          ? 'nav-item-active border-accent-soft bg-surface-3 text-accent'
+          ? 'nav-item-active border-accent-soft  text-accent'
           : 'border-base bg-surface text-muted hover:bg-surface-3 hover:text-primary'
           }`}
       >
@@ -391,7 +391,7 @@ function GroupNavItem({
       <button
         type="button"
         onClick={() => onToggle(item.id)}
-        className={`group nav-item relative flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition ${emphasizeGroup ? 'nav-item-active bg-surface-2 text-primary' : open ? 'bg-surface-2 text-primary' : 'text-muted hover:bg-surface-3 hover:text-primary'
+        className={`group nav-item relative flex w-full items-center gap-3 rounded-xl px-3 text-left transition ${emphasizeGroup ? 'nav-item-active bg-surface-2 text-primary' : open ? 'bg-surface-2 text-primary' : 'text-muted hover:bg-surface-3 hover:text-primary'
           }`}
       >
         <span
@@ -470,16 +470,16 @@ function SidebarNavigation({
   onNavigate?: () => void
 }) {
   return (
-    <div className={`${compact ? 'space-y-4' : 'space-y-5'}`}>
+    <div className={`${compact ? 'space-y-3' : 'space-y-3.5'}`}>
       {sections.map((section, index) => (
-        <section key={section.id} className={`${compact ? 'flex flex-col items-center gap-2' : 'space-y-1.5'}`}>
+        <section key={section.id} className={`${compact ? 'flex flex-col items-center gap-1.5' : 'space-y-1'}`}>
           {!compact && section.title ? (
-            <p className="px-3 text-[11px] uppercase tracking-[0.18em] text-subtle">
+            <p className="px-3 text-[10px] uppercase tracking-[0.16em] text-subtle">
               {section.title}
             </p>
           ) : null}
 
-          <div className={`${compact ? 'flex flex-col items-center gap-2' : 'space-y-1'}`}>
+          <div className={`${compact ? 'flex flex-col items-center gap-2' : 'space-y-0.5'}`}>
             {section.items.map((item) =>
               item.type === 'group' ? (
                 <GroupNavItem
@@ -668,13 +668,11 @@ export default function Sidebar({
           }`}
       >
         <div
-          className="sticky flex h-screen flex-col overflow-x-visible overflow-y-hidden border-r border-base bg-surface shadow-[0_18px_40px_rgba(0,0,0,0.22)]"
-          style={{ top: topOffset }}
+          className="sticky flex flex-col overflow-x-visible overflow-y-hidden border-r border-base bg-surface shadow-[0_18px_40px_rgba(0,0,0,0.22)]"
+          style={{ top: topOffset, height: `calc(100vh - ${topOffset}px)` }}
         >
-
-
           <div
-            className={`flex-1 overflow-y-auto ${collapsed ? 'px-2 py-3' : 'px-3 py-4'} transition-[padding] duration-300 ease-in-out motion-reduce:transition-none`}
+            className={`flex-1 overflow-y-auto ${collapsed ? 'px-2 py-2' : 'px-2.5 py-3'} transition-[padding] duration-300 ease-in-out motion-reduce:transition-none`}
           >
             <SidebarNavigation
               sections={visibleSections}

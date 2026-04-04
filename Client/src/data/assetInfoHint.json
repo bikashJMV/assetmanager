@@ -17,5 +17,15 @@
         "View QR, Edit, and Delete are not available in this grid for your role; open a row to read details, or contact an administrator for changes."
       ]
     }
-  ]
+  ],
+  "erpStatusHint": {
+    "panelTitle": "What ERP Status means",
+    "ariaLabel": "Open help: ERP Status column",
+    "bullets": [
+      "ERP Status is the holder’s ERP entitlement from employee records—it is separate from inventory status (assigned, in stock, etc.).",
+      "Green dot: the current holder is ERP-active (entitled for ERP-linked access or reporting).",
+      "Red dot: the current holder is ERP-inactive (asset may still be assigned operationally).",
+      "No holder: a dash is shown because there is no current assignee to evaluate."
+    ]
+  }
 }

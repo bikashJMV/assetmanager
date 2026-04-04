@@ -136,7 +136,6 @@ export default function Notifications() {
       <div className="mx-auto max-w-6xl ">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">
-            <h1 className="text-lg font-semibold text-primary sm:text-xl">Notifications</h1>
             <p className="mt-1 text-sm leading-snug text-muted">{audienceLabel}</p>
           </div>
           <div className="flex shrink-0 items-center gap-2">

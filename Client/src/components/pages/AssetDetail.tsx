@@ -14,9 +14,11 @@ import Error from '../common/Error'
 import Loader from '../common/Loader'
 import ConfirmDialog from '../common/ConfirmDialog'
 import { getErrorDebugDetail, getUserFacingMessage, logDevError } from '../../utils/errors'
-import { formatDateTime, formatDisplay } from '../../utils/formatDisplay'
+import { formatDateTime, formatDisplay, formatEnumLabel } from '../../utils/formatDisplay'
 import IconActionButton from '../common/IconActionButton'
 import AssetChangeHistory from '../asset/AssetChangeHistory'
+import InventoryStatusBadge from '../common/InventoryStatusBadge'
+import { useToast } from '../common/ToastProvider'
 
 // function formatInventryStatus=(status:string)=>{
 //   if(status.toLowerCase()==='in_stock'){
@@ -52,9 +54,9 @@ export default function AssetDetail() {
   const [assignCode, setAssignCode] = useState('')
   const [assignNotes, setAssignNotes] = useState('')
   const [actionLoading, setActionLoading] = useState(false)
-  const [actionSuccessMessage, setActionSuccessMessage] = useState<string | null>(null)
   const [canManage, setCanManage] = useState(false)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const { showToast } = useToast()
 
   const refresh = useCallback(async () => {
     if (!id) return
@@ -115,7 +117,6 @@ export default function AssetDetail() {
     setActionLoading(true)
     setError('')
     setErrorDebug(undefined)
-    setActionSuccessMessage(null)
     try {
       const result = await assignAsset({
         asset_tag: detail.asset.asset_tag,
@@ -126,7 +127,7 @@ export default function AssetDetail() {
         typeof result?.message === 'string' && result.message.trim()
           ? result.message.trim()
           : 'Asset assigned successfully.'
-      setActionSuccessMessage(msg)
+      showToast({ message: msg, variant: 'success' })
       setAssignCode('')
       setAssignNotes('')
       await refresh()
@@ -151,7 +152,6 @@ export default function AssetDetail() {
     setActionLoading(true)
     setError('')
     setErrorDebug(undefined)
-    setActionSuccessMessage(null)
     try {
       const result = await returnAsset({
         asset_tag: detail.asset.asset_tag,
@@ -161,7 +161,7 @@ export default function AssetDetail() {
         typeof result?.message === 'string' && result.message.trim()
           ? result.message.trim()
           : 'Asset returned successfully.'
-      setActionSuccessMessage(msg)
+      showToast({ message: msg, variant: 'success' })
       setAssignNotes('')
       await refresh()
     } catch (err) {
@@ -219,18 +219,7 @@ export default function AssetDetail() {
 
   return (
     <main className="min-h-screen bg-app text-primary px-4 sm:px-6 py-6 sm:py-8">
-      <div className="flex flex-wrap items-center gap-3 px-4 sm:px-6 py-4 ">
-        <button
-          onClick={() => navigate('/assets')}
-          className="text-muted hover:text-primary text-sm transition"
-          type="button"
-        >
-          &larr; Back
-        </button>
-        <h1 className="text-lg sm:text-xl font-semibold flex items-center gap-2">
-          <span className="text-accent">{formatDisplay(asset.asset_tag)}</span> /
-          <span className="text-subtle text-sm">{formatDisplay(asset.category_name)}</span>
-        </h1>
+      <div className="flex flex-wrap items-center gap-3 px-4 sm:px-6 ">
         {canManage ? (
           <div className="ml-auto flex items-center gap-2">
             <IconActionButton
@@ -260,23 +249,23 @@ export default function AssetDetail() {
       </div>
 
       <div className="max-w-7xl mx-auto mt-5 space-y-5">
-        <div className="bg-gradient-to-r from-[color:var(--surface-2)] via-[color:var(--bg)] to-[color:var(--surface-3)] p-4 sm:p-5 flex flex-col gap-4">
+        <div className="bg-gradient-to-r from-[color:var(--surface-2)] via-[color:var(--bg)] to-[color:var(--surface-3)] px-4 sm:p-5 flex flex-col gap-4">
           <p className="text-xs text-subtle leading-relaxed">
             At-a-glance snapshot: lifecycle status, holder ERP entitlement when someone is assigned, and how this device is labeled in
             inventory.
           </p>
           <div className="flex flex-wrap items-center gap-2">
-            <span className="px-3 py-1 text-xs font-semibold rounded-full bg-accent text-white uppercase">{asset.status}</span>
+            <InventoryStatusBadge status={asset.status} size="md" />
             {asset.current_employee_id ? (
-              <span className={`px-3 py-1 text-xs font-semibold rounded-full ${asset.current_employee_erp_active ? 'bg-surface border border-base text-muted' : 'bg-surface border border-base text-accent'}`}>
+              <span className={`px-3 text-xs font-semibold rounded-full ${asset.current_employee_erp_active ? 'bg-surface border border-base text-muted' : 'bg-surface border border-base text-accent'}`}>
                 Holder ERP: {asset.current_employee_erp_active ? 'Active' : 'Inactive'}
               </span>
             ) : null}
           </div>
           <div>
             <p className="text-muted text-xs uppercase tracking-wide">Inventory</p>
-            <p className="text-xl sm:text-2xl font-bold leading-tight mt-1">{assetTitle}</p>
-            <p className="text-sm text-subtle mt-1">Location: {formatDisplay(asset.location_name)}</p>
+            <p className="text-xl sm:text-2xl font-bold leading-tight">{assetTitle}</p>
+            <p className="text-sm text-subtle">Location: {formatDisplay(asset.location_name)}</p>
           </div>
         </div>
 
@@ -324,11 +313,6 @@ export default function AssetDetail() {
           <p className="text-[11px] text-subtle mt-2">
             Reassigning to a different code ends the previous holder’s assignment automatically and opens a new row in history.
           </p>
-          {actionSuccessMessage ? (
-            <p className="text-sm mt-2 rounded-lg border border-[color:var(--accent-soft)] bg-[color:var(--accent-soft)]/15 px-3 py-2 text-primary">
-              {actionSuccessMessage}
-            </p>
-          ) : null}
           {error ? <p className="text-accent text-sm mt-2">{error}</p> : null}
         </section>
 
@@ -533,13 +517,13 @@ function AssignmentRow({ entry }: { entry: AssetAssignmentRecord }) {
       <td className="px-3 py-2 text-primary">
         {entry.employee ? (
           <span className={`text-xs px-2 py-0.5 rounded ${entry.employee.erp_active ? 'bg-accent text-white' : 'bg-surface border border-base text-muted'}`}>
-            {entry.employee.erp_active ? 'ERP Active' : 'ERP Inactive'}
+            {entry.employee.erp_active ? 'Active' : 'Inactive'}
           </span>
         ) : '-'}
       </td>
       <td className="px-3 py-2 text-primary">{formatDateTime(entry.assigned_at)}</td>
       <td className="px-3 py-2 text-primary">{entry.returned_at ? formatDateTime(entry.returned_at) : 'OPEN'}</td>
-      <td className="px-3 py-2 text-primary">{formatDisplay(entry.source)}</td>
+      <td className="px-3 py-2 text-primary">{formatEnumLabel(entry.source)}</td>
     </tr>
   )
 }

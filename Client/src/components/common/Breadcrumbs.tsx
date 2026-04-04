@@ -13,7 +13,7 @@ function labelForSegment(seg: string): string {
     'recycle-bin': 'Recycle Bin',
     guide: 'Guide',
     scan: 'Scan',
-    'assets': 'Assets',
+    'Assets': 'Assets',
   }
   return map[seg] ?? seg
 }
@@ -68,7 +68,7 @@ export default function Breadcrumbs() {
               {crumb.to && !isLast ? (
                 <Link
                   to={crumb.to}
-                  className="hover:text-accent hover:underline hover:decoration-accent hover:decoration-2 hover:decoration-solid underline-offset-4 transition"
+                  className="underline decoration-transparent decoration-2 underline-offset-4 transition hover:text-accent hover:decoration-[color:var(--accent)]"
                 >
                   {crumb.label}
                 </Link>

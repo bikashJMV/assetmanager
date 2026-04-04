@@ -5,7 +5,7 @@ const heroTitle = 'Meet Asset Manager'
 export default function HomeHero({ isAuthenticated }: { isAuthenticated: boolean }) {
   return (
     <header className="mx-auto flex w-full max-w-[1320px] flex-col items-center px-4 pb-8 pt-12 text-center sm:px-6 lg:px-7">
-      <div className="mb-5 self-end rounded-full border border-[#f04e0f33] bg-[#f04e0f14] px-4 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-[#F04E0F]">
+      <div className="mb-5 self-center rounded-full border border-[#f04e0f33] bg-[#f04e0f14] px-4 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-[#F04E0F]">
         Internal Platform
       </div>
       <div className="relative mt-6 w-full max-w-[1100px] px-2 pb-3 pt-8 sm:mt-8">

@@ -86,7 +86,7 @@ export const sidebarSections: SidebarNavSection[] = [
     title: 'Tools',
     items: [
       { id: 'analysis', type: 'link', label: 'Analysis', to: '/analysis', icon: 'chart-column', visibility: 'authenticated' },
-      { id: 'notifications', type: 'link', label: 'Notifications', to: '/notifications', icon: 'bell', visibility: 'authenticated' },
+      // { id: 'notifications', type: 'link', label: 'Notifications', to: '/notifications', icon: 'bell', visibility: 'authenticated' },
       { id: 'recycle-bin', type: 'link', label: 'Recycle Bin', to: '/recycle-bin', icon: 'trash', visibility: 'manage' },
       { id: 'theme-toggle', type: 'action', label: 'Theme: Light/Dark', icon: 'settings', action: 'toggle-theme' },
       { id: 'guide', type: 'link', label: 'Guide', to: '/guide', icon: 'guide' },

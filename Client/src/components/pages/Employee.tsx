@@ -3,17 +3,21 @@ import EmployeeForm from '../form/EmployeeForm'
 import Error from '../common/Error'
 import RefreshButton from '../common/RefreshButton'
 import ConfirmDialog from '../common/ConfirmDialog'
+import FilterPopup from '../common/FilterPopup'
+import FilterSelect, { type FilterSelectOption } from '../common/FilterSelect'
+import LoadMorePagination from '../common/LoadMorePagination'
+import { useToast } from '../common/ToastProvider'
 import Loader from '../common/Loader'
 import InfoHint from '../common/InfoHint'
 import IconActionButton from '../common/IconActionButton'
-import AnimatedNavIcon from '../common/AnimatedNavIcon'
+import AnimatedNavIcon, { type IconName } from '../common/AnimatedNavIcon'
 import {
   getCurrentEmployeeAssets,
   getAssets,
   getQrDataUriForAssetTag,
   hasActiveAdminAccess,
   listDepartments,
-  listEmployees,
+  listEmployeesPage,
   setEmployeeAdminStatus,
   setEmployeeRole,
   softDeleteEmployeeById,
@@ -36,8 +40,25 @@ type EmployeePageInfoHint = {
 const EMPLOYEE_PAGE_INFO_HINT = employeeInfoHint as EmployeePageInfoHint
 
 const SEARCH_DEBOUNCE_MS = 300
+const PAGE_SIZE = 50
 const FILTER_STATUS_ALL = 'all' as const
 const ROLE_ALL = 'all' as const
+const EMPLOYEE_STATUS_OPTIONS: FilterSelectOption[] = [
+  { value: 'all', label: 'All employees' },
+  { value: 'active', label: 'Active employee', dotClassName: 'bg-emerald-500' },
+  { value: 'inactive', label: 'Inactive employee', dotClassName: 'bg-red-500' },
+]
+const ERP_STATUS_OPTIONS: FilterSelectOption[] = [
+  { value: 'all', label: 'Any ERP Access' },
+  { value: 'active', label: 'Only ERP Active', dotClassName: 'bg-emerald-500' },
+  { value: 'inactive', label: 'Only ERP Inactive', dotClassName: 'bg-red-500' },
+]
+const ROLE_OPTIONS: FilterSelectOption[] = [
+  { value: 'all', label: 'All roles' },
+  { value: 'admin', label: 'Admin' },
+  { value: 'it_ops', label: 'IT Ops' },
+  { value: 'employee', label: 'Employee' },
+]
 
 type EmployeeFiltersInput = {
   search: string
@@ -78,6 +99,39 @@ function roleChangeConfirmLabel(role: EmployeeRole): string {
   return 'Set Employee'
 }
 
+function getRoleChangeDialogLabel(employee: EmployeeRecord, nextRole: EmployeeRole): string {
+  if (employee.role === 'it_ops' && nextRole === 'employee') return 'Revoke IT Ops'
+  return roleChangeConfirmLabel(nextRole)
+}
+
+function getRoleChangeDialogMessage(employee: EmployeeRecord, nextRole: EmployeeRole): string {
+  if (employee.role === 'it_ops' && nextRole === 'employee') {
+    return `Remove IT Ops access from ${employee.name}? They will return to the employee role. Employee code: ${employee.employee_code}.`
+  }
+
+  return `Are you sure you want to set ${employee.name} as ${formatRoleLabel(nextRole)}? Employee code: ${employee.employee_code}.`
+}
+
+function employeeStatusBadgeClass(isActive: boolean): string {
+  return isActive
+    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+    : 'bg-red-50 text-red-700 border border-red-200'
+}
+
+function employeeStatusDotClass(isActive: boolean): string {
+  return isActive ? 'bg-emerald-500' : 'bg-red-500'
+}
+
+function erpStatusBadgeClass(isActive: boolean): string {
+  return isActive
+    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+    : 'bg-red-50 text-red-700 border border-red-200'
+}
+
+function erpStatusDotClass(isActive: boolean): string {
+  return isActive ? 'bg-emerald-500' : 'bg-red-500'
+}
+
 function toApiFilters(input: EmployeeFiltersInput): EmployeeListFilters {
   const filters: EmployeeListFilters = { is_active: 'all', erp_active: 'all' }
 
@@ -110,6 +164,7 @@ function toApiFilters(input: EmployeeFiltersInput): EmployeeListFilters {
 
 export default function Employee() {
   const [employees, setEmployees] = useState<EmployeeRecord[]>([])
+  const [totalEmployees, setTotalEmployees] = useState(0)
   const [departments, setDepartments] = useState<string[]>([])
   const [filtersInput, setFiltersInput] = useState<EmployeeFiltersInput>({
     search: '',
@@ -118,8 +173,16 @@ export default function Employee() {
     department: '',
     role: ROLE_ALL,
   })
+  const [draftFiltersInput, setDraftFiltersInput] = useState<EmployeeFiltersInput>({
+    search: '',
+    employeeStatus: 'all',
+    erpStatus: 'all',
+    department: '',
+    role: ROLE_ALL,
+  })
   const [editEmployee, setEditEmployee] = useState<EmployeeRecord | null>(null)
   const [loading, setLoading] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState('')
   const [errorDebug, setErrorDebug] = useState<string | undefined>(undefined)
   const [accessResolved, setAccessResolved] = useState(false)
@@ -133,11 +196,12 @@ export default function Employee() {
   const [bulkQrEmployeeId, setBulkQrEmployeeId] = useState<string | null>(null)
   const [filtersOpen, setFiltersOpen] = useState(false)
   const [viewMode, setViewMode] = useState<EmployeeViewMode>(getInitialEmployeeViewMode)
-  const [successMessage, setSuccessMessage] = useState('')
+  const [actionMenuEmployeeId, setActionMenuEmployeeId] = useState<string | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<EmployeeRecord | null>(null)
   const [grantAdminTarget, setGrantAdminTarget] = useState<EmployeeRecord | null>(null)
   const [revokeAdminTarget, setRevokeAdminTarget] = useState<EmployeeRecord | null>(null)
   const [adminPrivilegeLoading, setAdminPrivilegeLoading] = useState(false)
+  const { showToast } = useToast()
 
   const requestIdRef = useRef(0)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -150,17 +214,30 @@ export default function Employee() {
   }))
   const canManageEmployees = accessResolved && isAdmin
   const activeAdvancedFilterCount = getActiveAdvancedFilterCount(filtersInput)
+  const hasMoreEmployees = employees.length < totalEmployees
 
-  const fetchEmployees = async (filters: EmployeeListFilters) => {
+  const fetchEmployees = async (
+    filters: EmployeeListFilters,
+    options: { append?: boolean; offset?: number; limit?: number } = {}
+  ) => {
+    const append = options.append ?? false
+    const offset = Math.max(0, options.offset ?? 0)
+    const limit = Math.max(1, options.limit ?? PAGE_SIZE)
     const requestId = ++requestIdRef.current
-    setLoading(true)
+    if (append) {
+      setLoadingMore(true)
+    } else {
+      setLoadingMore(false)
+      setLoading(true)
+    }
     setError('')
     setErrorDebug(undefined)
 
     try {
-      const rows = await listEmployees(filters)
+      const result = await listEmployeesPage(filters, { offset, limit })
       if (requestId !== requestIdRef.current) return
-      setEmployees(rows)
+      setEmployees((current) => (append ? [...current, ...result.rows] : result.rows))
+      setTotalEmployees(result.total)
     } catch (err) {
       if (requestId !== requestIdRef.current) return
       logDevError('employees.fetch', err)
@@ -168,7 +245,11 @@ export default function Employee() {
       setErrorDebug(getErrorDebugDetail(err))
     } finally {
       if (requestId === requestIdRef.current) {
-        setLoading(false)
+        if (append) {
+          setLoadingMore(false)
+        } else {
+          setLoading(false)
+        }
       }
     }
   }
@@ -219,6 +300,29 @@ export default function Employee() {
     window.localStorage.setItem(EMPLOYEE_VIEW_MODE_STORAGE_KEY, viewMode)
   }, [viewMode])
 
+  useEffect(() => {
+    if (!actionMenuEmployeeId) return
+
+    const onDocumentClick = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null
+      if (target?.closest?.('[data-employee-action-menu]')) return
+      setActionMenuEmployeeId(null)
+    }
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setActionMenuEmployeeId(null)
+      }
+    }
+
+    document.addEventListener('mousedown', onDocumentClick)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', onDocumentClick)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [actionMenuEmployeeId])
+
   const handleSearchChange = (value: string) => {
     setFiltersInput((current) => {
       const nextInput = { ...current, search: value }
@@ -248,6 +352,42 @@ export default function Employee() {
     })
   }
 
+  const openFiltersPopup = () => {
+    setDraftFiltersInput(filtersInput)
+    setFiltersOpen(true)
+  }
+
+  const closeFiltersPopup = () => {
+    setDraftFiltersInput(filtersInput)
+    setFiltersOpen(false)
+  }
+
+  const handleDraftFilterChange = (
+    partial: Partial<Pick<EmployeeFiltersInput, 'employeeStatus' | 'erpStatus' | 'department' | 'role'>>
+  ) => {
+    setDraftFiltersInput((current) => ({ ...current, ...partial }))
+  }
+
+  const handleApplyDraftFilters = () => {
+    handleFilterChange({
+      employeeStatus: draftFiltersInput.employeeStatus,
+      erpStatus: draftFiltersInput.erpStatus,
+      department: draftFiltersInput.department,
+      role: draftFiltersInput.role,
+    })
+    setFiltersOpen(false)
+  }
+
+  const handleClearDraftFilters = () => {
+    setDraftFiltersInput((current) => ({
+      ...current,
+      employeeStatus: FILTER_STATUS_ALL,
+      erpStatus: FILTER_STATUS_ALL,
+      department: '',
+      role: ROLE_ALL,
+    }))
+  }
+
   const handleResetAdvancedFilters = () => {
     if (debounceRef.current) clearTimeout(debounceRef.current)
 
@@ -266,10 +406,30 @@ export default function Employee() {
     })
   }
 
+  const hasDraftAdvancedChanges =
+    draftFiltersInput.employeeStatus !== filtersInput.employeeStatus ||
+    draftFiltersInput.erpStatus !== filtersInput.erpStatus ||
+    draftFiltersInput.department !== filtersInput.department ||
+    draftFiltersInput.role !== filtersInput.role
+  const draftAdvancedFilterCount = getActiveAdvancedFilterCount(draftFiltersInput)
+  const departmentOptions: FilterSelectOption[] = [
+    { value: '', label: 'All departments' },
+    ...departments.map((department) => ({ value: department, label: department })),
+  ]
+  const currentPageLimit = Math.max(PAGE_SIZE, employees.length || PAGE_SIZE)
+
   const handleRefresh = () => {
     if (debounceRef.current) clearTimeout(debounceRef.current)
-    setSuccessMessage('')
-    void fetchEmployees(filtersRef.current)
+    void fetchEmployees(filtersRef.current, { limit: currentPageLimit })
+  }
+
+  const handleLoadMore = () => {
+    if (loading || loadingMore || !hasMoreEmployees) return
+    void fetchEmployees(filtersRef.current, {
+      append: true,
+      offset: employees.length,
+      limit: PAGE_SIZE,
+    })
   }
 
   const handleUpsertEmployee = async (employee: EmployeeUpsertInput) => {
@@ -279,8 +439,8 @@ export default function Employee() {
         id: editEmployee?.id,
       })
       setEditEmployee(null)
-      setSuccessMessage('Employee saved successfully.')
-      await fetchEmployees(filtersRef.current)
+      showToast({ message: 'Employee saved successfully.', variant: 'success' })
+      await fetchEmployees(filtersRef.current, { limit: currentPageLimit })
     } catch (err) {
       logDevError('employees.upsert', err)
       setError(getUserFacingMessage(err, 'Unable to save employee right now.'))
@@ -291,7 +451,6 @@ export default function Employee() {
 
   const openGrantAdminConfirm = (employee: EmployeeRecord) => {
     setGrantAdminTarget(employee)
-    setSuccessMessage('')
     setError('')
     setErrorDebug(undefined)
   }
@@ -303,7 +462,6 @@ export default function Employee() {
 
   const openRevokeAdminConfirm = (employee: EmployeeRecord) => {
     setRevokeAdminTarget(employee)
-    setSuccessMessage('')
     setError('')
     setErrorDebug(undefined)
   }
@@ -320,9 +478,9 @@ export default function Employee() {
     setErrorDebug(undefined)
     try {
       await setEmployeeAdminStatus(grantAdminTarget, true)
-      setSuccessMessage(`${grantAdminTarget.name} is now an admin.`)
+      showToast({ message: `${grantAdminTarget.name} is now an admin.`, variant: 'success' })
       setGrantAdminTarget(null)
-      await fetchEmployees(filtersRef.current)
+      await fetchEmployees(filtersRef.current, { limit: currentPageLimit })
     } catch (err) {
       logDevError('employees.grant_admin', err)
       setError(getUserFacingMessage(err, 'Unable to update admin privileges right now.'))
@@ -339,9 +497,9 @@ export default function Employee() {
     setErrorDebug(undefined)
     try {
       await setEmployeeAdminStatus(revokeAdminTarget, false)
-      setSuccessMessage(`${revokeAdminTarget.name} is now an employee.`)
+      showToast({ message: `${revokeAdminTarget.name} is now an employee.`, variant: 'success' })
       setRevokeAdminTarget(null)
-      await fetchEmployees(filtersRef.current)
+      await fetchEmployees(filtersRef.current, { limit: currentPageLimit })
     } catch (err) {
       logDevError('employees.revoke_admin', err)
       setError(getUserFacingMessage(err, 'Unable to update admin privileges right now.'))
@@ -354,7 +512,6 @@ export default function Employee() {
   const openRoleChange = (employee: EmployeeRecord, role: EmployeeRole) => {
     setRoleChangeTarget(employee)
     setRoleChangeTargetRole(role)
-    setSuccessMessage('')
     setError('')
     setErrorDebug(undefined)
   }
@@ -373,10 +530,13 @@ export default function Employee() {
     setErrorDebug(undefined)
     try {
       await setEmployeeRole(roleChangeTarget, roleChangeTargetRole)
-      setSuccessMessage(`${roleChangeTarget.name} role updated to ${roleChangeTargetRole.replace('_', ' ')}.`)
+      showToast({
+        message: `${roleChangeTarget.name} role updated to ${roleChangeTargetRole.replace('_', ' ')}.`,
+        variant: 'success',
+      })
       setRoleChangeTarget(null)
       setRoleChangeTargetRole(null)
-      await fetchEmployees(filtersRef.current)
+      await fetchEmployees(filtersRef.current, { limit: currentPageLimit })
     } catch (err) {
       logDevError('employees.set_role', err)
       setError(getUserFacingMessage(err, 'Unable to update role right now.'))
@@ -399,7 +559,6 @@ export default function Employee() {
     setBulkQrEmployeeId(employee.id)
     setError('')
     setErrorDebug(undefined)
-    setSuccessMessage('')
     try {
       const assets = await getAssets({ current_employee_id: employee.id })
       const tags = assets
@@ -407,7 +566,7 @@ export default function Employee() {
         .filter((tag) => Boolean(tag))
 
       if (!tags.length) {
-        setSuccessMessage(`No assigned assets found for ${employee.name}.`)
+        showToast({ message: `No assigned assets found for ${employee.name}.`, variant: 'info' })
         return
       }
 
@@ -416,7 +575,7 @@ export default function Employee() {
         triggerQrDownload(tag, qrCode)
       }
 
-      setSuccessMessage(`Downloaded ${tags.length} QR code(s) for ${employee.name}.`)
+      showToast({ message: `Downloaded ${tags.length} QR code(s) for ${employee.name}.`, variant: 'success' })
     } catch (err) {
       logDevError('employees.bulk_qr_download', err)
       setError(getUserFacingMessage(err, 'Unable to download employee QR codes right now.'))
@@ -430,8 +589,8 @@ export default function Employee() {
     try {
       await softDeleteEmployeeById(employee.id)
       setDeleteTarget(null)
-      setSuccessMessage(`${employee.name} moved to Recycle Bin.`)
-      await fetchEmployees(filtersRef.current)
+      showToast({ message: `${employee.name} moved to Recycle Bin.`, variant: 'success' })
+      await fetchEmployees(filtersRef.current, { limit: currentPageLimit })
     } catch (err) {
       logDevError('employees.soft_delete', err)
       setError(getUserFacingMessage(err, 'Unable to delete employee right now.'))
@@ -457,11 +616,13 @@ export default function Employee() {
           <div className="flex items-center gap-2 lg:flex-nowrap lg:shrink-0">
             <button
               type="button"
-              onClick={() => setFiltersOpen((current) => !current)}
+              onClick={openFiltersPopup}
               className={`inline-flex h-10 items-center gap-2 rounded-lg border px-3 text-sm font-medium transition ${filtersOpen || activeAdvancedFilterCount > 0
                 ? 'border-accent-soft bg-[color:var(--accent-soft)]/15 text-primary'
-                : 'border-base bg-surface text-muted hover:bg-surface-3 hover:text-primary'
+                : 'border-base bg-surface text-muted hover:border-accent-soft hover:bg-[color:var(--accent-soft)]/15 hover:text-accent'
                 }`}
+              aria-expanded={filtersOpen ? 'true' : 'false'}
+              aria-haspopup="dialog"
             >
               <span className="h-4 w-4 shrink-0">
                 <FilterIcon />
@@ -480,7 +641,7 @@ export default function Employee() {
               iconOnly
               ariaLabel="Refresh employees"
               title={loading ? 'Refreshing employees' : 'Refresh employees'}
-              className="shrink-0"
+              className="shrink-0 hover:border-accent-soft hover:bg-[color:var(--accent-soft)]/15 hover:text-accent"
             />
 
             <div className="inline-flex items-center rounded-lg border border-base bg-surface p-1">
@@ -491,7 +652,7 @@ export default function Employee() {
                 onClick={() => setViewMode('table')}
                 className={`inline-flex h-8 w-8 items-center justify-center rounded-md transition ${viewMode === 'table'
                   ? 'bg-accent text-white'
-                  : 'text-muted hover:bg-surface-3 hover:text-primary'
+                  : 'text-muted hover:bg-[color:var(--accent-soft)]/15 hover:text-accent'
                   }`}
               >
                 <TableViewIcon />
@@ -503,7 +664,7 @@ export default function Employee() {
                 onClick={() => setViewMode('grid')}
                 className={`inline-flex h-8 w-8 items-center justify-center rounded-md transition ${viewMode === 'grid'
                   ? 'bg-accent text-white'
-                  : 'text-muted hover:bg-surface-3 hover:text-primary'
+                  : 'text-muted hover:bg-[color:var(--accent-soft)]/15 hover:text-accent'
                   }`}
               >
                 <GridViewIcon />
@@ -531,7 +692,7 @@ export default function Employee() {
           </div>
         </div>
 
-        {filtersOpen && (
+        {false && filtersOpen && (
           <section className="rounded-xl border border-base bg-surface-2 px-3 py-2.5 sm:px-4">
             <div className="flex min-w-0 flex-nowrap items-center gap-2 sm:gap-3 overflow-x-auto">
               <select
@@ -547,7 +708,7 @@ export default function Employee() {
               >
                 <option value="all" className="bg-surface-2 text-primary">All employees</option>
                 <option value="active" className="bg-surface-2 text-primary">Active employee</option>
-                <option value="inactive" className="bg-surface-2 text-primary">Not active employee</option>
+                <option value="inactive" className="bg-surface-2 text-primary">Inactive employee</option>
               </select>
 
               <select
@@ -596,7 +757,7 @@ export default function Employee() {
                 type="button"
                 onClick={handleResetAdvancedFilters}
                 disabled={activeAdvancedFilterCount === 0}
-                className="inline-flex h-9 shrink-0 items-center rounded-lg border border-base bg-surface px-3 text-sm font-medium text-muted transition hover:bg-surface-3 hover:text-primary disabled:opacity-50 disabled:cursor-not-allowed sm:h-10"
+                className="inline-flex h-9 shrink-0 items-center rounded-lg border border-base bg-surface px-3 text-sm font-medium text-muted transition hover:border-accent-soft hover:bg-[color:var(--accent-soft)]/15 hover:text-accent disabled:opacity-50 disabled:cursor-not-allowed sm:h-10"
               >
                 Clear
               </button>
@@ -645,11 +806,6 @@ export default function Employee() {
           />
         </div>
       ) : null}
-      {successMessage ? (
-        <div className="mb-4 rounded-lg border border-[color:var(--accent-soft)] bg-[color:var(--accent-soft)]/15 px-4 py-2 text-sm text-primary">
-          {successMessage}
-        </div>
-      ) : null}
       {accessWarning ? (
         <div className="mb-4 rounded-lg border border-base bg-surface px-4 py-2 text-xs text-subtle">
           {accessWarning}
@@ -660,80 +816,94 @@ export default function Employee() {
         {!accessResolved || (loading && employees.length === 0) ? (
           <Loader embedded />
         ) : viewMode === 'table' ? (
-          <div className="overflow-x-auto rounded-xl border border-base">
+          <div className={`overflow-x-auto rounded-xl border border-base transition-opacity ${loadingMore ? 'opacity-60 pointer-events-none' : ''}`}>
             <table className="w-full min-w-[980px] text-sm text-left">
               <thead className="bg-surface-2 text-subtle text-xs uppercase">
                 <tr>
+                  <th className="px-4 py-3">S.No</th>
+                  {canManageEmployees && <th className="px-4 py-3">Actions</th>}
                   <th className="px-4 py-3">Name</th>
                   <th className="px-4 py-3">Email</th>
                   <th className="px-4 py-3">Employee Code</th>
                   <th className="px-4 py-3">Department</th>
                   <th className="px-4 py-3">Role</th>
                   <th className="px-4 py-3">Employee</th>
-                  <th className="px-4 py-3">ERP</th>
-                  {canManageEmployees && <th className="px-4 py-3 text-right">Actions</th>}
+                  <th className="px-4 py-3">ERP Status</th>
                 </tr>
               </thead>
               <tbody>
-                {employees.map((employee) => (
-                  <tr key={employee.id} className="border-t border-base hover:bg-surface-3 transition">
-                    <td className="px-4 py-3 text-primary font-medium">{employee.name}</td>
-                    <td className="px-4 py-3 text-muted">{formatDisplay(employee.email)}</td>
-                    <td className="px-4 py-3 text-primary">{employee.employee_code}</td>
-                    <td className="px-4 py-3 text-primary">{formatDisplay(employee.department)}</td>
-                    <td className="px-4 py-3 text-primary">{formatRoleLabel(employee.role)}</td>
-                    <td className="px-4 py-3">
-                      <span className={`text-xs px-2 py-1 rounded ${employee.is_active ? 'bg-accent text-white' : 'bg-surface border border-base text-muted'}`}>
-                        {employee.is_active ? 'Active' : 'Not active'}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className={`text-xs px-2 py-1 rounded ${employee.erp_active ? 'bg-accent text-white' : 'bg-surface border border-base text-muted'}`}>
-                        {employee.erp_active ? 'ERP Active' : 'ERP Inactive'}
-                      </span>
-                    </td>
+                {employees.map((employee, index) => (
+                  <tr key={employee.id} className="border-t border-base transition hover:bg-[color:var(--accent-soft)]/12">
+                    <td className="px-4 py-3 text-muted">{index + 1}</td>
                     {canManageEmployees && (
                       <td className="px-4 py-3">
                         <EmployeeActions
                           employee={employee}
+                          isAdmin={isAdmin}
                           isItOps={isItOps}
                           sessionEmployeeId={sessionEmployeeId}
                           bulkQrEmployeeId={bulkQrEmployeeId}
+                          display="menu"
+                          menuOpen={actionMenuEmployeeId === employee.id}
+                          onMenuToggle={() =>
+                            setActionMenuEmployeeId((current) =>
+                              current === employee.id ? null : employee.id
+                            )
+                          }
+                          onMenuClose={() => setActionMenuEmployeeId(null)}
                           onEdit={setEditEmployee}
                           onSetRole={openRoleChange}
                           onGrantAdmin={openGrantAdminConfirm}
                           onRevokeAdmin={openRevokeAdminConfirm}
                           onDownloadQrs={handleDownloadEmployeeQrs}
                           onDelete={setDeleteTarget}
-                          align="end"
                         />
                       </td>
                     )}
+                    <td className="px-4 py-3 text-primary font-medium">{employee.name}</td>
+                    <td className="px-4 py-3 text-muted">{formatDisplay(employee.email)}</td>
+                    <td className="px-4 py-3 text-primary">{employee.employee_code}</td>
+                    <td className="px-4 py-3 text-primary">{formatDisplay(employee.department)}</td>
+                    <td className="px-4 py-3 text-primary">{formatRoleLabel(employee.role)}</td>
+                    <td className="px-4 py-3">
+                      <span className={`inline-flex items-center gap-2 text-xs px-2 py-1 rounded ${employeeStatusBadgeClass(employee.is_active)}`}>
+                        <span className={`h-2.5 w-2.5 rounded-full ${employeeStatusDotClass(employee.is_active)}`} aria-hidden="true" />
+                        <span>{employee.is_active ? 'Active' : 'Inactive'}</span>
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={`inline-flex items-center gap-2 text-xs px-2 py-1 rounded ${erpStatusBadgeClass(employee.erp_active)}`}>
+                        <span className={`h-2.5 w-2.5 rounded-full ${erpStatusDotClass(employee.erp_active)}`} aria-hidden="true" />
+                        <span>{employee.erp_active ? 'Active' : 'Inactive'}</span>
+                      </span>
+                    </td>
                   </tr>
                 ))}
                 {!loading && employees.length === 0 && (
                   <tr>
-                    <td colSpan={canManageEmployees ? 8 : 7} className="text-center py-8 text-subtle">No employees found</td>
+                    <td colSpan={canManageEmployees ? 9 : 8} className="text-center py-8 text-subtle">No employees found</td>
                   </tr>
                 )}
               </tbody>
             </table>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          <div className={`grid grid-cols-1 gap-4 transition-opacity md:grid-cols-2 xl:grid-cols-3 ${loadingMore ? 'opacity-60 pointer-events-none' : ''}`}>
             {employees.map((employee) => (
-              <article key={employee.id} className="bg-surface-2 border border-base rounded-xl p-4">
+              <article key={employee.id} className="rounded-xl border border-base bg-surface-2 p-4 transition hover:border-accent-soft hover:bg-[color:var(--accent-soft)]/10">
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <h2 className="text-lg font-semibold">{employee.name}</h2>
                     <p className="text-sm text-muted">{formatDisplay(employee.email)}</p>
                   </div>
                   <div className="flex flex-col items-end gap-1 shrink-0">
-                    <span className={`text-xs px-2 py-1 rounded ${employee.is_active ? 'bg-accent text-white' : 'bg-surface border border-base text-muted'}`}>
-                      {employee.is_active ? 'Active employee' : 'Not active'}
+                    <span className={`inline-flex items-center gap-2 text-xs px-2 py-1 rounded ${employeeStatusBadgeClass(employee.is_active)}`}>
+                      <span className={`h-2.5 w-2.5 rounded-full ${employeeStatusDotClass(employee.is_active)}`} aria-hidden="true" />
+                      <span>{employee.is_active ? 'Active employee' : 'Not active employee'}</span>
                     </span>
-                    <span className={`text-xs px-2 py-1 rounded ${employee.erp_active ? 'bg-accent text-white' : 'bg-surface border border-base text-muted'}`}>
-                      {employee.erp_active ? 'ERP Active' : 'ERP Inactive'}
+                    <span className={`inline-flex items-center gap-2 text-xs px-2 py-1 rounded ${erpStatusBadgeClass(employee.erp_active)}`}>
+                      <span className={`h-2.5 w-2.5 rounded-full ${erpStatusDotClass(employee.erp_active)}`} aria-hidden="true" />
+                      <span>{employee.erp_active ? 'ERP Active' : 'ERP Inactive'}</span>
                     </span>
                   </div>
                 </div>
@@ -749,6 +919,7 @@ export default function Employee() {
                   <div className="mt-4 border-t border-base pt-4">
                     <EmployeeActions
                       employee={employee}
+                      isAdmin={isAdmin}
                       isItOps={isItOps}
                       sessionEmployeeId={sessionEmployeeId}
                       bulkQrEmployeeId={bulkQrEmployeeId}
@@ -771,6 +942,14 @@ export default function Employee() {
             )}
           </div>
         )}
+
+        <LoadMorePagination
+          loadedCount={employees.length}
+          totalCount={totalEmployees}
+          loading={loadingMore}
+          itemLabel="employees"
+          onLoadMore={handleLoadMore}
+        />
       </section>
 
       {editEmployee && (
@@ -796,16 +975,74 @@ export default function Employee() {
         </div>
       )}
 
+      <FilterPopup
+        open={filtersOpen}
+        title="Filter employees"
+        // description="Choose one or more filters, then apply them to update the employee list."
+        activeCount={draftAdvancedFilterCount}
+        applyDisabled={!hasDraftAdvancedChanges}
+        clearDisabled={draftAdvancedFilterCount === 0}
+        onApply={handleApplyDraftFilters}
+        onClear={handleClearDraftFilters}
+        onClose={closeFiltersPopup}
+      >
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <FilterSelect
+            label="Employee status"
+            ariaLabel="Filter by employment status (employees.is_active)"
+            title="Employment or account active flag, separate from ERP access."
+            value={draftFiltersInput.employeeStatus}
+            options={EMPLOYEE_STATUS_OPTIONS}
+            onChange={(value) =>
+              handleDraftFilterChange({
+                employeeStatus: (value || FILTER_STATUS_ALL) as EmployeeFiltersInput['employeeStatus'],
+              })
+            }
+          />
+
+          <FilterSelect
+            label="ERP access"
+            ariaLabel="Filter by ERP entitlement (employees.erp_active)"
+            title="AMS or ERP access flag, separate from employee active status."
+            value={draftFiltersInput.erpStatus}
+            options={ERP_STATUS_OPTIONS}
+            onChange={(value) =>
+              handleDraftFilterChange({
+                erpStatus: (value || FILTER_STATUS_ALL) as EmployeeFiltersInput['erpStatus'],
+              })
+            }
+          />
+
+          <FilterSelect
+            label="Department"
+            ariaLabel="Filter by department"
+            value={draftFiltersInput.department}
+            options={departmentOptions}
+            onChange={(value) => handleDraftFilterChange({ department: value })}
+          />
+
+          <FilterSelect
+            label="Role"
+            ariaLabel="Filter by role"
+            value={draftFiltersInput.role}
+            options={ROLE_OPTIONS}
+            onChange={(value) => handleDraftFilterChange({ role: value || ROLE_ALL })}
+          />
+        </div>
+      </FilterPopup>
+
       <ConfirmDialog
         open={Boolean(roleChangeTarget && roleChangeTargetRole)}
         title="Confirm role change"
         message={
           roleChangeTarget && roleChangeTargetRole
-            ? `Are you sure you want to set ${roleChangeTarget.name} as ${formatRoleLabel(roleChangeTargetRole)}? Employee code: ${roleChangeTarget.employee_code}.`
+            ? getRoleChangeDialogMessage(roleChangeTarget, roleChangeTargetRole)
             : ''
         }
         confirmLabel={
-          roleChangeTargetRole ? roleChangeConfirmLabel(roleChangeTargetRole) : 'Confirm'
+          roleChangeTarget && roleChangeTargetRole
+            ? getRoleChangeDialogLabel(roleChangeTarget, roleChangeTargetRole)
+            : 'Confirm'
         }
         loading={roleChangeLoading}
         showDismissIcon
@@ -866,10 +1103,15 @@ export default function Employee() {
 
 type EmployeeActionsProps = {
   employee: EmployeeRecord
+  isAdmin: boolean
   isItOps: boolean
   sessionEmployeeId: string | null
   bulkQrEmployeeId: string | null
   align?: 'start' | 'end'
+  display?: 'inline' | 'menu'
+  menuOpen?: boolean
+  onMenuToggle?: () => void
+  onMenuClose?: () => void
   onEdit: (employee: EmployeeRecord) => void
   onSetRole: (employee: EmployeeRecord, role: EmployeeRole) => void
   onGrantAdmin: (employee: EmployeeRecord) => void
@@ -880,10 +1122,15 @@ type EmployeeActionsProps = {
 
 function EmployeeActions({
   employee,
+  isAdmin,
   isItOps,
   sessionEmployeeId,
   bulkQrEmployeeId,
   align = 'start',
+  display = 'inline',
+  menuOpen = false,
+  onMenuToggle,
+  onMenuClose,
   onEdit,
   onSetRole,
   onGrantAdmin,
@@ -893,17 +1140,150 @@ function EmployeeActions({
 }: EmployeeActionsProps) {
   const primaryButtonClass = 'bg-accent text-white py-1.5 px-3 rounded-lg hover:bg-accent-hover transition text-xs'
   const dangerOutlineButtonClass =
-    'border border-base text-accent py-1.5 px-3 rounded-lg hover:bg-surface-2 transition text-xs disabled:opacity-50 disabled:cursor-not-allowed'
+    'border border-base text-accent py-1.5 px-3 rounded-lg hover:border-accent-soft hover:bg-[color:var(--accent-soft)]/15 transition text-xs disabled:opacity-50 disabled:cursor-not-allowed'
+  const isSelfRow = employee.id === sessionEmployeeId
+  const canManageAdminRole = isAdmin || isItOps
 
-  const showSetEmployee = isItOps && employee.role !== 'employee'
-  const showMakeAdmin = !isItOps && employee.role !== 'it_ops' && employee.role !== 'admin'
-  const showRevokeAdmin = employee.role === 'admin'
-  const showSetAdmin = isItOps && employee.role !== 'admin'
-  const showSetItOps = isItOps && employee.role !== 'it_ops'
+  const showMakeAdmin = canManageAdminRole && employee.role === 'employee'
+  const showRevokeAdmin = canManageAdminRole && employee.role === 'admin'
+  const showSetItOps = isItOps && employee.role === 'employee'
+  const showRevokeItOps = isItOps && employee.role === 'it_ops'
   const hasRoleManagementControl =
-    showSetEmployee || showMakeAdmin || showRevokeAdmin || showSetAdmin || showSetItOps
+    showMakeAdmin || showRevokeAdmin || showSetItOps || showRevokeItOps
   const showYouBadge =
-    Boolean(sessionEmployeeId) && employee.id === sessionEmployeeId && !hasRoleManagementControl
+    Boolean(sessionEmployeeId) && isSelfRow && !hasRoleManagementControl
+  const qrLoading = bulkQrEmployeeId === employee.id
+
+  const actionItems: {
+    key: string
+    label: string
+    icon: IconName
+    onSelect: () => void
+    disabled?: boolean
+  }[] = []
+
+  if (showMakeAdmin) {
+    actionItems.push({
+      key: 'make-admin',
+      label: 'Make Admin',
+      icon: 'users',
+      onSelect: () => onGrantAdmin(employee),
+    })
+  }
+
+  if (showRevokeAdmin) {
+    actionItems.push({
+      key: 'revoke-admin',
+      label: 'Revoke Admin',
+      icon: 'users',
+      onSelect: () => onRevokeAdmin(employee),
+      disabled: isSelfRow,
+    })
+  }
+
+  if (showSetItOps) {
+    actionItems.push({
+      key: 'set-it-ops',
+      label: 'Set IT Ops',
+      icon: 'users',
+      onSelect: () => onSetRole(employee, 'it_ops'),
+    })
+  }
+
+  if (showRevokeItOps) {
+    actionItems.push({
+      key: 'revoke-it-ops',
+      label: 'Revoke IT Ops',
+      icon: 'users',
+      onSelect: () => onSetRole(employee, 'employee'),
+      disabled: isSelfRow,
+    })
+  }
+
+  actionItems.push({
+    key: 'edit',
+    label: 'Edit',
+    icon: 'edit',
+    onSelect: () => onEdit(employee),
+  })
+
+  actionItems.push({
+    key: 'download-qr',
+    label: qrLoading ? 'Preparing QR...' : 'Download QR',
+    icon: qrLoading ? 'refresh-cw' : 'download',
+    onSelect: () => {
+      void onDownloadQrs(employee)
+    },
+    disabled: qrLoading,
+  })
+
+  actionItems.push({
+    key: 'delete',
+    label: 'Delete',
+    icon: 'trash',
+    onSelect: () => onDelete(employee),
+    disabled: isSelfRow,
+  })
+
+  if (display === 'menu') {
+    return (
+      <div className="relative inline-flex" data-employee-action-menu>
+        <button
+          type="button"
+          aria-label={`Open actions for ${employee.name}`}
+          aria-haspopup="menu"
+          aria-expanded={menuOpen ? 'true' : 'false'}
+          onClick={onMenuToggle}
+          className={`inline-flex h-9 w-9 items-center justify-center rounded-xl border transition ${
+            menuOpen
+              ? 'border-[color:var(--accent-soft)] bg-[color:var(--accent-soft)]/15 text-accent'
+              : 'border-base bg-surface text-muted hover:border-accent-soft hover:bg-[color:var(--accent-soft)]/15 hover:text-accent'
+          }`}
+        >
+          <MoreActionsIcon />
+        </button>
+
+        {menuOpen ? (
+          <div
+            role="menu"
+            aria-label={`Actions for ${employee.name}`}
+            className="absolute left-0 top-full z-30 mt-2 min-w-[220px] rounded-2xl border border-base bg-app p-1.5 shadow-[0_18px_48px_rgba(0,0,0,0.22)]"
+          >
+            {showYouBadge ? (
+              <div className="px-3 pb-2 pt-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-subtle">
+                Your account
+              </div>
+            ) : null}
+
+            {actionItems.map((item) => (
+              <button
+                key={item.key}
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  onMenuClose?.()
+                  item.onSelect()
+                }}
+                disabled={item.disabled}
+                className="group flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm text-primary transition hover:bg-[color:var(--accent-soft)]/12 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <span
+                  className={`flex h-4 w-4 shrink-0 items-center justify-center ${
+                    item.icon === 'refresh-cw' ? 'refresh-spin' : ''
+                  } group-hover:text-accent`}
+                >
+                  <AnimatedNavIcon name={item.icon} className="h-4 w-4" />
+                </span>
+                <span className="underline decoration-transparent underline-offset-4 transition group-hover:decoration-[color:var(--accent)]">
+                  {item.label}
+                </span>
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    )
+  }
 
   return (
     <div className={`flex flex-wrap gap-2 items-center ${align === 'end' ? 'justify-end' : 'justify-start'}`}>
@@ -914,15 +1294,6 @@ function EmployeeActions({
         >
           YOU
         </span>
-      ) : null}
-      {showSetEmployee ? (
-        <IconActionButton
-          icon="users"
-          label="Set Employee"
-          onClick={() => onSetRole(employee, 'employee')}
-          disabled={employee.id === sessionEmployeeId && employee.role === 'it_ops'}
-          variant="base"
-        />
       ) : null}
       {showMakeAdmin ? (
         <button
@@ -941,19 +1312,11 @@ function EmployeeActions({
           onClick={() => {
             onRevokeAdmin(employee)
           }}
-          disabled={employee.id === sessionEmployeeId}
+          disabled={isSelfRow}
           className={dangerOutlineButtonClass}
         >
           Revoke Admin
         </button>
-      ) : null}
-      {showSetAdmin ? (
-        <IconActionButton
-          icon="users"
-          label="Set Admin"
-          onClick={() => onSetRole(employee, 'admin')}
-          variant="accent"
-        />
       ) : null}
       {showSetItOps ? (
         <IconActionButton
@@ -962,6 +1325,18 @@ function EmployeeActions({
           onClick={() => onSetRole(employee, 'it_ops')}
           variant="base"
         />
+      ) : null}
+      {showRevokeItOps ? (
+        <button
+          type="button"
+          onClick={() => {
+            onSetRole(employee, 'employee')
+          }}
+          disabled={isSelfRow}
+          className={dangerOutlineButtonClass}
+        >
+          Revoke IT Ops
+        </button>
       ) : null}
       <IconActionButton
         icon="edit"
@@ -974,13 +1349,13 @@ function EmployeeActions({
         onClick={() => {
           void onDownloadQrs(employee)
         }}
-        disabled={bulkQrEmployeeId === employee.id}
-        title={bulkQrEmployeeId === employee.id ? 'Preparing QR downloads…' : 'Download QR images for all assets assigned to this employee'}
-        aria-label={bulkQrEmployeeId === employee.id ? 'Preparing QR downloads' : 'Download QR codes for assigned assets'}
+        disabled={qrLoading}
+        title={qrLoading ? 'Preparing QR downloads...' : 'Download QR images for all assets assigned to this employee'}
+        aria-label={qrLoading ? 'Preparing QR downloads' : 'Download QR codes for assigned assets'}
         className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-[color:var(--accent-soft)] bg-surface px-2.5 text-xs font-semibold text-accent transition hover:bg-[color:var(--accent-soft)]/20 disabled:cursor-not-allowed disabled:opacity-50"
       >
-        <span className={`flex h-4 w-4 shrink-0 items-center justify-center ${bulkQrEmployeeId === employee.id ? 'refresh-spin' : ''}`}>
-          <AnimatedNavIcon name={bulkQrEmployeeId === employee.id ? 'refresh-cw' : 'download'} />
+        <span className={`flex h-4 w-4 shrink-0 items-center justify-center ${qrLoading ? 'refresh-spin' : ''}`}>
+          <AnimatedNavIcon name={qrLoading ? 'refresh-cw' : 'download'} />
         </span>
         <span>QR</span>
       </button>
@@ -988,10 +1363,20 @@ function EmployeeActions({
         icon="trash"
         label="Delete"
         onClick={() => onDelete(employee)}
-        disabled={employee.id === sessionEmployeeId}
+        disabled={isSelfRow}
         variant="danger"
       />
     </div>
+  )
+}
+
+function MoreActionsIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4" aria-hidden="true">
+      <circle cx="12" cy="5.5" r="1.75" />
+      <circle cx="12" cy="12" r="1.75" />
+      <circle cx="12" cy="18.5" r="1.75" />
+    </svg>
   )
 }
 

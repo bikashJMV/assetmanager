@@ -5,16 +5,16 @@
 
 ## Latest updates (current implementation)
 
+- **Home & auth UX:** Marketing-style home (`HomeHero`, `OverviewKpisBox`, `AssignReturnBox`, `ShipAnythingBox`, `ActBeforeItBreaksBox`, `RightAccessBox`, `QuickFactsRow`) plus **`ParticleIntroLoader`** after sign-in. OAuth sets a short-lived `sessionStorage` marker (`signInWithGoogle`); `App.tsx` consumes it on `INITIAL_SESSION` / `SIGNED_IN` via `takePendingPostSignInIntro()` (JSON payload + TTL, in-memory bootstrap memo for React 18 Strict Mode). `/login` success uses `Navigate` **`state.showPostSignInIntro`**. `resetPostSignInIntroBootstrapClaim()` runs after the intro finishes or on sign-out.
+- **`getPublicDashboardSummary()`:** Anonymous-friendly summary for the signed-out home preview (category breakdown strip); authenticated home does not depend on live counter RPCs for that card.
+- **All Assets:** Paginated list via **`getAssetsPage`** (offset/limit, `PAGE_SIZE` 50), debounced search, **FilterPopup** + **FilterSelect** for inventory status and category, ERP-inactive holder checkbox, **LoadMorePagination**, row **action menu** (view, QR view/regenerate when admin/IT Ops, soft delete with **ConfirmDialog**), **`InventoryStatusBadge`** / `getInventoryStatusTone` for list (and detail/scan where used). Optional **FilterPopup** pattern replaces a single crowded filter bar.
+- **Layout shell:** `App.tsx` wraps the app with **`ToastProvider`**; main content column is `flex-1 min-w-0 w-full overflow-x-hidden overflow-y-auto` so footers and full-width sections behave beside **`Sidebar`** (`w-[230px]` expanded, `w-[60px]` collapsed on `sm+`).
 - **Engineering telemetry (opt-in):** `src/telemetry.ts` buffers engagement-style events in memory + `localStorage`, flushes on a ~30s timer (and on batch size / high priority), and uses `navigator.sendBeacon` on tab close. Ingest requires `VITE_TELEMETRY_ENABLED=true` plus URLs for the TelemetryServer ingest endpoint and the **main** FastAPI `POST /telemetry/ingest-token` (so the browser never calls `telemetry/ingest-token` on the Vite host by mistake). Metadata keys matching a denylist are redacted before send.
 - **Employee / ERP split:** `EmployeeRecord` carries both `is_active` and `erp_active`. The Employees page filters both dimensions; **default filters** are employment **Active** and ERP **Inactive**. **New employee** form defaults to the same (`is_active: true`, `erp_active: false`). Asset inventory exposes `current_employee_is_active` and `current_employee_erp_active`; list filters and holder badges use ERP where labeled “ERP”.
-- Added protected `Notifications` page (`/notifications`) with:
-  - role-aware warranty alerts from DB RPC
-  - date range filtering
-  - incremental loading (`15 + Load more`)
-  - one-time welcome prompt support for new users
-- Added real `Recycle Bin` page (`/recycle-bin`) backed by DB RPC (list + restore).
-- Added soft-delete actions for assets and employees (admin/IT Ops only), now routed through a shared confirmation dialog component.
-- Added shared refresh logic hook: `src/hooks/useRefreshableLoader.ts`.
+- **`Notifications`** (`/notifications`): warranty alerts, date range, incremental loading, welcome prompt (TopBar still links here; sidebar link may be commented in `sidebarNav.ts`).
+- **`Recycle Bin`** (`/recycle-bin`): list + restore RPCs; toast feedback.
+- **Soft delete** for assets (and employees from their flows): confirmation dialog + `softDeleteAssetById` / `softDeleteEmployeeById`.
+- **Shared:** `useRefreshableLoader`, **InfoHint** + JSON hints (e.g. assets page), **Breadcrumbs**, **ScrollTopButton**, **IconActionButton**, **formatEnumLabel** / **formatDateTime** in `formatDisplay.ts`.
 
 ## Table of Contents
 
@@ -37,10 +37,17 @@
     - [Employee](#employee)
     - [NewEmployee](#newemployee)
     - [ScanPage](#scanpage)
+    - [Analysis](#analysis)
     - [Notifications](#notifications)
     - [RecycleBin](#recyclebin)
 13. [Common Components (`components/common/`)](#common-components-componentscommon)
     - [Sidebar](#sidebar)
+    - [Footer](#footer)
+    - [ParticleIntroLoader](#particleintroloader)
+    - [InventoryStatusBadge](#inventorystatusbadge)
+    - [ToastProvider](#toastprovider)
+    - [FilterPopup / FilterSelect / LoadMorePagination](#filterpopup-filterselect-loadmorepagination)
+    - [Breadcrumbs, ScrollTopButton, InfoHint, IconActionButton](#other-common-ui)
     - [Error](#error)
     - [Loader](#loader)
     - [Guide](#guide)
@@ -54,7 +61,7 @@
     - [EmployeeForm](#employeeform)
 15. [Utilities (`utils/`)](#utilities-utils)
     - [errors.ts](#errorsts)
-    - [formatDisplay.ts](#formatdisplayts)
+    - [formatDisplay.ts](#formatdisplayts) (`formatDisplay`, `formatEnumLabel`, `formatDateTime`)
 16. [Hooks (`hooks/`)](#hooks-hooks)
     - [useRefreshableLoader.ts](#userefreshableloaderts)
 17. [Styles (`styles/`)](#styles-styles)
@@ -116,32 +123,51 @@ Client/
     │
     ├── components/
     │   ├── pages/
-    │   │   ├── Home.tsx            # Dashboard landing page
-    │   │   ├── AllAssets.tsx       # Asset list with filters and QR modal
-    │   │   ├── AssetDetail.tsx     # Asset detail, edit, assign/return
-    │   │   ├── NewAsset.tsx        # Create asset (requires privileged access)
-    │   │   ├── Employee.tsx        # Employee list, passport, admin toggle
-    │   │   ├── NewEmployee.tsx     # Create employee (requires privileged access)
-    │   │   └── ScanPage.tsx        # Public QR scan page
+    │   │   ├── Home.tsx            # Landing: hero, story sections, footer, particle intro
+    │   │   ├── AllAssets.tsx       # Paginated list, advanced filters, row actions, QR/soft delete
+    │   │   ├── AssetDetail.tsx     # Detail, edit, assign/return, toasts
+    │   │   ├── NewAsset.tsx        # Create asset (privileged)
+    │   │   ├── Employee.tsx        # Directory, passport, admin/role controls
+    │   │   ├── NewEmployee.tsx     # Create employee (privileged)
+    │   │   ├── ScanPage.tsx        # Public / protected QR scan
+    │   │   ├── Analysis.tsx        # IT Ops–oriented analysis (gated in page)
+    │   │   ├── Notifications.tsx # Warranty alerts + welcome prompt
+    │   │   └── RecycleBin.tsx      # Soft-deleted rows + restore
     │   │
     │   ├── common/
-    │   │   ├── Sidebar.tsx         # Nav, theme/density/font settings, auth
-    │   │   ├── sidebarNav.ts       # Nav section/item definitions
+    │   │   ├── Sidebar.tsx         # Nav, groups, theme/density/font, mobile drawer
+    │   │   ├── sidebarNav.ts       # Typed nav sections (Main / Tools)
     │   │   ├── AnimatedNavIcon.tsx # Animated SVG nav icons
+    │   │   ├── ParticleIntroLoader.tsx  # Post–sign-in fullscreen intro
+    │   │   ├── InventoryStatusBadge.tsx # Status dot + label tones
+    │   │   ├── ToastProvider.tsx   # App-wide toasts (`useToast`)
+    │   │   ├── FilterPopup.tsx     # Modal shell for advanced filters
+    │   │   ├── FilterSelect.tsx    # Labeled select for filter popups
+    │   │   ├── LoadMorePagination.tsx
+    │   │   ├── Breadcrumbs.tsx
+    │   │   ├── ScrollTopButton.tsx
+    │   │   ├── InfoHint.tsx
+    │   │   ├── IconActionButton.tsx
+    │   │   ├── ConfirmDialog.tsx
+    │   │   ├── IdleWarningModal.tsx
     │   │   ├── Error.tsx           # Reusable error display card
-    │   │   ├── Footer.tsx          # Site footer (layout)
+    │   │   ├── Footer.tsx          # Site footer (1320px content band)
     │   │   ├── Loader.tsx          # Full-screen loading indicator
-    │   │   ├── Guide.tsx           # Public usage guide (non-technical copy)
+    │   │   ├── Guide.tsx           # Public usage guide
     │   │   ├── PageNotFound.tsx    # 404 page
     │   │   └── RefreshButton.tsx   # Accessible refresh button
     │   │
     │   └── form/
     │       ├── AssetForm.tsx       # Create/edit asset form (modal or panel)
+    │       ├── OtherAssetForm.tsx # Simplified create path for “Other” category
+    │       ├── CategoryPickerGrid.tsx
     │       └── EmployeeForm.tsx    # Create/edit employee form
     │
     ├── utils/
     │   ├── errors.ts               # getUserFacingMessage, logDevError, etc.
-    │   └── formatDisplay.ts        # Null/empty/string display normalizer
+    │   └── formatDisplay.ts        # formatDisplay, formatEnumLabel, formatDateTime
+    │
+    ├── data/                       # Static JSON hints (e.g. assetInfoHint.json)
     │
     └── styles/
         ├── theme.css               # CSS custom property tokens (light/dark/system)
@@ -241,6 +267,10 @@ Asset QR codes point at `{origin}/scan/{tag}`. That origin defaults to whatever 
 - Renders `<App />` inside `StrictMode` into `#root`.
 - Imports `./index.css`.
 
+### `src/App.tsx` (bootstrap)
+
+- Wraps `<BrowserRouter>` with **`ToastProvider`** so `useToast()` is available under all routes.
+
 ### `src/index.css`
 
 - Imports `./styles/theme.css` and `./styles/global.css`.
@@ -253,25 +283,30 @@ Asset QR codes point at `{origin}/scan/{tag}`. That origin defaults to whatever 
 
 ```
 App
-└── BrowserRouter
-    └── AppRoutes
-        ├── Sidebar (shown when path is not public `/scan/*`; signed-out users still see shell; login page included)
-        └── Routes
-            ├── /                   → <Home isAuthenticated={...} /> (public)
-            ├── /dashboard/home     → same Home (public alias)
-            ├── /scan/:id           → <ScanPage /> (public QR landing)
-            ├── /guide              → <Guide /> (public)
-            ├── /login              → <SignInScreen /> or redirect if session
-            │
-            └── <RequireAuth>       (guards all below)
-                ├── /assets/scan    → <ScanPage protectedRoute />
-                ├── /assets/scan/:id → <ScanPage protectedRoute />
-                ├── /assets         → <AllAssets />
-                ├── /assets/new     → <NewAsset />
-                ├── /assets/:id     → <AssetDetail />
-                ├── /404            → <PageNotFound />
-                ├── /employee       → <Employee />
-                └── /employee/new   → <NewEmployee />
+└── ToastProvider
+    └── BrowserRouter
+        └── AppRoutes
+            ├── TopBar (non–public scan)
+            ├── flex row: Sidebar (non–public scan) | main scroll column (`flex-1 min-w-0 overflow-x-hidden overflow-y-auto`)
+            └── Routes (inside scroll column)
+                ├── /                   → <Home ... /> (public; passes intro props from auth state)
+                ├── /dashboard/home     → same Home (public alias)
+                ├── /scan/:id           → <ScanPage /> (public QR landing)
+                ├── /guide              → <Guide /> (public)
+                ├── /login              → <SignInScreen /> or <Navigate /> if session
+                │
+                └── <RequireAuth>       (guards all below)
+                    ├── /assets/scan    → <ScanPage protectedRoute />
+                    ├── /assets/scan/:id → <ScanPage protectedRoute />
+                    ├── /assets         → <AllAssets />
+                    ├── /assets/new     → <NewAsset />
+                    ├── /assets/:id     → <AssetDetail />
+                    ├── /404            → <PageNotFound />
+                    ├── /employee       → <Employee />
+                    ├── /employee/new   → <NewEmployee />
+                    ├── /analysis       → <Analysis />
+                    ├── /notifications  → <Notifications />
+                    └── /recycle-bin    → <RecycleBin />
 ```
 
 ### Auth state machine
@@ -279,23 +314,24 @@ App
 | Phase | State | UI |
 |---|---|---|
 | Loading | `authLoading=true` | `<AuthLoadingScreen>` ("Checking session...") |
-| Unauthenticated | `session=null` | Public routes (e.g. `/`, `/guide`) with sidebar; `/login` shows `<SignInScreen>`; protected paths redirect to `/login` |
+| Unauthenticated | `session=null` | Public routes (e.g. `/`, `/guide`) with sidebar; `/login` shows `<SignInScreen>`; protected paths redirect to `/login?next=<encoded-return-url>` |
 | Authenticated | `session` set | Same layout; `<RequireAuth>` children render on protected routes |
 
 **Session lifecycle:**
 1. On mount: `getSession()` called asynchronously.
-2. `onAuthStateChange()` subscription keeps `session` in sync for the lifetime of the component.
+2. `onAuthStateChange((session, event))` keeps `session` in sync; on `INITIAL_SESSION` / `SIGNED_IN` with a pending OAuth marker, sets **`showIntroAfterSignIn`** so `<Home>` can run **`ParticleIntroLoader`** once (see `takePendingPostSignInIntro` in `api.ts`). On `SIGNED_OUT`, clears intro bootstrap state.
 3. Cleanup: `unsubscribe()` + `mounted` flag prevent state updates after unmount.
+
+**Post-sign-in intro:** Email/password-style return from `/login` uses `<Navigate to={loginReturnPath} replace state={{ showPostSignInIntro: true }} />` (`loginReturnPath` from `?next=` or `/`). Google OAuth returns to `signInWithGoogle(nextPath)`’s `redirectTo` (default `/`); the sessionStorage marker drives the same intro flag in `App`.
 
 ### `RequireAuth`
 
 - While `authLoading` is true → shows loading screen.
-- If no `session` → `<Navigate to="/login" state={{ from: location }} replace />`.
-- Stores `from` location in router state so `SignInScreen` can redirect back after login via `getReturnPathFromState()`.
+- If no `session` → `<Navigate to={/login?next=...} replace />` where `next` is the current path + search + hash (encoded).
 
 ### `SignInScreen`
 
-- Calls `signInWithGoogle()` on button click (OAuth redirect flow).
+- Calls `signInWithGoogle(nextPath)` on button click; `nextPath` comes from `?next=` when present and safe, else `/` (OAuth `redirectTo` is `origin + nextPath`).
 - Shows loading state while redirect is pending.
 - Displays `authError` or local `message` on failure.
 - Domain checks are enforced in Supabase settings, not in client code.
@@ -304,9 +340,9 @@ App
 
 | Helper | Purpose |
 |---|---|
-| `getReturnPathFromState(state)` | Extracts `pathname+search+hash` from router state. Returns `/` if none or if it resolves to `/login` |
 | `AuthLoadingScreen` | Minimal centered "Checking session..." indicator |
 | `SignInScreen` | Google OAuth button + error display |
+| `loginReturnPath` (in `AppRoutes`) | From `next` query param when it starts with `/`, else `/` |
 
 ---
 
@@ -328,7 +364,7 @@ App
 | `AssetAssignmentRecord` | Assignment row with embedded employee info |
 | `AssetComponentRecord` | Component row with manufacturer name |
 | `AssetDetailRecord` | `{ asset, assignments, components }` |
-| `AssetFilters` | `search`, `status`, `category_slug`, `hideHeldByInactive` (omit rows where assigned holder has `erp_active` false), `current_employee_id` |
+| `AssetFilters` | `search`, `status` (inventory status slug), `category_slug`, `hideHeldByInactive`, `current_employee_id`, optional `exclude_category_slugs` |
 | `AssignAssetPayload` | `asset_tag`, `employee_code`, `assigned_at?`, `notes?` |
 | `ReturnAssetPayload` | `asset_tag`, `returned_at?`, `notes?` |
 | `AssetWriteInput` | All asset fields for create/update |
@@ -353,9 +389,11 @@ App
 | Function | Description |
 |---|---|
 | `getSession()` | Returns current `Session \| null` |
-| `onAuthStateChange(callback)` | Subscribes to auth changes; returns unsubscribe fn |
-| `signInWithGoogle()` | Triggers Google OAuth redirect; redirects back to `window.location.origin` |
-| `signOut()` | Signs out current session |
+| `onAuthStateChange(callback)` | `(session, event) => void` — subscribes to Supabase auth events (`INITIAL_SESSION`, `SIGNED_IN`, …); returns unsubscribe |
+| `signInWithGoogle(nextPath?)` | Sets pending post-sign-in intro marker in `sessionStorage`, then OAuth redirect; `redirectTo` is `origin +` normalized path (default `/`) |
+| `takePendingPostSignInIntro()` | Reads + clears marker; returns whether to show OAuth-driven intro (JSON + TTL); memoized per page load for Strict Mode |
+| `resetPostSignInIntroBootstrapClaim()` | Clears intro memo (after animation or sign-out) |
+| `signOut()` | Clears intro state + signs out |
 
 ### Employee/access functions
 
@@ -363,31 +401,44 @@ App
 |---|---|
 | `getSessionEmployee(user?)` | Fetches the current user's employee profile. Primary lookup by `auth_user_id`, fallback by email. Returns `null` if no match |
 | `hasActiveAdminAccess()` | RPC `fn_is_admin_or_it_ops` + profile hint + optional `fn_claim_employee_auth_link()` |
-| `listEmployees(filters?)` | Lists employees with search, `is_active`, `erp_active`, department, and role filters. Resolves department by name when provided |
-| `listDepartments()` | Returns distinct department names from active departments |
-| `upsertEmployee(input)` | Upsert by `employee_code`; does not set privileged roles via metadata (use role RPC) |
-| `setEmployeeAdminStatus(target, makeAdmin)` | Admin grant/revoke path; server RPC enforces rules |
-| `setEmployeeRole(target, role)` | IT Ops only → `fn_set_employee_role` |
-| `getCurrentEmployeeAssets()` | Returns `{ sessionEmployee, assets[] }` for the current user |
-| `getDashboardStats()` | Returns `{ totalAssets, assignedAssets, inStockAssets, activeEmployees, totalEmployees }` |
-| `subscribeDashboardRealtime(callback)` | Subscribes to INSERT/UPDATE on `assets` and `employees` Realtime channels; calls `callback` on any event. Returns unsubscribe fn |
+| `hasActiveItOpsAccess()` | IT Ops gate for Analysis and role tooling |
+| `listEmployees(filters?)` | Full employee list (unpaged) |
+| `listEmployeesPage(filters?, options?)` | Paginated employees (`offset` / `limit`, total count) |
+| `listDepartments()` | Distinct department names |
+| `upsertEmployee(input)` | Upsert by `employee_code`; privileged roles via RPC |
+| `setEmployeeAdminStatus(target, makeAdmin)` | Admin grant/revoke |
+| `setEmployeeRole(target, role)` | IT Ops → `fn_set_employee_role` |
+| `getCurrentEmployeeAssets()` | Passport assets for current user |
+| `softDeleteEmployeeById` | Soft delete + note (privileged) |
+| `listWarrantyNotifications` / `getWelcomeNotification` | Notifications page RPCs |
+| `listRecycleBinEntries` / `restoreRecycleBinEntry` | Recycle Bin |
 
 ### Asset functions
 
 | Function | Description |
 |---|---|
-| `getAssets(filters?)` | Reads `v_asset_inventory`. Supports search, status, category, employee scope, `hideHeldByInactive` (holder ERP inactive) |
-| `getAsset(assetTag)` | Reads single row from `v_asset_inventory` by `asset_tag` |
-| `getAssetDetail(assetTag)` | Returns `AssetDetailRecord` with full `assignments` + `components` arrays |
-| `createAsset(payload)` | Asserts admin. Auto-generates `asset_tag` via `fn_next_asset_tag()` if omitted. Generates client-side QR. Calls `fn_create_asset_with_log` RPC |
-| `updateAsset(assetTag, payload)` | Asserts admin. Partial patch of `assets` table. Resolves foreign keys (category, manufacturer, location) from names |
-| `listCategories()` | Reads `asset_categories` ordered by name |
-| `getCustomFieldDefinitions(categorySlug)` | Reads `custom_field_definitions` for a category |
-| `assignAsset(payload)` | Calls `fn_assign_asset` RPC |
-| `returnAsset(payload)` | Calls `fn_return_asset` RPC |
-| `getPublicScanAsset(ref)` | Calls `fn_public_scan_asset` RPC (anon-accessible). Returns minimal asset info for QR scan page |
-| `getQrDataUriForAssetTag(assetTag)` | Gets latest `asset_logs.qr_code` for the asset. Falls back to generating a client-side QR via `qrcode` package if none stored |
-| `buildAssetQrDataUri(assetTag)` | Internal. Always generates client-side QR code (used during createAsset) |
+| `getAssets(filters?)` | Reads `v_asset_inventory` (full list — prefer `getAssetsPage` for large tables) |
+| `getAssetsPage(filters?, options?)` | Paginated `v_asset_inventory` read (`offset` / `limit`; returns `{ rows, total }`) |
+| `getAsset(assetTag)` | Single row from `v_asset_inventory` by `asset_tag` |
+| `getAssetDetail(assetTag)` | `AssetDetailRecord` with `assignments` + `components` |
+| `createAsset(payload)` | Admin/IT Ops. Auto `asset_tag`, client QR, `fn_create_asset_with_log` |
+| `updateAsset(assetTag, payload)` | Admin/IT Ops patch + FK resolution |
+| `listCategories()` | `asset_categories` ordered by name |
+| `getCustomFieldDefinitions(categorySlug)` | Dynamic field schema |
+| `assignAsset` / `returnAsset` | Assignment RPCs |
+| `getPublicScanAsset(ref)` | `fn_public_scan_asset` (anon, minimal fields) |
+| `getQrDataUriForAssetTag` | Latest stored QR or client fallback |
+| `regenerateQrDataUriForAssetTag` | Writes fresh client QR to logs (privileged) |
+| `softDeleteAssetById` | Soft delete + audit note (privileged) |
+| `buildAssetQrDataUri` | Internal always-generate QR helper |
+
+### Dashboard / misc
+
+| Function | Description |
+|---|---|
+| `getPublicDashboardSummary()` | RPC-backed public summary for signed-out home preview |
+| `getDashboardStats()` | Live counters (still exported; not wired on current Home) |
+| `subscribeDashboardRealtime(cb)` | Realtime refresh hook (still exported; no current consumer) |
 
 ---
 
@@ -420,15 +471,13 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
 
 ### Home
 
-**Route:** `/` | **Auth:** Public
+**Route:** `/` or `/dashboard/home` | **Auth:** Public shell; props from `App` for auth and intro.
 
-- Accepts `isAuthenticated: boolean` prop from `App.tsx`.
-- When authenticated: calls `getDashboardStats()` and subscribes to `subscribeDashboardRealtime()` for live counter updates.
-- When unauthenticated: shows `stats = null` (zeros), text "Sign in to see live counts."
-- Never calls stats or realtime when unauthenticated.
-- Sections: hero with CTA links → stats grid (5 counters) → "How It Works" 3-step cards → `Footer` at the bottom.
-
-**Stat cards:** Total Assets, Assigned, In Stock, ERP Active employees, Total Employees.
+- **Props:** `isAuthenticated`, `userId`, `wantPostSignInIntro`, `onPostSignInIntroConsumed`.
+- **Post–sign-in:** `ParticleIntroLoader` fullscreen animation when `postSignInIntro` is true (router `state.showPostSignInIntro` or `wantPostSignInIntro` from OAuth flow); on complete, clears router state and notifies `App`.
+- **Signed-out:** `getPublicDashboardSummary()` drives the **category breakdown** teaser inside `OverviewKpisBox` (no live counts).
+- **Signed-in:** same story-style sections; KPI card is narrative (no `getDashboardStats` on this page today).
+- **Layout:** `HomeHero` → content band (`max-w-[1100px]`) with `OverviewKpisBox`, assignment/shipping/alerts/access story cards, `QuickFactsRow` → **`Footer`** (aligned `max-w-[1320px]` band like hero).
 
 ---
 
@@ -436,19 +485,17 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
 
 **Route:** `/assets` | **Auth:** Protected
 
-**Features:**
-- Reads `v_asset_inventory` via `getAssets()`.
-- **Debounced search** (300ms) across `asset_tag`, `serial_number`, `model`, `manufacturer_name`, `location_name`, `current_employee_name`, `current_employee_code`, `category_name`.
-- **Filters:** inventory status (dropdown), category slug (dropdown), "Hide assets held by ERP-inactive employees" (checkbox).
-- **Admin vs employee scope:** non-admins only see their own assigned assets (scoped by `current_employee_id`). Admins see all.
-- **Race condition protection:** `requestIdRef` ensures stale responses from concurrent fetches are ignored.
-- **QR modal:** "View QR" (privileged) calls `getQrDataUriForAssetTag()`, modal backdrop.
-- Clicking a row navigates to `/assets/{asset_tag}`.
-- "Edit" navigates to asset detail when privileged.
+**Data:** `getAssetsPage` with page size 50, `totalAssets` for “load more”.
 
-**State:**
-- `isAdmin`, `scopeEmployeeId`, `accessResolved` gate whether to fetch and how to scope.
-- `categories` for category filter dropdown.
+**Features:**
+- **Debounced search** (300ms) across tag, serial, model, manufacturer, location, holder name/code, category.
+- **Advanced filters** (`FilterPopup`): inventory status, category, “Hide ERP-inactive employees”. Active filter count badge on toolbar.
+- **`InventoryStatusBadge`** + tone helper for list status column; ERP chip styling where applicable.
+- **Admin / IT Ops vs employee:** non-privileged users scoped by `current_employee_id`; race-safe `requestIdRef`.
+- **Row actions:** icon menu (outside click to close) — open detail, view/regenerate QR (`regenerateQrDataUriForAssetTag` when permitted), soft delete with **`ConfirmDialog`**.
+- **QR modal** via `getQrDataUriForAssetTag`.
+- **`InfoHint`** can surface copy from `src/data/assetInfoHint.json`.
+- Row click → `/assets/{asset_tag}`.
 
 ---
 
@@ -480,7 +527,7 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
 
 - `accessState`: `'loading'` → `'allowed'` or `'denied'`.
 - If denied: "Admin Access Required" and back.
-- If allowed: renders `<AssetForm variant="panel" prefill={{ status: 'in_stock', category_slug: 'laptop' }}>`. On close/success: navigates to `/assets`.
+- If allowed: **category picker** (`CategoryPickerGrid`) then either **`AssetForm`** (standard categories) or **`OtherAssetForm`** (“Other” path). On success: navigates to `/assets`.
 
 ---
 
@@ -489,7 +536,7 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
 **Route:** `/employee` | **Auth:** Protected
 
 **Features:**
-- Lists all employees in a card grid via `listEmployees()`.
+- Lists employees via **`listEmployeesPage`** with load-more style pagination.
 - **Debounced search** (300ms) across `employee_code`, `name`, `email`.
 - **Filters:** Employment status (`all` / active / inactive), ERP status (`all` / active / inactive), department (select from `listDepartments()`), role (`all` / `employee` / `admin` / `it_ops`). Initial load uses **employment active** and **ERP inactive**; switch either to `All` to widen the list.
 - **Filter-to-API mapping:** `toApiFilters()` translates UI filter state (`EmployeeFiltersInput`) to API filter shape (`EmployeeListFilters`).
@@ -519,7 +566,31 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
 - Calls `getPublicScanAsset(id)` using Supabase RPC `fn_public_scan_asset` (granted to `anon`). RPC returns **basic fields only**: tag, category, manufacturer, model, inventory `status` (see migration `17_fn_public_scan_minimal.sql`).
 - **Public** (`/scan/:id`): heading + **Current status** badge + category; short note to sign in for full details. **Authenticated** (`protectedRoute`, e.g. `/assets/scan/:id`): full passport via `scanAsset` — location, holder, ERP label, custom fields.
 - Error handling: "404" heading if not found, generic "Error" otherwise.
-- No sidebar is rendered on this page.
+- **Layout:** `App` hides the sidebar/top chrome only for **public** `/scan/*`; protected scan uses the normal authenticated shell.
+
+---
+
+### Analysis
+
+**Route:** `/analysis` | **Auth:** Protected (page-level `hasActiveItOpsAccess`; non–IT Ops see access denied).
+
+- IT Ops telemetry / event exploration UI (reads session + gated content). Sidebar: **Tools → Analysis**.
+
+---
+
+### Notifications
+
+**Route:** `/notifications` | **Auth:** Protected
+
+- Warranty notifications (`listWarrantyNotifications`), optional welcome (`getWelcomeNotification`), date range, incremental load. TopBar bell menu links here; dedicated sidebar link may be commented out in `sidebarNav.ts`.
+
+---
+
+### Recycle Bin
+
+**Route:** `/recycle-bin` | **Auth:** Protected (manage visibility in nav)
+
+- `listRecycleBinEntries` + `restoreRecycleBinEntry`; toast feedback via `useToast`.
 
 ---
 
@@ -532,8 +603,8 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
 Navigation + settings. Rendered for all routes except public QR prefix `/scan/*`. When signed in, loads profile once (shared `getSessionEmployee` + `hasActiveAdminAccess` in one effect): nav privileges, optional “First name | Role” strip above **Settings** (hidden on desktop while collapsed), and mobile drawer. Clears profile on sign-out or fetch error (`logDevError` only). Settings panel unchanged.
 
 **Layout variants:**
-- **Desktop (≥sm):** Fixed-width sidebar (`292px` expanded, `54px` collapsed). Toggled by collapse button.
-- **Mobile (<sm):** Hidden; "Menu" button (top-left fixed) opens a slide-in drawer overlay.
+- **Desktop (≥sm):** Rail `w-[230px]` expanded, `w-[60px]` collapsed; collapse toggles width. Sticky column with `top` offset under `TopBar`.
+- **Mobile (<sm):** Rail hidden; fixed **Menu** button opens a slide-in drawer (`w-[20rem]` panel).
 
 **Features:**
 
@@ -562,21 +633,51 @@ Navigation + settings. Rendered for all routes except public QR prefix `/scan/*`
 
 ### sidebarNav.ts
 
-Defines the navigation structure as typed data:
+Typed **`sidebarSections`**: **Main** ( Home; **Assets** group — All Assets, Scan QR, New Asset; **Employees** group — Employees, New Employee ) and **Tools** ( Analysis, Recycle Bin, theme toggle, Guide, **Text Layout** density group, **Text Font** group ). Items support `visibility: 'always' | 'authenticated' | 'manage'` and optional **`matchPrefix`**. The Notifications link may be commented out while TopBar still exposes `/notifications`.
 
-```typescript
-sidebarSections: SidebarNavSection[] = [
-  { id: 'overview',   items: [{ id: 'home', label: 'Home', to: '/', icon: 'home' }] },
-  { id: 'assets',     items: [
-      { id: 'all-assets', label: 'All Assets', to: '/assets', icon: 'boxes', matchPrefix: true },
-      { id: 'scan-asset', label: 'Scan Asset', to: '/assets/scan', icon: 'scan', matchPrefix: true },
-      { id: 'new-asset', label: '+ New Asset', to: '/assets/new', icon: 'plus', tone: 'accent' },
-    ] },
-  { id: 'employees',  items: [{ id: 'all-employees', ... }, { id: 'new-employee', tone: 'accent', ... }] },
-]
-```
+`AnimatedNavIcon` includes icons such as `home`, `boxes`, `users`, `plus`, `scan`, `chart-column`, `trash`, `guide`, `settings`, `text-layout`, `text-font`, etc.
 
-Icon names: `'home' | 'boxes' | 'users' | 'plus' | 'scan'` — rendered by `AnimatedNavIcon`.
+---
+
+### Footer
+
+**File:** `Footer.tsx`
+
+- Site title + copyright row inside **`mx-auto max-w-[1320px]`** with the same horizontal padding as `HomeHero`, so the footer aligns with the marketing band.
+
+---
+
+### ParticleIntroLoader
+
+Full-screen canvas animation shown from **`Home`** after sign-in; **`onComplete`** clears intro state. Minimum visible duration and resize/touch behavior are implemented for small viewports.
+
+---
+
+### InventoryStatusBadge
+
+Renders inventory **status** with a colored dot and tint; exports **`getInventoryStatusTone`** for tables and filters that need matching colors.
+
+---
+
+### ToastProvider
+
+Wraps the app in `App.tsx`. **`useToast()`** from pages/forms shows transient success/error messages (e.g. asset create, recycle restore).
+
+---
+
+### FilterPopup / FilterSelect / LoadMorePagination
+
+Reusable patterns for **AllAssets** (and similar): modal filter shell with apply/clear, labeled selects, and “load more” chunk loading.
+
+---
+
+### Other common UI
+
+- **Breadcrumbs** — route context under `TopBar`.
+- **ScrollTopButton** — floating scroll-to-top in the main column.
+- **InfoHint** — contextual help trigger.
+- **IconActionButton** — compact icon actions (e.g. row menus).
+- **IdleWarningModal** + **`useIdleTimeout`** — session idle warning / auto sign-out.
 
 ---
 
@@ -636,7 +737,7 @@ Simple "404 – Page not found" display. Navigated to from the catch-all `*` rou
 
 ### AnimatedNavIcon
 
-SVG icon component keyed by icon name (`home`, `boxes`, `users`, `plus`, `scan`, `settings`, `guide`, `logout`, `sun`, `moon`, `list-chevrons-up-down`). Animated on parent `.nav-item` hover via CSS transitions defined in `global.css`.
+SVG icon component keyed by `IconName` (includes `home`, `boxes`, `users`, `plus`, `scan`, `chart-column`, `trash`, `guide`, `settings`, `text-layout`, `text-font`, `bell`, refresh/history icons, etc.). Hover/focus motion is driven from parent `.nav-item` rules in `global.css`.
 
 ---
 
@@ -675,6 +776,12 @@ SVG icon component keyed by icon name (`home`, `boxes`, `users`, `plus`, `scan`,
 - `Field` — labeled text/date input.
 - `DynamicField` — renders per-field schema with correct input type.
 - `coerceValue(value, dataType)` — converts string form value to typed value for API.
+
+---
+
+### OtherAssetForm / CategoryPickerGrid
+
+Used by **`NewAsset`**: pick a category tile or **Other**, then either standard **`AssetForm`** or **`OtherAssetForm`** for the alternate create path.
 
 ---
 
@@ -723,13 +830,11 @@ SVG icon component keyed by icon name (`home`, `boxes`, `users`, `plus`, `scan`,
 
 ### formatDisplay.ts
 
-```typescript
-formatDisplay(value: unknown): string
-```
+- **`formatDisplay(value)`** — `'-'` for null/empty; otherwise stringifies.
+- **`formatEnumLabel(value)`** — human labels from `snake_case` or kebab flags (e.g. `in_stock` → `In Stock`).
+- **`formatDateTime(value)`** — locale medium date + short time for ISO timestamps.
 
-- Returns `'-'` for `null`, `undefined`, or empty/whitespace strings.
-- Returns `String(value)` for all other types.
-- Used universally across all pages and scan page for consistent null display.
+Used across lists, detail, and scan pages for consistent display.
 
 ---
 
@@ -795,12 +900,7 @@ Canonical role is `employees.role` (`employee` | `admin` | `it_ops`). `hasActive
 
 ## Realtime & Dashboard Stats
 
-`subscribeDashboardRealtime(callback)`:
-- Creates two Supabase Realtime channels: `dashboard-assets` and `dashboard-employees`.
-- Listens for `INSERT` and `UPDATE` events on the `assets` and `employees` tables respectively.
-- Calls `callback()` on any event, which triggers `getDashboardStats()` to re-fetch counters.
-- Returns an unsubscribe function that removes both channels.
-- Used by `Home.tsx` only when `isAuthenticated = true`.
+`subscribeDashboardRealtime` and `getDashboardStats` remain in **`api.ts`** for reuse (e.g. future dashboard widgets). The current **Home** page does not subscribe to Realtime; story copy references “realtime” conceptually only.
 
 ---
 

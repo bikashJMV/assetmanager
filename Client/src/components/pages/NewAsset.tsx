@@ -114,13 +114,6 @@ export default function NewAsset() {
   return (
     <main className="min-h-screen bg-app text-primary px-4 sm:px-6 py-4">
       <div className="max-w-6xl mx-auto space-y-5">
-        <button
-          onClick={() => navigate('/assets')}
-          className="text-primary px-2 hover:bg-surface-3 transition text-sm font-semibold rounded-lg py-1"
-          type="button"
-        >
-          ← Back to All Assets
-        </button>
 
         <div className="rounded-2xl border border-base bg-surface px-5 sm:p-6">
           <div>

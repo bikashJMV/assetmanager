@@ -1,5 +1,6 @@
 import { useMemo, useState, type ReactNode } from 'react'
 import type { AssetLifecycleEvent } from '../../api'
+import InfoHint from '../common/InfoHint'
 import AssetHistoryTable from './AssetHistoryTable'
 import AssetHistoryTimeline from './AssetHistoryTimeline'
 
@@ -11,6 +12,48 @@ type Props = {
 }
 
 const VIEW_MODE_STORAGE_KEY = 'assetHistoryViewMode'
+
+const LIFECYCLE_EVENT_HINTS: Array<{
+  label: string
+  accentClassName: string
+  description: string
+}> = [
+  {
+    label: 'Assigned',
+    accentClassName: 'text-sky-600',
+    description: 'The asset was assigned to an employee and the current holder changed.',
+  },
+  {
+    label: 'Returned',
+    accentClassName: 'text-sky-600',
+    description: 'The active assignment was closed and the asset returned from that holder.',
+  },
+  {
+    label: 'Updated',
+    accentClassName: 'text-amber-600',
+    description: 'Some asset details were changed, such as status, location, model, or other recorded fields.',
+  },
+  {
+    label: 'Created',
+    accentClassName: 'text-emerald-600',
+    description: 'A new asset record was created in the system.',
+  },
+  {
+    label: 'Restored',
+    accentClassName: 'text-emerald-600',
+    description: 'The asset was restored from the recycle bin and became active again.',
+  },
+  {
+    label: 'Deleted',
+    accentClassName: 'text-rose-600',
+    description: 'The asset was moved to the recycle bin.',
+  },
+  {
+    label: 'QR Scanned',
+    accentClassName: 'text-accent',
+    description: 'The asset QR code was scanned to open or view its details.',
+  },
+]
 
 function getInitialViewMode(): HistoryViewMode {
   if (typeof window === 'undefined') return 'table'
@@ -36,7 +79,9 @@ function ViewToggleButton({
       aria-pressed={pressed}
       onClick={onClick}
       className={`h-8 w-8 rounded-md border flex items-center justify-center transition ${
-        pressed ? 'bg-accent text-white border-accent' : 'bg-surface-2 text-muted border-base hover:text-primary'
+        pressed
+          ? 'border-accent bg-accent text-white'
+          : 'border-base bg-surface text-muted hover:border-accent-soft hover:bg-[color:var(--accent-soft)]/15 hover:text-accent'
       }`}
     >
       {children}
@@ -79,37 +124,57 @@ export default function AssetChangeHistory({ events, isCapped = false }: Props) 
 
   if (!hasEvents) {
     return (
-      <p className="text-sm text-subtle py-4 text-center border border-dashed border-base rounded-lg">
+      <div className="rounded-2xl border border-dashed border-base px-4 py-5 text-center text-sm text-subtle">
         No events yet, or none visible for your role.
-      </p>
+      </div>
     )
   }
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between gap-3">
+    <div className="overflow-hidden rounded-2xl border border-base bg-surface">
+      <div className="flex items-center justify-between gap-3 px-4 py-3 sm:px-5">
         <p className="text-xs text-subtle">{headerText}</p>
-        <div className="inline-flex items-center gap-1 rounded-lg border border-base bg-surface-2 p-1">
-          <ViewToggleButton pressed={mode === 'table'} label="Switch to table view" onClick={() => setViewMode('table')}>
-            <TableIcon />
-          </ViewToggleButton>
-          <ViewToggleButton
-            pressed={mode === 'timeline'}
-            label="Switch to timeline view"
-            onClick={() => setViewMode('timeline')}
+        <div className="flex items-center gap-2">
+          <div className="inline-flex items-center gap-1 rounded-lg border border-base bg-app p-1">
+            <ViewToggleButton pressed={mode === 'table'} label="Switch to table view" onClick={() => setViewMode('table')}>
+              <TableIcon />
+            </ViewToggleButton>
+            <ViewToggleButton
+              pressed={mode === 'timeline'}
+              label="Switch to timeline view"
+              onClick={() => setViewMode('timeline')}
+            >
+              <TimelineIcon />
+            </ViewToggleButton>
+          </div>
+          <InfoHint
+            panelTitle="Lifecycle event guide"
+            ariaLabel="Open lifecycle event guide"
+            className="shrink-0"
           >
-            <TimelineIcon />
-          </ViewToggleButton>
+            <div className="space-y-3">
+              {LIFECYCLE_EVENT_HINTS.map((item) => (
+                <div key={item.label} className="space-y-1">
+                  <p className={`text-xs font-semibold uppercase tracking-[0.14em] ${item.accentClassName}`}>
+                    {item.label}
+                  </p>
+                  <p>{item.description}</p>
+                </div>
+              ))}
+            </div>
+          </InfoHint>
         </div>
       </div>
 
       {isCapped ? (
-        <p className="text-xs rounded-lg border border-base bg-surface-2 px-3 py-2 text-subtle">
+        <p className="border-t border-base px-4 py-2 text-xs text-subtle sm:px-5">
           Showing latest 100 changes. Older events are not loaded in this view yet.
         </p>
       ) : null}
 
-      {mode === 'table' ? <AssetHistoryTable events={events} /> : <AssetHistoryTimeline events={events} />}
+      <div className="border-t border-base px-4 py-4 sm:px-5">
+        {mode === 'table' ? <AssetHistoryTable events={events} /> : <AssetHistoryTimeline events={events} />}
+      </div>
     </div>
   )
 }

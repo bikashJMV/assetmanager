@@ -15,9 +15,9 @@ import Loader from '../common/Loader'
 import ConfirmDialog from '../common/ConfirmDialog'
 import { getErrorDebugDetail, getUserFacingMessage, logDevError } from '../../utils/errors'
 import { formatDateTime, formatDisplay, formatEnumLabel } from '../../utils/formatDisplay'
-import IconActionButton from '../common/IconActionButton'
 import AssetChangeHistory from '../asset/AssetChangeHistory'
 import InventoryStatusBadge from '../common/InventoryStatusBadge'
+import AnimatedNavIcon, { type IconName } from '../common/AnimatedNavIcon'
 import { useToast } from '../common/ToastProvider'
 
 // function formatInventryStatus=(status:string)=>{
@@ -55,6 +55,8 @@ export default function AssetDetail() {
   const [assignNotes, setAssignNotes] = useState('')
   const [actionLoading, setActionLoading] = useState(false)
   const [canManage, setCanManage] = useState(false)
+  const [assignDialogOpen, setAssignDialogOpen] = useState(false)
+  const [returnDialogOpen, setReturnDialogOpen] = useState(false)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const { showToast } = useToast()
 
@@ -101,7 +103,7 @@ export default function AssetDetail() {
     [detail]
   )
 
-  const handleAssign = async () => {
+  const openAssignDialog = () => {
     if (!detail?.asset.asset_tag) return
     if (!canManage) {
       setError('Active admin access is required to assign assets')
@@ -111,9 +113,18 @@ export default function AssetDetail() {
       setError('Employee code is required for assignment')
       return
     }
-    const confirmed = window.confirm('Assign this asset to the entered employee code?')
-    if (!confirmed) return
+    setError('')
+    setErrorDebug(undefined)
+    setAssignDialogOpen(true)
+  }
 
+  const closeAssignDialog = () => {
+    if (actionLoading) return
+    setAssignDialogOpen(false)
+  }
+
+  const handleAssign = async () => {
+    if (!detail?.asset.asset_tag) return
     setActionLoading(true)
     setError('')
     setErrorDebug(undefined)
@@ -128,6 +139,7 @@ export default function AssetDetail() {
           ? result.message.trim()
           : 'Asset assigned successfully.'
       showToast({ message: msg, variant: 'success' })
+      setAssignDialogOpen(false)
       setAssignCode('')
       setAssignNotes('')
       await refresh()
@@ -140,15 +152,28 @@ export default function AssetDetail() {
     }
   }
 
-  const handleReturn = async () => {
+  const openReturnDialog = () => {
     if (!detail?.asset.asset_tag) return
     if (!canManage) {
       setError('Active admin access is required to return assets')
       return
     }
-    const confirmed = window.confirm('Return this asset and close the current assignment?')
-    if (!confirmed) return
+    if (!openAssignment) {
+      setError('No open assignment is available to return.')
+      return
+    }
+    setError('')
+    setErrorDebug(undefined)
+    setReturnDialogOpen(true)
+  }
 
+  const closeReturnDialog = () => {
+    if (actionLoading) return
+    setReturnDialogOpen(false)
+  }
+
+  const handleReturn = async () => {
+    if (!detail?.asset.asset_tag) return
     setActionLoading(true)
     setError('')
     setErrorDebug(undefined)
@@ -162,6 +187,7 @@ export default function AssetDetail() {
           ? result.message.trim()
           : 'Asset returned successfully.'
       showToast({ message: msg, variant: 'success' })
+      setReturnDialogOpen(false)
       setAssignNotes('')
       await refresh()
     } catch (err) {
@@ -219,29 +245,25 @@ export default function AssetDetail() {
 
   return (
     <main className="min-h-screen bg-app text-primary px-4 sm:px-6 py-6 sm:py-8">
-      <div className="flex flex-wrap items-center gap-3 px-4 sm:px-6 ">
+      <div className="flex flex-wrap items-center gap-3">
         {canManage ? (
-          <div className="ml-auto flex items-center gap-2">
-            <IconActionButton
+          <div className="flex items-center gap-2">
+            <HeaderActionButton
               icon="edit"
               label="Edit Asset"
               onClick={() => setShowEdit(true)}
-              variant="accent"
               disabled={actionLoading}
             />
-            <IconActionButton
+            <HeaderActionButton
               icon="trash"
               label="Delete Asset"
               onClick={() => setDeleteDialogOpen(true)}
-              variant="danger"
               disabled={actionLoading}
             />
-            {/* Add a refresh button without lebel refresh */}
-            <IconActionButton
+            <HeaderActionButton
               icon="refresh-cw"
               label="Refresh"
               onClick={() => void refresh()}
-              variant="base"
               disabled={actionLoading}
             />
           </div>
@@ -293,7 +315,7 @@ export default function AssetDetail() {
             />
             <div className="flex gap-2">
               <button
-                onClick={() => void handleAssign()}
+                onClick={openAssignDialog}
                 disabled={actionLoading || !canManage}
                 className="flex-1 bg-accent text-white font-semibold px-3 py-2.5 rounded-lg text-sm disabled:opacity-60"
                 type="button"
@@ -301,7 +323,7 @@ export default function AssetDetail() {
                 Assign
               </button>
               <button
-                onClick={() => void handleReturn()}
+                onClick={openReturnDialog}
                 disabled={actionLoading || !openAssignment || !canManage}
                 className="flex-1 border border-base text-muted px-3 py-2.5 rounded-lg text-sm hover:bg-surface-2 disabled:opacity-60"
                 type="button"
@@ -466,6 +488,30 @@ export default function AssetDetail() {
         />
       )}
       <ConfirmDialog
+        open={assignDialogOpen}
+        title="Assign Asset"
+        message={`Assign ${detail.asset.asset_tag || 'this asset'} to ${assignCode.trim()}?${assignNotes.trim() ? ` Notes: ${assignNotes.trim()}` : ''}`}
+        confirmLabel="Confirm Assign"
+        loading={actionLoading}
+        showDismissIcon
+        onClose={closeAssignDialog}
+        onConfirm={() => {
+          void handleAssign()
+        }}
+      />
+      <ConfirmDialog
+        open={returnDialogOpen}
+        title="Return Asset"
+        message={`Mark ${detail.asset.asset_tag || 'this asset'} as returned${openAssignment?.employee?.name ? ` from ${openAssignment.employee.name}` : ''}${openAssignment?.employee?.employee_code ? ` (${openAssignment.employee.employee_code})` : ''}?`}
+        confirmLabel="Confirm Return"
+        loading={actionLoading}
+        showDismissIcon
+        onClose={closeReturnDialog}
+        onConfirm={() => {
+          void handleReturn()
+        }}
+      />
+      <ConfirmDialog
         open={deleteDialogOpen}
         title="Move Asset to Recycle Bin"
         message={`Move ${detail.asset.asset_tag || 'this asset'} to Recycle Bin?`}
@@ -492,6 +538,33 @@ function Section({ title, description, children }: { title: string; description?
       ) : null}
       {children}
     </section>
+  )
+}
+
+function HeaderActionButton({
+  icon,
+  label,
+  onClick,
+  disabled = false,
+}: {
+  icon: IconName
+  label: string
+  onClick: () => void
+  disabled?: boolean
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={label}
+      title={label}
+      className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-base bg-surface text-primary transition hover:border-accent-soft hover:bg-[color:var(--accent-soft)]/15 hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+    >
+      <span className="flex h-5 w-5 items-center justify-center">
+        <AnimatedNavIcon name={icon} />
+      </span>
+    </button>
   )
 }
 

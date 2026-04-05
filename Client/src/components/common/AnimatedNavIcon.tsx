@@ -18,6 +18,7 @@ export type IconName =
   | 'list-chevrons-up-down'
   | 'refresh-cw'
   | 'download'
+  | 'upload'
   | 'settings'
   | 'logout'
   | 'sun'
@@ -208,6 +209,16 @@ export default function AnimatedNavIcon({ name, className = '' }: { name: IconNa
         <path className="ai-download-arrow" d="M12 4.5v9.5" />
         <path className="ai-download-arrow" d="m8.2 12.3 3.8 3.8 3.8-3.8" />
         <path className="ai-download-tray" d="M5 20.5h14" />
+      </BaseIcon>
+    )
+  }
+
+  if (name === 'upload') {
+    return (
+      <BaseIcon className={className}>
+        <path d="M12 19.5V10" />
+        <path d="m8.2 11.7 3.8-3.8 3.8 3.8" />
+        <path d="M5 4.5h14" />
       </BaseIcon>
     )
   }

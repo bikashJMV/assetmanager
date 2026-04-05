@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { listDepartments, type EmployeeRole, type EmployeeUpsertInput } from '../../api'
 import { getUserFacingMessage, logDevError } from '../../utils/errors'
+import FilterSelect, { type FilterSelectOption } from '../common/FilterSelect'
+import DepartmentCombobox from './DepartmentCombobox'
 
 type Props = {
   prefill?: Partial<EmployeeUpsertInput>
@@ -22,7 +24,21 @@ const defaults: EmployeeUpsertInput = {
 
 const requiredFields: (keyof EmployeeUpsertInput)[] = ['employee_code', 'name', 'department']
 
-const DEPARTMENT_DATALIST_ID = 'employee-form-department-suggestions'
+const ROLE_OPTIONS: FilterSelectOption[] = [
+  { value: 'employee', label: 'Employee' },
+  { value: 'admin', label: 'Admin' },
+  { value: 'it_ops', label: 'IT Ops' },
+]
+
+const EMPLOYEE_STATUS_OPTIONS: FilterSelectOption[] = [
+  { value: 'active', label: 'Active employee' },
+  { value: 'inactive', label: 'Inactive employee' },
+]
+
+const ERP_STATUS_OPTIONS: FilterSelectOption[] = [
+  { value: 'active', label: 'Active' },
+  { value: 'inactive', label: 'Inactive' },
+]
 
 export default function EmployeeForm({ prefill, onClose, onSubmit, departmentOptions }: Props) {
   const [form, setForm] = useState<EmployeeUpsertInput>({
@@ -121,64 +137,72 @@ export default function EmployeeForm({ prefill, onClose, onSubmit, departmentOpt
               value={form.email || ''}
               onChange={(value) => setForm((current) => ({ ...current, email: value }))}
             />
-            <div>
-              <label htmlFor="employee-form-department" className="block text-muted text-xs mb-1">
-                Department
-                <span className="text-accent"> *</span>
-              </label>
-              <input
-                id="employee-form-department"
-                list={DEPARTMENT_DATALIST_ID}
-                value={form.department || ''}
-                onChange={(e) => setForm((current) => ({ ...current, department: e.target.value }))}
-                placeholder="Choose from list or type a new department"
-                autoComplete="off"
-                className="w-full bg-app border border-base rounded-lg px-3 py-2.5 text-primary placeholder:text-subtle text-sm outline-none focus:border-[color:var(--accent)] focus:ring-2 focus:ring-[color:var(--accent-soft)] transition"
-              />
-              <datalist id={DEPARTMENT_DATALIST_ID}>
-                {departmentSuggestions.map((name) => (
-                  <option key={name} value={name} />
-                ))}
-              </datalist>
-              <p className="text-[11px] text-muted mt-1 leading-snug">
-                Either select from the dropdown or input manually.              </p>
-            </div>
-            <Field
-              label="Role"
-              value={form.role || 'employee'}
-              onChange={(value) => setForm((current) => ({ ...current, role: value as EmployeeRole }))}
-              type="select"
-              options={[
-                { value: 'employee', label: 'Employee' },
-                { value: 'admin', label: 'Admin' },
-                { value: 'it_ops', label: 'IT Ops' },
-              ]}
+            <DepartmentCombobox
+              id="employee-form-department"
+              label="Department"
+              required
+              value={form.department || ''}
+              onChange={(department) => setForm((current) => ({ ...current, department }))}
+              suggestions={departmentSuggestions}
+              placeholder="Choose from list or type a new department"
+              hint="Pick a suggestion (accent underline on hover) or type a new department name."
             />
             <div>
-              <label className="block text-muted text-xs mb-1">Employee status</label>
-              <select
-                value={form.is_active ? 'active' : 'inactive'}
-                onChange={(e) => setForm((current) => ({ ...current, is_active: e.target.value === 'active' }))}
-                className="w-full bg-app border border-base rounded-lg px-3 py-2.5 text-primary text-sm outline-none focus:border-[color:var(--accent)] focus:ring-2 focus:ring-[color:var(--accent-soft)] transition"
-                aria-label="Employee active or not active"
-              >
-                <option value="active" className="bg-surface-2 text-primary">Active employee</option>
-                <option value="inactive" className="bg-surface-2 text-primary">Inactive employee</option>
-              </select>
-              <p className="text-[11px] text-muted mt-1">Employment / account flag. Assignment is blocked when not active.</p>
+              <label htmlFor="employee-form-role-trigger" className="block text-muted text-xs mb-1">
+                Role
+              </label>
+              <FilterSelect
+                hideLabel
+                dense
+                triggerId="employee-form-role-trigger"
+                label=""
+                value={form.role || 'employee'}
+                onChange={(value) =>
+                  setForm((current) => ({ ...current, role: value as EmployeeRole }))
+                }
+                options={ROLE_OPTIONS}
+                ariaLabel="Employee role"
+              />
             </div>
             <div>
-              <label className="block text-muted text-xs mb-1">ERP status</label>
-              <select
+              <label htmlFor="employee-form-status-trigger" className="block text-muted text-xs mb-1">
+                Employee status
+              </label>
+              <FilterSelect
+                hideLabel
+                dense
+                triggerId="employee-form-status-trigger"
+                label=""
+                value={form.is_active ? 'active' : 'inactive'}
+                onChange={(value) =>
+                  setForm((current) => ({ ...current, is_active: value === 'active' }))
+                }
+                options={EMPLOYEE_STATUS_OPTIONS}
+                ariaLabel="Employee active or not active"
+              />
+              <p className="text-[11px] text-muted mt-1">
+                Employment / account flag. Assignment is blocked when not active.
+              </p>
+            </div>
+            <div>
+              <label htmlFor="employee-form-erp-trigger" className="block text-muted text-xs mb-1">
+                ERP status
+              </label>
+              <FilterSelect
+                hideLabel
+                dense
+                triggerId="employee-form-erp-trigger"
+                label=""
                 value={form.erp_active ? 'active' : 'inactive'}
-                onChange={(e) => setForm((current) => ({ ...current, erp_active: e.target.value === 'active' }))}
-                className="w-full bg-app border border-base rounded-lg px-3 py-2.5 text-primary text-sm outline-none focus:border-[color:var(--accent)] focus:ring-2 focus:ring-[color:var(--accent-soft)] transition"
-                aria-label="ERP platform status"
-              >
-                <option value="active" className="bg-surface-2 text-white">Active</option>
-                <option value="inactive" className="bg-surface-2 text-white">Inactive</option>
-              </select>
-              <p className="text-[11px] text-muted mt-1">Independent of employee status. Drives holder ERP labels and filters.</p>
+                onChange={(value) =>
+                  setForm((current) => ({ ...current, erp_active: value === 'active' }))
+                }
+                options={ERP_STATUS_OPTIONS}
+                ariaLabel="ERP platform status"
+              />
+              <p className="text-[11px] text-muted mt-1">
+                Independent of employee status. Drives holder ERP labels and filters.
+              </p>
             </div>
           </div>
         </div>

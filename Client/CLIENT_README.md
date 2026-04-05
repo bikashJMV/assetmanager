@@ -14,6 +14,7 @@
 - **`Notifications`** (`/notifications`): warranty alerts, date range, incremental loading, welcome prompt (TopBar still links here; sidebar link may be commented in `sidebarNav.ts`).
 - **`Recycle Bin`** (`/recycle-bin`): list + restore RPCs; toast feedback.
 - **Soft delete** for assets (and employees from their flows): confirmation dialog + `softDeleteAssetById` / `softDeleteEmployeeById`.
+- **Asset bulk import:** **`/assets/new`** — `InfoHint` + **Bulk import** opens `AssetBulkImportModal`. Parser `utils/assetBulkImport.ts` (`parseAssetImportMatrix` with `fixedCategorySlug`); template `/asset-import-template.xlsx` (`ASSET_IMPORT_TEMPLATE_HREF`). Regenerate headers file: `node scripts/generate-asset-import-template.mjs` from `Client/`.
 - **Shared:** `useRefreshableLoader`, **InfoHint** + JSON hints (e.g. assets page), **Breadcrumbs**, **ScrollTopButton**, **IconActionButton**, **formatEnumLabel** / **formatDateTime** in `formatDisplay.ts`.
 
 ## Table of Contents
@@ -59,6 +60,7 @@
 14. [Form Components (`components/form/`)](#form-components-componentsform)
     - [AssetForm](#assetform)
     - [EmployeeForm](#employeeform)
+    - [Bulk import (Excel)](#bulk-import-excel)
 15. [Utilities (`utils/`)](#utilities-utils)
     - [errors.ts](#errorsts)
     - [formatDisplay.ts](#formatdisplayts) (`formatDisplay`, `formatEnumLabel`, `formatDateTime`)
@@ -159,11 +161,15 @@ Client/
     │   │
     │   └── form/
     │       ├── AssetForm.tsx       # Create/edit asset form (modal or panel)
+    │       ├── AssetBulkImportModal.tsx  # Excel → sequential createAsset (New Asset)
+    │       ├── EmployeeBulkImportModal.tsx  # Excel → sequential insertEmployeeNew (New Employee)
     │       ├── OtherAssetForm.tsx # Simplified create path for “Other” category
     │       ├── CategoryPickerGrid.tsx
     │       └── EmployeeForm.tsx    # Create/edit employee form
     │
     ├── utils/
+    │   ├── assetBulkImport.ts      # parseAssetImportMatrix, template constants (assets)
+    │   ├── employeeBulkImport.ts   # parseEmployeeImportMatrix, template constants (employees)
     │   ├── errors.ts               # getUserFacingMessage, logDevError, etc.
     │   └── formatDisplay.ts        # formatDisplay, formatEnumLabel, formatDateTime
     │
@@ -527,7 +533,19 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
 
 - `accessState`: `'loading'` → `'allowed'` or `'denied'`.
 - If denied: "Admin Access Required" and back.
-- If allowed: **category picker** (`CategoryPickerGrid`) then either **`AssetForm`** (standard categories) or **`OtherAssetForm`** (“Other” path). On success: navigates to `/assets`.
+- If allowed: header row with **`InfoHint`** (bulk-import copy + sample download) and **Bulk import** button; **category picker** (`CategoryPickerGrid`); then either **`AssetForm`** (standard categories) or **`OtherAssetForm`** (“Other” path). Single-create **on success:** navigates to `/assets/:tag` or `/assets` (unchanged).
+
+**Bulk import (standard categories only):**
+
+- Rendered only when `isBulkImportAllowedCategorySlug(effectiveSlug)` — slugs: `laptop`, `desktop`, `sim`, `pen-drive`, `monitor`, `networking`. Disabled for **Other** and for any slug outside that set.
+- **`AssetBulkImportModal`** calls `parseAssetImportMatrix(matrix, { fixedCategorySlug })` so every row uses the **category selected on the page (Mode B)**. The spreadsheet must **not** include a **`category_slug`** column (headers normalize like employee import: lowercased, spaces → underscores — so avoid a column titled e.g. “Category slug”).
+- Workbook: **`xlsx`** reads a sheet named **`Import`** (case-insensitive match) if present, else the **first** sheet (`AssetBulkImportModal.pickSheetName`).
+- **Preflight:** duplicate **(category + non-empty `serial_number`)** within the file fails the entire parse (no `createAsset` calls).
+- **After parse:** sequential **`createAsset`** (same API as `AssetForm`); **`assertActiveAdminAccess`** per call. **`metadata`** on each create includes `source: 'bulk_import'`, `template_version` (`ASSET_IMPORT_TEMPLATE_VERSION` in `assetBulkImport.ts`), and optional `notes` from a `notes` column.
+- **Cancel:** closing the dialog (`open` false) or changing the category chip (`effectiveSlug` → `useEffect` clears `bulkImportOpen`) sets a cancel ref so the loop stops; partial rows may already exist.
+- **Template:** `public/asset-import-template.xlsx` — regenerate via `node scripts/generate-asset-import-template.mjs`. **Readme** sheet is human-only; parser uses **Import** only.
+
+Parser rules (see `Client/src/utils/assetBulkImport.ts`): strict header allowlist (core columns + union of `field_key` values aligned with `Server/db/migrations/v2/06_seed.sql`); forbidden columns include `employee_code`, `assign`, `assigned_to`, `assignment`, `holder`, `holder_name`; max **`ASSET_IMPORT_MAX_ROWS`** (500) data rows; status must be a valid `asset_status` or blank (`in_stock` default). **Other / custom categories** are not supported in bulk (use the form).
 
 ---
 
@@ -554,8 +572,9 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
 **Route:** `/employee/new` | **Auth:** Protected (same privileged gate as `NewAsset`)
 
 - Same gate pattern as `NewAsset`.
-- If allowed: renders `<EmployeeForm onSubmit={handleCreate}>`. On success: navigates to `/employee`.
+- If allowed: **`InfoHint`** + **Bulk import** open **`EmployeeBulkImportModal`**; below that, `<EmployeeForm onSubmit={handleCreate}>`. Single-create **on success:** navigates to `/employee`.
 - `handleCreate` calls `upsertEmployee()` then navigates. Errors bubble up to `EmployeeForm`.
+- **Bulk import:** `parseEmployeeImportMatrix` in **`utils/employeeBulkImport.ts`**; first sheet only in **`EmployeeBulkImportModal`**; sample `public/employee-import-template.xlsx` (`EMPLOYEE_IMPORT_TEMPLATE_HREF`). New rows only (duplicate / recycle-bin checks); sequential **`insertEmployeeNew`**. See modal + util source for caps and column rules.
 
 ---
 
@@ -808,6 +827,19 @@ Used by **`NewAsset`**: pick a category tile or **Other**, then either standard 
 
 ---
 
+### Bulk import (Excel)
+
+| Surface | Modal | Parser / constants | API used per row | Public template |
+|--------|--------|-------------------|------------------|-------------------|
+| **New Employee** | `EmployeeBulkImportModal.tsx` | `employeeBulkImport.ts` (`parseEmployeeImportMatrix`, `EMPLOYEE_IMPORT_MAX_ROWS`, `EMPLOYEE_IMPORT_TEMPLATE_HREF`) | `insertEmployeeNew` | `/employee-import-template.xlsx` |
+| **New Asset** | `AssetBulkImportModal.tsx` | `assetBulkImport.ts` (`parseAssetImportMatrix`, `ASSET_IMPORT_MAX_ROWS`, `ASSET_IMPORT_TEMPLATE_HREF`, `ASSET_IMPORT_TEMPLATE_VERSION`) | `createAsset` | `/asset-import-template.xlsx` |
+
+Shared behavior: **`xlsx`** for parsing; **`useToast`** + capped inline error lists; **`mountedRef`** (employees) / **`mountedRef`** + **`cancelledRef`** tied to dialog `open` (assets) for safe teardown.
+
+**Mode note (assets only):** the UI always passes **`fixedCategorySlug`**, which matches **`ParseAssetImportOptions.fixedCategorySlug`** in code. A file parsed **without** `fixedCategorySlug` would require a **`category_slug`** column (**Mode A**); that path exists in `parseAssetImportMatrix` but is **not** wired from the New Asset page.
+
+---
+
 ## Utilities (`utils/`)
 
 ### errors.ts
@@ -835,6 +867,18 @@ Used by **`NewAsset`**: pick a category tile or **Other**, then either standard 
 - **`formatDateTime(value)`** — locale medium date + short time for ISO timestamps.
 
 Used across lists, detail, and scan pages for consistent display.
+
+---
+
+### employeeBulkImport.ts
+
+- **`parseEmployeeImportMatrix(matrix)`** — header row + data rows; required headers `employee_code`, `name`, `department`; optional `email`, `is_active`, `erp_active` (boolean parsing shared with assets via **`parseBooleanCell`**).
+- **`EMPLOYEE_IMPORT_TEMPLATE_HREF`**, **`EMPLOYEE_IMPORT_MAX_ROWS`** — used by `NewEmployee` + `EmployeeBulkImportModal`.
+
+### assetBulkImport.ts
+
+- **`parseAssetImportMatrix(matrix, { fixedCategorySlug? })`** — when `fixedCategorySlug` is set (New Asset UI), rejects any **`category_slug`** column; validates allowlisted category slugs, core + custom fields per `06_seed.sql`, duplicate serial preflight, row cap.
+- **`ASSET_IMPORT_TEMPLATE_HREF`** (`/asset-import-template.xlsx`), **`ASSET_IMPORT_TEMPLATE_VERSION`** (embedded in create `metadata`), **`ASSET_IMPORT_MAX_ROWS`**, **`ASSET_IMPORT_CORE_COLUMNS`**, **`getExpectedHeadersModeA` / `getExpectedHeadersModeB`**, **`isBulkImportAllowedCategorySlug`**.
 
 ---
 

@@ -1038,6 +1038,97 @@ export async function upsertEmployee(input: EmployeeUpsertInput) {
   ensureNoSupabaseError(error, 'Unable to save employee')
 }
 
+/** Bulk import only: insert a new row; does not update existing `employee_code`. */
+export async function insertEmployeeNew(input: EmployeeUpsertInput) {
+  await assertActiveAdminAccess()
+  const departmentId = await getOrCreateDepartmentId(input.department)
+  const employeeCode = input.employee_code.trim()
+
+  const payload: Record<string, unknown> = {
+    employee_code: employeeCode,
+    name: input.name.trim(),
+    email: input.email?.trim() || null,
+    department_id: departmentId,
+    is_active: input.is_active,
+    erp_active: input.erp_active,
+    metadata: {},
+  }
+
+  const { error } = await supabase.from('employees').insert(payload)
+  if (error) {
+    const pgCode =
+      typeof (error as { code?: string }).code === 'string' ? (error as { code: string }).code : ''
+    const msg = String((error as { message?: string }).message || '').toLowerCase()
+    if (pgCode === '23505' || msg.includes('duplicate') || msg.includes('unique')) {
+      throw new Error('This employee code already exists.')
+    }
+    ensureNoSupabaseError(error, 'Unable to save employee')
+  }
+}
+
+const EMPLOYEE_CODE_LOOKUP_CHUNK = 150
+
+/** Active (non-deleted) employee codes among the given list — bulk import must reject the file if any match. */
+export async function getActiveEmployeeCodesInUse(codes: string[]): Promise<Set<string>> {
+  await assertActiveAdminAccess()
+  const normalized = [...new Set(codes.map((c) => c.trim()).filter(Boolean))]
+  if (normalized.length === 0) return new Set()
+
+  const out = new Set<string>()
+  for (let i = 0; i < normalized.length; i += EMPLOYEE_CODE_LOOKUP_CHUNK) {
+    const chunk = normalized.slice(i, i + EMPLOYEE_CODE_LOOKUP_CHUNK)
+
+    const res = await supabase
+      .from('employees')
+      .select('employee_code')
+      .in('employee_code', chunk)
+      .eq('is_deleted', false)
+
+    if (res.error) {
+      if (isMissingColumnError(res.error, 'employees', 'is_deleted')) {
+        const legacy = await supabase.from('employees').select('employee_code').in('employee_code', chunk)
+        ensureNoSupabaseError(legacy.error, 'Unable to verify existing employees')
+        for (const row of legacy.data ?? []) {
+          const r = row as { employee_code?: string }
+          if (r.employee_code) out.add(r.employee_code)
+        }
+        continue
+      }
+      ensureNoSupabaseError(res.error, 'Unable to verify existing employees')
+    }
+
+    for (const row of res.data ?? []) {
+      const r = row as { employee_code?: string }
+      if (r.employee_code) out.add(r.employee_code)
+    }
+  }
+  return out
+}
+
+/** Codes that exist and are soft-deleted (bulk import should reject until restored from Recycle Bin). */
+export async function getSoftDeletedEmployeeCodes(codes: string[]): Promise<Set<string>> {
+  await assertActiveAdminAccess()
+  const normalized = [...new Set(codes.map((c) => c.trim()).filter(Boolean))]
+  if (normalized.length === 0) return new Set()
+
+  const { data, error } = await supabase
+    .from('employees')
+    .select('employee_code,is_deleted')
+    .in('employee_code', normalized)
+
+  if (error) {
+    if (isMissingColumnError(error, 'employees', 'is_deleted')) return new Set()
+    ensureNoSupabaseError(error, 'Unable to verify employee delete status')
+  }
+
+  const out = new Set<string>()
+  for (const row of data ?? []) {
+    const r = row as { employee_code?: string; is_deleted?: boolean | null }
+    if (r.employee_code && r.is_deleted) out.add(r.employee_code)
+  }
+  return out
+}
+
 export async function setEmployeeAdminStatus(
   targetEmployee: Pick<EmployeeRecord, 'id' | 'employee_code'>,
   makeAdmin: boolean,

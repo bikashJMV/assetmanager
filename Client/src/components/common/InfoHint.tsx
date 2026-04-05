@@ -54,16 +54,16 @@ export default function InfoHint({ panelTitle, ariaLabel, children, className }:
           // Keyboard / assistive tech: orange ring only when :focus-visible.
           'focus-visible:ring-2 focus-visible:ring-[color:var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg)]',
           open
-            ? 'border-[color:var(--accent)] bg-[color:var(--accent-soft)]/35 text-accent ring-2 ring-[color:var(--accent)]/35'
-            : 'border-base bg-surface text-primary ring-0 hover:bg-surface-3',
+            ? 'border-[color:var(--accent)] bg-[color:var(--accent-soft)]/35 text-primary ring-2 ring-[color:var(--accent)]/35'
+            : 'border-base bg-surface text-primary ring-0 hover:border-[color:var(--accent-soft)] hover:bg-surface-3',
         ].join(' ')}
       >
         <svg
           viewBox="0 0 24 24"
-          className="h-6 w-6"
+          className="h-5 w-5 min-h-5 min-w-5 shrink-0"
           fill="none"
           stroke="currentColor"
-          strokeWidth="2.25"
+          strokeWidth="2"
           strokeLinecap="round"
           aria-hidden
         >

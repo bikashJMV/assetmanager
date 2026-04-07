@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import EmployeeForm from '../form/EmployeeForm'
 import Error from '../common/Error'
 import RefreshButton from '../common/RefreshButton'
 import ConfirmDialog from '../common/ConfirmDialog'
 import FilterPopup from '../common/FilterPopup'
 import FilterSelect, { type FilterSelectOption } from '../common/FilterSelect'
-import LoadMorePagination from '../common/LoadMorePagination'
+import DataPagination from '../common/DataPagination'
+import PageHeaderActions from '../common/PageHeaderActions'
 import { useToast } from '../common/ToastProvider'
 import Loader from '../common/Loader'
 import InfoHint from '../common/InfoHint'
@@ -40,7 +42,8 @@ type EmployeePageInfoHint = {
 const EMPLOYEE_PAGE_INFO_HINT = employeeInfoHint as EmployeePageInfoHint
 
 const SEARCH_DEBOUNCE_MS = 300
-const PAGE_SIZE = 50
+const DEFAULT_PAGE_SIZE = 10
+const PAGE_SIZE_OPTIONS = [10, 25, 50, 100]
 const FILTER_STATUS_ALL = 'all' as const
 const ROLE_ALL = 'all' as const
 const EMPLOYEE_STATUS_OPTIONS: FilterSelectOption[] = [
@@ -163,8 +166,11 @@ function toApiFilters(input: EmployeeFiltersInput): EmployeeListFilters {
 }
 
 export default function Employee() {
+  const navigate = useNavigate()
   const [employees, setEmployees] = useState<EmployeeRecord[]>([])
   const [totalEmployees, setTotalEmployees] = useState(0)
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE)
   const [departments, setDepartments] = useState<string[]>([])
   const [filtersInput, setFiltersInput] = useState<EmployeeFiltersInput>({
     search: '',
@@ -182,7 +188,6 @@ export default function Employee() {
   })
   const [editEmployee, setEditEmployee] = useState<EmployeeRecord | null>(null)
   const [loading, setLoading] = useState(true)
-  const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState('')
   const [errorDebug, setErrorDebug] = useState<string | undefined>(undefined)
   const [accessResolved, setAccessResolved] = useState(false)
@@ -214,30 +219,44 @@ export default function Employee() {
   }))
   const canManageEmployees = accessResolved && isAdmin
   const activeAdvancedFilterCount = getActiveAdvancedFilterCount(filtersInput)
-  const hasMoreEmployees = employees.length < totalEmployees
+  const headerActions = canManageEmployees
+    ? [
+        {
+          id: 'new-employee',
+          label: 'New Employee',
+          icon: 'plus' as const,
+          onClick: () => navigate('/employee/new'),
+        },
+      ]
+    : []
+  const tableBusy = loading && employees.length > 0
 
   const fetchEmployees = async (
     filters: EmployeeListFilters,
-    options: { append?: boolean; offset?: number; limit?: number } = {}
+    options: { page?: number; pageSize?: number } = {}
   ) => {
-    const append = options.append ?? false
-    const offset = Math.max(0, options.offset ?? 0)
-    const limit = Math.max(1, options.limit ?? PAGE_SIZE)
+    const targetPage = Math.max(1, options.page ?? currentPage)
+    const targetPageSize = Math.max(1, options.pageSize ?? pageSize)
+    const offset = (targetPage - 1) * targetPageSize
     const requestId = ++requestIdRef.current
-    if (append) {
-      setLoadingMore(true)
-    } else {
-      setLoadingMore(false)
-      setLoading(true)
-    }
+    setLoading(true)
     setError('')
     setErrorDebug(undefined)
 
     try {
-      const result = await listEmployeesPage(filters, { offset, limit })
+      const result = await listEmployeesPage(filters, { offset, limit: targetPageSize })
       if (requestId !== requestIdRef.current) return
-      setEmployees((current) => (append ? [...current, ...result.rows] : result.rows))
+
+      const totalPages = Math.max(1, Math.ceil(result.total / targetPageSize))
+      if (result.total > 0 && targetPage > totalPages) {
+        await fetchEmployees(filters, { page: totalPages, pageSize: targetPageSize })
+        return
+      }
+
+      setEmployees(result.rows)
       setTotalEmployees(result.total)
+      setCurrentPage(targetPage)
+      setPageSize(targetPageSize)
     } catch (err) {
       if (requestId !== requestIdRef.current) return
       logDevError('employees.fetch', err)
@@ -245,11 +264,7 @@ export default function Employee() {
       setErrorDebug(getErrorDebugDetail(err))
     } finally {
       if (requestId === requestIdRef.current) {
-        if (append) {
-          setLoadingMore(false)
-        } else {
-          setLoading(false)
-        }
+        setLoading(false)
       }
     }
   }
@@ -289,7 +304,7 @@ export default function Employee() {
 
   useEffect(() => {
     void loadPassportAndDepartments()
-    void fetchEmployees(filtersRef.current)
+    void fetchEmployees(filtersRef.current, { page: 1, pageSize })
 
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current)
@@ -331,7 +346,7 @@ export default function Employee() {
 
       if (debounceRef.current) clearTimeout(debounceRef.current)
       debounceRef.current = setTimeout(() => {
-        void fetchEmployees(nextFilters)
+        void fetchEmployees(nextFilters, { page: 1, pageSize })
       }, SEARCH_DEBOUNCE_MS)
 
       return nextInput
@@ -347,7 +362,7 @@ export default function Employee() {
       const nextInput = { ...current, ...partial }
       const nextFilters = toApiFilters(nextInput)
       filtersRef.current = nextFilters
-      void fetchEmployees(nextFilters)
+      void fetchEmployees(nextFilters, { page: 1, pageSize })
       return nextInput
     })
   }
@@ -401,7 +416,7 @@ export default function Employee() {
       }
       const nextFilters = toApiFilters(nextInput)
       filtersRef.current = nextFilters
-      void fetchEmployees(nextFilters)
+      void fetchEmployees(nextFilters, { page: 1, pageSize })
       return nextInput
     })
   }
@@ -416,20 +431,19 @@ export default function Employee() {
     { value: '', label: 'All departments' },
     ...departments.map((department) => ({ value: department, label: department })),
   ]
-  const currentPageLimit = Math.max(PAGE_SIZE, employees.length || PAGE_SIZE)
-
   const handleRefresh = () => {
     if (debounceRef.current) clearTimeout(debounceRef.current)
-    void fetchEmployees(filtersRef.current, { limit: currentPageLimit })
+    void fetchEmployees(filtersRef.current, { page: currentPage, pageSize })
   }
 
-  const handleLoadMore = () => {
-    if (loading || loadingMore || !hasMoreEmployees) return
-    void fetchEmployees(filtersRef.current, {
-      append: true,
-      offset: employees.length,
-      limit: PAGE_SIZE,
-    })
+  const handlePageChange = (page: number) => {
+    if (loading || page === currentPage) return
+    void fetchEmployees(filtersRef.current, { page, pageSize })
+  }
+
+  const handlePageSizeChange = (nextPageSize: number) => {
+    if (loading || nextPageSize === pageSize) return
+    void fetchEmployees(filtersRef.current, { page: 1, pageSize: nextPageSize })
   }
 
   const handleUpsertEmployee = async (employee: EmployeeUpsertInput) => {
@@ -440,7 +454,7 @@ export default function Employee() {
       })
       setEditEmployee(null)
       showToast({ message: 'Employee saved successfully.', variant: 'success' })
-      await fetchEmployees(filtersRef.current, { limit: currentPageLimit })
+      await fetchEmployees(filtersRef.current, { page: currentPage, pageSize })
     } catch (err) {
       logDevError('employees.upsert', err)
       setError(getUserFacingMessage(err, 'Unable to save employee right now.'))
@@ -480,7 +494,7 @@ export default function Employee() {
       await setEmployeeAdminStatus(grantAdminTarget, true)
       showToast({ message: `${grantAdminTarget.name} is now an admin.`, variant: 'success' })
       setGrantAdminTarget(null)
-      await fetchEmployees(filtersRef.current, { limit: currentPageLimit })
+      await fetchEmployees(filtersRef.current, { page: currentPage, pageSize })
     } catch (err) {
       logDevError('employees.grant_admin', err)
       setError(getUserFacingMessage(err, 'Unable to update admin privileges right now.'))
@@ -499,7 +513,7 @@ export default function Employee() {
       await setEmployeeAdminStatus(revokeAdminTarget, false)
       showToast({ message: `${revokeAdminTarget.name} is now an employee.`, variant: 'success' })
       setRevokeAdminTarget(null)
-      await fetchEmployees(filtersRef.current, { limit: currentPageLimit })
+      await fetchEmployees(filtersRef.current, { page: currentPage, pageSize })
     } catch (err) {
       logDevError('employees.revoke_admin', err)
       setError(getUserFacingMessage(err, 'Unable to update admin privileges right now.'))
@@ -536,7 +550,7 @@ export default function Employee() {
       })
       setRoleChangeTarget(null)
       setRoleChangeTargetRole(null)
-      await fetchEmployees(filtersRef.current, { limit: currentPageLimit })
+      await fetchEmployees(filtersRef.current, { page: currentPage, pageSize })
     } catch (err) {
       logDevError('employees.set_role', err)
       setError(getUserFacingMessage(err, 'Unable to update role right now.'))
@@ -590,7 +604,12 @@ export default function Employee() {
       await softDeleteEmployeeById(employee.id)
       setDeleteTarget(null)
       showToast({ message: `${employee.name} moved to Recycle Bin.`, variant: 'success' })
-      await fetchEmployees(filtersRef.current, { limit: currentPageLimit })
+      const nextTotal = Math.max(0, totalEmployees - 1)
+      const lastPage = Math.max(1, Math.ceil(nextTotal / pageSize))
+      await fetchEmployees(filtersRef.current, {
+        page: Math.min(currentPage, lastPage),
+        pageSize,
+      })
     } catch (err) {
       logDevError('employees.soft_delete', err)
       setError(getUserFacingMessage(err, 'Unable to delete employee right now.'))
@@ -600,6 +619,24 @@ export default function Employee() {
 
   return (
     <main className="min-h-screen bg-app text-primary px-4 sm:px-6 py-6 sm:py-8">
+      <PageHeaderActions
+        title="All Employees"
+        auxiliary={
+          <DataPagination
+            currentPage={currentPage}
+            totalCount={totalEmployees}
+            pageSize={pageSize}
+            pageSizeOptions={PAGE_SIZE_OPTIONS}
+            loading={loading}
+            itemLabel="employees"
+            showSummary={false}
+            showNavigation={false}
+            onPageChange={handlePageChange}
+            onPageSizeChange={handlePageSizeChange}
+          />
+        }
+        actions={headerActions}
+      />
       <div className="mb-6 space-y-3">
         <div className="flex flex-col gap-3 lg:flex-row lg:flex-nowrap lg:items-center">
           <div className="min-w-0 lg:flex-[1_1_320px]">
@@ -816,7 +853,7 @@ export default function Employee() {
         {!accessResolved || (loading && employees.length === 0) ? (
           <Loader embedded />
         ) : viewMode === 'table' ? (
-          <div className={`overflow-x-auto rounded-xl border border-base transition-opacity ${loadingMore ? 'opacity-60 pointer-events-none' : ''}`}>
+          <div className={`overflow-x-auto rounded-xl border border-base transition-opacity ${tableBusy ? 'opacity-60 pointer-events-none' : ''}`}>
             <table className="w-full min-w-[980px] text-sm text-left">
               <thead className="bg-surface-2 text-subtle text-xs uppercase">
                 <tr>
@@ -834,7 +871,7 @@ export default function Employee() {
               <tbody>
                 {employees.map((employee, index) => (
                   <tr key={employee.id} className="border-t border-base transition hover:bg-[color:var(--accent-soft)]/12">
-                    <td className="px-4 py-3 text-muted">{index + 1}</td>
+                    <td className="px-4 py-3 text-muted">{(currentPage - 1) * pageSize + index + 1}</td>
                     {canManageEmployees && (
                       <td className="px-4 py-3">
                         <EmployeeActions
@@ -888,7 +925,7 @@ export default function Employee() {
             </table>
           </div>
         ) : (
-          <div className={`grid grid-cols-1 gap-4 transition-opacity md:grid-cols-2 xl:grid-cols-3 ${loadingMore ? 'opacity-60 pointer-events-none' : ''}`}>
+          <div className={`grid grid-cols-1 gap-4 transition-opacity md:grid-cols-2 xl:grid-cols-3 ${tableBusy ? 'opacity-60 pointer-events-none' : ''}`}>
             {employees.map((employee) => (
               <article key={employee.id} className="rounded-xl border border-base bg-surface-2 p-4 transition hover:border-accent-soft hover:bg-[color:var(--accent-soft)]/10">
                 <div className="flex items-start justify-between gap-3">
@@ -943,12 +980,16 @@ export default function Employee() {
           </div>
         )}
 
-        <LoadMorePagination
-          loadedCount={employees.length}
+        <DataPagination
+          currentPage={currentPage}
           totalCount={totalEmployees}
-          loading={loadingMore}
+          pageSize={pageSize}
+          pageSizeOptions={PAGE_SIZE_OPTIONS}
+          loading={loading}
           itemLabel="employees"
-          onLoadMore={handleLoadMore}
+          showPageSizeSelector={false}
+          onPageChange={handlePageChange}
+          onPageSizeChange={handlePageSizeChange}
         />
       </section>
 

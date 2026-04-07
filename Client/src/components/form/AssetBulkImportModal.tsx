@@ -23,15 +23,15 @@ type Props = {
   onClose: () => void
   /** After successful full import */
   onSuccess: () => void
-  /** Category from New Asset picker — file must omit `category_slug`. */
-  fixedCategorySlug: string
+  /** Optional fallback category from New Asset picker if row lacks category_name/category_slug. */
+  defaultCategorySlug?: string
 }
 
 export default function AssetBulkImportModal({
   open,
   onClose,
   onSuccess,
-  fixedCategorySlug,
+  defaultCategorySlug,
 }: Props) {
   const { showToast } = useToast()
   const mountedRef = useRef(true)
@@ -107,15 +107,15 @@ export default function AssetBulkImportModal({
           raw: false,
         }) as unknown[][]
 
-        const parsed = parseAssetImportMatrix(matrix, { fixedCategorySlug })
+        const parsed = parseAssetImportMatrix(matrix, { defaultCategorySlug })
         if (!parsed.ok) {
           setParseErrors(parsed.errors)
           showToast({
             variant: 'error',
             title: 'Import cancelled',
             message:
-              parsed.errors.some((e) => e.includes('Duplicate category + serial'))
-                ? 'Duplicate serial for the same category in the file. Fix the spreadsheet and try again.'
+              parsed.errors.some((e) => e.includes('Duplicate serial_number'))
+                ? 'Duplicate serial numbers found in the file. Fix duplicates and try again.'
                 : 'Invalid or inconsistent spreadsheet. Fix the issues below and try again.',
           })
           setBusy(false)
@@ -192,7 +192,7 @@ export default function AssetBulkImportModal({
         }
       }
     },
-    [fixedCategorySlug, onClose, onSuccess, resetState, showToast],
+    [defaultCategorySlug, onClose, onSuccess, resetState, showToast],
   )
 
   const onPickFile = useCallback(
@@ -255,8 +255,9 @@ export default function AssetBulkImportModal({
             Bulk import assets
           </h3>
           <p className="mt-1 text-sm text-muted">
-            Rows use category <span className="font-medium text-primary">{fixedCategorySlug}</span> (no{' '}
-            <code className="text-[0.8rem]">category_slug</code> column in the file).
+            Use <code className="text-[0.8rem]">category_name</code> or{' '}
+            <code className="text-[0.8rem]">category_slug</code> in each row, or leave them blank to use the selected
+            page category.
           </p>
         </div>
 

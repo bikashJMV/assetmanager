@@ -9,7 +9,9 @@ import {
   updateAsset,
 } from '../../api'
 import { getUserFacingMessage, logDevError } from '../../utils/errors'
+import { formatEnumLabel } from '../../utils/formatDisplay'
 import { getCatalogLocationLabels } from '../../utils/locationAddressCatalog'
+import FilterSelect, { type FilterSelectOption } from '../common/FilterSelect'
 import { useToast } from '../common/ToastProvider'
 
 type Props = {
@@ -51,6 +53,14 @@ function isSimAssetCategory(slug: string): boolean {
 
 function hasNonEmptyAnswer(value: string | undefined): boolean {
   return Boolean(value?.trim())
+}
+
+function getCategoryLabelFromSlug(slug: string): string {
+  return slug
+    .split('-')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ')
 }
 
 const defaultForm: FormState = {
@@ -142,6 +152,31 @@ export default function AssetForm({
   }, [form.category_slug])
 
   const locationSuggestions = useMemo(() => getCatalogLocationLabels(), [])
+  const categoryOptions = useMemo<FilterSelectOption[]>(() => {
+    const options = categories.map((category) => ({
+      value: category.slug,
+      label: category.name,
+    }))
+
+    if (!form.category_slug.trim()) return options
+    if (options.some((option) => option.value === form.category_slug)) return options
+
+    return [
+      {
+        value: form.category_slug,
+        label: getCategoryLabelFromSlug(form.category_slug) || form.category_slug,
+      },
+      ...options,
+    ]
+  }, [categories, form.category_slug])
+  const inventoryStatusOptions = useMemo<FilterSelectOption[]>(
+    () =>
+      inventoryStatuses.map((status) => ({
+        value: status,
+        label: formatEnumLabel(status),
+      })),
+    [],
+  )
   const hideNetworkingLifecycleFields = isNetworkingAssetCategory(form.category_slug)
   const hideSimModelAndCategoryFields = isSimAssetCategory(form.category_slug)
 
@@ -282,25 +317,20 @@ export default function AssetForm({
                     className="w-full bg-surface-2 border border-base rounded-lg px-3 py-2 text-primary text-sm"
                   >
                     {lockedCategoryLabel ||
-                      form.category_slug
-                        .split('-')
-                        .filter(Boolean)
-                        .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
-                        .join(' ') ||
+                      getCategoryLabelFromSlug(form.category_slug) ||
                       form.category_slug}
                   </div>
                 ) : (
-                  <select
-                    id="asset-form-category"
+                  <FilterSelect
+                    label="Category"
+                    ariaLabel="Select asset category"
                     value={form.category_slug}
-                    onChange={(e) => setForm((current) => ({ ...current, category_slug: e.target.value }))}
-                    className="w-full bg-app border border-base rounded-lg px-3 py-2 text-primary text-sm outline-none focus:border-[color:var(--accent)] focus:ring-2 focus:ring-[color:var(--accent-soft)] transition"
-                    required
-                  >
-                    {categories.map((category) => (
-                      <option key={category.id} value={category.slug}>{category.name}</option>
-                    ))}
-                  </select>
+                    options={categoryOptions}
+                    onChange={(value) => setForm((current) => ({ ...current, category_slug: value }))}
+                    hideLabel
+                    dense
+                    triggerId="asset-form-category"
+                  />
                 )}
               </div>
 
@@ -378,16 +408,16 @@ export default function AssetForm({
                         *
                       </span>
                     </label>
-                    <select
-                      id="asset-form-status"
+                    <FilterSelect
+                      label="Inventory Status"
+                      ariaLabel="Select inventory status"
                       value={form.status}
-                      onChange={(e) => setForm((current) => ({ ...current, status: e.target.value }))}
-                      className="w-full bg-app border border-base rounded-lg px-3 py-2 text-primary text-sm outline-none focus:border-[color:var(--accent)] focus:ring-2 focus:ring-[color:var(--accent-soft)] transition"
-                    >
-                      {inventoryStatuses.map((status) => (
-                        <option key={status} value={status}>{status}</option>
-                      ))}
-                    </select>
+                      options={inventoryStatusOptions}
+                      onChange={(value) => setForm((current) => ({ ...current, status: value }))}
+                      hideLabel
+                      dense
+                      triggerId="asset-form-status"
+                    />
                     <p className="text-[11px] text-muted mt-0.5 leading-snug">
                       Inventory only — not employee ERP status.
                     </p>

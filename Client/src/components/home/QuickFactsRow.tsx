@@ -21,7 +21,7 @@ export default function QuickFactsRow({ facts }: QuickFactsRowProps) {
             <QuickFactCard
               key={fact}
               fact={fact}
-              className="h-full min-h-[120px] px-4 py-4 xl:w-[calc((100%-0.75rem)/3)] xl:max-w-[calc((100%-0.75rem)/3)]"
+              className="h-full text-xl min-h-[120px] px-4 py-4 xl:w-[calc((100%-0.75rem)/3)] xl:max-w-[calc((100%-0.75rem)/3)]"
             />
           ))}
         </div>

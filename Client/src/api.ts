@@ -161,6 +161,12 @@ export type AssetEventActorSnapshot = {
   actor_department_name: string | null
 }
 
+export type AssetAuditActorDisplay = {
+  auth_user_id: string | null
+  name: string | null
+  employee_code: string | null
+}
+
 export type AssetFieldChangeEntry = {
   field: string
   label: string
@@ -175,6 +181,10 @@ export type AssetDetailRecord = {
   components: AssetComponentRecord[]
   lifecycle_events: AssetLifecycleEvent[]
   lifecycle_is_capped: boolean
+  audit_actors: {
+    created_by: AssetAuditActorDisplay | null
+    updated_by: AssetAuditActorDisplay | null
+  }
 }
 
 export type PublicDashboardSummary = {
@@ -475,6 +485,43 @@ function parseActorSnapshot(payload: Record<string, unknown>): AssetEventActorSn
     actor_employee_code: typeof s.actor_employee_code === 'string' ? s.actor_employee_code : null,
     actor_name: typeof s.actor_name === 'string' ? s.actor_name : null,
     actor_department_name: typeof s.actor_department_name === 'string' ? s.actor_department_name : null,
+  }
+}
+
+function normalizeAssetEventType(eventType: string | null | undefined): string {
+  return typeof eventType === 'string' ? eventType.trim().toLowerCase() : ''
+}
+
+function isAssetUpdateAuditEventType(eventType: string | null | undefined): boolean {
+  const normalized = normalizeAssetEventType(eventType)
+  return (
+    normalized === 'asset_updated' ||
+    normalized === 'asset_restored' ||
+    normalized === 'asset_deleted'
+  )
+}
+
+function buildAssetAuditActorDisplay({
+  authUserId,
+  employee,
+  fallbackEvent,
+}: {
+  authUserId?: string | null
+  employee?: { name: string; employee_code: string } | null
+  fallbackEvent?: Pick<AssetLifecycleEvent, 'actor_id' | 'actor_name' | 'actor_employee_code'> | null
+}): AssetAuditActorDisplay | null {
+  const resolvedAuthUserId = authUserId ?? fallbackEvent?.actor_id ?? null
+  const resolvedName = employee?.name ?? fallbackEvent?.actor_name ?? null
+  const resolvedEmployeeCode = employee?.employee_code ?? fallbackEvent?.actor_employee_code ?? null
+
+  if (!resolvedAuthUserId && !resolvedName && !resolvedEmployeeCode) {
+    return null
+  }
+
+  return {
+    auth_user_id: resolvedAuthUserId,
+    name: resolvedName,
+    employee_code: resolvedEmployeeCode,
   }
 }
 
@@ -971,6 +1018,27 @@ export async function listEmployeesPage(
     rows,
     total: count ?? rows.length,
   }
+}
+
+export async function searchAssignableEmployees(
+  query: string,
+  options: { limit?: number } = {},
+): Promise<EmployeeRecord[]> {
+  const trimmed = query.trim()
+  if (!trimmed) return []
+
+  const { rows } = await listEmployeesPage(
+    {
+      search: trimmed,
+      is_active: true,
+    },
+    {
+      offset: 0,
+      limit: Math.max(1, options.limit ?? 8),
+    },
+  )
+
+  return rows.filter((row) => row.employee_code.trim().length > 0)
 }
 
 async function getOrCreateDepartmentId(name: string | null | undefined): Promise<string | null> {
@@ -1552,92 +1620,120 @@ export async function getAssetDetail(assetTag: string): Promise<AssetDetailRecor
 
   const lifecycle_events: AssetLifecycleEvent[] = []
   let lifecycle_is_capped = false
+  let rawEvents: Record<string, unknown>[] = []
+
   if (eventsResponse.error) {
     if (!isMissingTableError(eventsResponse.error, 'asset_events')) {
       ensureNoSupabaseError(eventsResponse.error, 'Unable to load lifecycle events')
     }
   } else if (eventsResponse.data) {
-    const rawEvents = eventsResponse.data as Record<string, unknown>[]
+    rawEvents = eventsResponse.data as Record<string, unknown>[]
     lifecycle_is_capped = rawEvents.length >= ASSET_DETAIL_LIFECYCLE_LIMIT
-    const actorIds = [
-      ...new Set(
-        rawEvents
-          .map((r) => {
-            const payload = r.payload && typeof r.payload === 'object' && !Array.isArray(r.payload)
-              ? (r.payload as Record<string, unknown>)
-              : {}
-            const snapshot = parseActorSnapshot(payload)
-            const actorIdFromSnapshot = snapshot?.actor_id
-            if (typeof actorIdFromSnapshot === 'string' && actorIdFromSnapshot.length > 0) {
-              return actorIdFromSnapshot
-            }
-            const rowActor = r.actor_id
-            return typeof rowActor === 'string' && rowActor.length > 0 ? rowActor : null
+  }
+
+  const actorIds = [
+    ...new Set(
+      [
+        asset.created_by ?? null,
+        asset.updated_by ?? null,
+        ...rawEvents.map((r) => {
+          const payload = r.payload && typeof r.payload === 'object' && !Array.isArray(r.payload)
+            ? (r.payload as Record<string, unknown>)
+            : {}
+          const snapshot = parseActorSnapshot(payload)
+          const actorIdFromSnapshot = snapshot?.actor_id
+          if (typeof actorIdFromSnapshot === 'string' && actorIdFromSnapshot.length > 0) {
+            return actorIdFromSnapshot
+          }
+          const rowActor = r.actor_id
+          return typeof rowActor === 'string' && rowActor.length > 0 ? rowActor : null
+        }),
+      ].filter((id): id is string => typeof id === 'string' && id.length > 0),
+    ),
+  ]
+
+  const actorByAuthUserId = new Map<
+    string,
+    { id: string; employee_code: string; name: string; department_name: string | null }
+  >()
+
+  if (actorIds.length > 0) {
+    const { data: actorRows, error: actorErr } = await supabase
+      .from('employees')
+      .select('id,employee_code,name,auth_user_id,department:departments(name)')
+      .in('auth_user_id', actorIds)
+    if (!actorErr && actorRows) {
+      for (const row of actorRows) {
+        const e = row as {
+          id: string
+          employee_code: string
+          name: string
+          auth_user_id?: string | null
+          department?: { name?: string } | { name?: string }[] | null
+        }
+        const uid = e.auth_user_id
+        if (uid) {
+          const deptVal = e.department
+          const deptName = Array.isArray(deptVal)
+            ? (typeof deptVal[0]?.name === 'string' ? deptVal[0].name : null)
+            : typeof deptVal?.name === 'string'
+              ? deptVal.name
+              : null
+          actorByAuthUserId.set(uid, {
+            id: String(e.id),
+            employee_code: String(e.employee_code ?? ''),
+            name: String(e.name ?? ''),
+            department_name: deptName,
           })
-          .filter((id: string | null): id is string => typeof id === 'string' && id.length > 0),
-      ),
-    ]
-    const actorByAuthUserId = new Map<
-      string,
-      { id: string; employee_code: string; name: string; department_name: string | null }
-    >()
-    if (actorIds.length > 0) {
-      const { data: actorRows, error: actorErr } = await supabase
-        .from('employees')
-        .select('id,employee_code,name,auth_user_id,department:departments(name)')
-        .in('auth_user_id', actorIds)
-      if (!actorErr && actorRows) {
-        for (const row of actorRows) {
-          const e = row as {
-            id: string
-            employee_code: string
-            name: string
-            auth_user_id?: string | null
-            department?: { name?: string } | { name?: string }[] | null
-          }
-          const uid = e.auth_user_id
-          if (uid) {
-            const deptVal = e.department
-            const deptName = Array.isArray(deptVal)
-              ? (typeof deptVal[0]?.name === 'string' ? deptVal[0].name : null)
-              : typeof deptVal?.name === 'string'
-                ? deptVal.name
-                : null
-            actorByAuthUserId.set(uid, {
-              id: String(e.id),
-              employee_code: String(e.employee_code ?? ''),
-              name: String(e.name ?? ''),
-              department_name: deptName,
-            })
-          }
         }
       }
     }
-    for (const row of rawEvents) {
-      const payload =
-        row.payload && typeof row.payload === 'object' && !Array.isArray(row.payload)
-          ? (row.payload as Record<string, unknown>)
-          : {}
-      const snapshot = parseActorSnapshot(payload)
-      const aid =
-        snapshot?.actor_id ??
-        (typeof row.actor_id === 'string' && row.actor_id.length > 0 ? row.actor_id : null)
-      const emp = aid ? actorByAuthUserId.get(aid) : undefined
-      lifecycle_events.push({
-        id: String(row.id ?? ''),
-        event_type: String(row.event_type ?? ''),
-        actor_id: aid,
-        actor_employee_id: snapshot?.actor_employee_id ?? emp?.id ?? null,
-        actor_name: snapshot?.actor_name ?? emp?.name ?? null,
-        actor_employee_code: snapshot?.actor_employee_code ?? emp?.employee_code ?? null,
-        actor_department_name: snapshot?.actor_department_name ?? emp?.department_name ?? null,
-        payload,
-        created_at: String(row.created_at ?? ''),
-      })
-    }
   }
 
-  return { asset, assignments, components, lifecycle_events, lifecycle_is_capped }
+  for (const row of rawEvents) {
+    const payload =
+      row.payload && typeof row.payload === 'object' && !Array.isArray(row.payload)
+        ? (row.payload as Record<string, unknown>)
+        : {}
+    const snapshot = parseActorSnapshot(payload)
+    const aid =
+      snapshot?.actor_id ??
+      (typeof row.actor_id === 'string' && row.actor_id.length > 0 ? row.actor_id : null)
+    const emp = aid ? actorByAuthUserId.get(aid) : undefined
+    lifecycle_events.push({
+      id: String(row.id ?? ''),
+      event_type: String(row.event_type ?? ''),
+      actor_id: aid,
+      actor_employee_id: snapshot?.actor_employee_id ?? emp?.id ?? null,
+      actor_name: snapshot?.actor_name ?? emp?.name ?? null,
+      actor_employee_code: snapshot?.actor_employee_code ?? emp?.employee_code ?? null,
+      actor_department_name: snapshot?.actor_department_name ?? emp?.department_name ?? null,
+      payload,
+      created_at: String(row.created_at ?? ''),
+    })
+  }
+
+  const createdEvent = lifecycle_events.find(
+    (event) => normalizeAssetEventType(event.event_type) === 'asset_created',
+  ) ?? null
+  const latestUpdateEvent =
+    lifecycle_events.find((event) => isAssetUpdateAuditEventType(event.event_type)) ??
+    createdEvent
+
+  const audit_actors = {
+    created_by: buildAssetAuditActorDisplay({
+      authUserId: asset.created_by ?? null,
+      employee: asset.created_by ? actorByAuthUserId.get(asset.created_by) : undefined,
+      fallbackEvent: createdEvent,
+    }),
+    updated_by: buildAssetAuditActorDisplay({
+      authUserId: asset.updated_by ?? null,
+      employee: asset.updated_by ? actorByAuthUserId.get(asset.updated_by) : undefined,
+      fallbackEvent: latestUpdateEvent,
+    }),
+  }
+
+  return { asset, assignments, components, lifecycle_events, lifecycle_is_capped, audit_actors }
 }
 
 export async function assignAsset(payload: AssignAssetPayload) {

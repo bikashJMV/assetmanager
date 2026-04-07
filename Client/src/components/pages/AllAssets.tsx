@@ -19,7 +19,8 @@ import ConfirmDialog from '../common/ConfirmDialog'
 import FilterPopup from '../common/FilterPopup'
 import FilterSelect, { type FilterSelectOption } from '../common/FilterSelect'
 import InfoHint from '../common/InfoHint'
-import LoadMorePagination from '../common/LoadMorePagination'
+import DataPagination from '../common/DataPagination'
+import PageHeaderActions from '../common/PageHeaderActions'
 import AnimatedNavIcon, { type IconName } from '../common/AnimatedNavIcon'
 import InventoryStatusBadge, { getInventoryStatusTone } from '../common/InventoryStatusBadge'
 import assetInfoHint from '../../data/assetInfoHint.json'
@@ -27,7 +28,8 @@ import { getErrorDebugDetail, getUserFacingMessage, logDevError } from '../../ut
 import { formatDisplay, formatEnumLabel } from '../../utils/formatDisplay'
 
 const SEARCH_DEBOUNCE_MS = 300
-const PAGE_SIZE = 50
+const DEFAULT_PAGE_SIZE = 10
+const PAGE_SIZE_OPTIONS = [10, 25, 50, 100]
 const statusFilters = ['assigned', 'in_stock', 'in_repair', 'retired', 'lost', 'disposed']
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const OTHER_CATEGORY_FILTER_VALUE = '__other__'
@@ -70,9 +72,10 @@ const ASSETS_PAGE_INFO_HINT = assetInfoHint as AssetsPageInfoHint
 export default function AllAssets() {
   const [assets, setAssets] = useState<AssetInventoryRecord[]>([])
   const [totalAssets, setTotalAssets] = useState(0)
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE)
   const [filters, setFilters] = useState<AssetFilters>({})
   const [loading, setLoading] = useState(true)
-  const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState('')
   const [errorDebug, setErrorDebug] = useState<string | undefined>(undefined)
   const [qrModal, setQrModal] = useState<AssetQrModalState | null>(null)
@@ -102,7 +105,6 @@ export default function AllAssets() {
     hideHeldByInactive: Boolean(filters.hideHeldByInactive),
   }
   const activeAdvancedFilterCount = getActiveAdvancedFilterCount(currentAdvancedFilters)
-  const hasMoreAssets = assets.length < totalAssets
   const applyScopeFilters = (base: AssetFilters): AssetFilters => {
     if (isAdmin) return { ...base, current_employee_id: undefined }
     return { ...base, current_employee_id: scopeEmployeeId || undefined }
@@ -110,18 +112,13 @@ export default function AllAssets() {
 
   const fetchAssets = async (
     currentFilters: AssetFilters,
-    options: { append?: boolean; offset?: number; limit?: number } = {}
+    options: { page?: number; pageSize?: number } = {}
   ) => {
-    const append = options.append ?? false
-    const offset = Math.max(0, options.offset ?? 0)
-    const limit = Math.max(1, options.limit ?? PAGE_SIZE)
+    const targetPage = Math.max(1, options.page ?? currentPage)
+    const targetPageSize = Math.max(1, options.pageSize ?? pageSize)
+    const offset = (targetPage - 1) * targetPageSize
     const requestId = ++requestIdRef.current
-    if (append) {
-      setLoadingMore(true)
-    } else {
-      setLoadingMore(false)
-      setLoading(true)
-    }
+    setLoading(true)
     setError('')
     setErrorDebug(undefined)
 
@@ -131,8 +128,9 @@ export default function AllAssets() {
         if (requestId === requestIdRef.current) {
           setAssets([])
           setTotalAssets(0)
+          setCurrentPage(targetPage)
+          setPageSize(targetPageSize)
           setLoading(false)
-          setLoadingMore(false)
         }
         return
       }
@@ -144,11 +142,23 @@ export default function AllAssets() {
           exclude_category_slugs: shouldFilterOtherCategories ? [...DEFAULT_ASSET_CATEGORY_SLUGS] : undefined,
           category_slug: shouldFilterOtherCategories ? undefined : currentFilters.category_slug,
         }),
-        { offset, limit }
+        { offset, limit: targetPageSize }
       )
       if (requestId !== requestIdRef.current) return
-      setAssets((current) => (append ? [...current, ...result.rows] : result.rows))
+
+      const totalPages = Math.max(1, Math.ceil(result.total / targetPageSize))
+      if (result.total > 0 && targetPage > totalPages) {
+        await fetchAssets(currentFilters, {
+          page: totalPages,
+          pageSize: targetPageSize,
+        })
+        return
+      }
+
+      setAssets(result.rows)
       setTotalAssets(result.total)
+      setCurrentPage(targetPage)
+      setPageSize(targetPageSize)
     } catch (err) {
       if (requestId !== requestIdRef.current) return
       logDevError('assets.fetch', err)
@@ -156,11 +166,7 @@ export default function AllAssets() {
       setErrorDebug(getErrorDebugDetail(err))
     } finally {
       if (requestId === requestIdRef.current) {
-        if (append) {
-          setLoadingMore(false)
-        } else {
-          setLoading(false)
-        }
+        setLoading(false)
       }
     }
   }
@@ -195,7 +201,7 @@ export default function AllAssets() {
 
   useEffect(() => {
     if (!accessResolved) return
-    void fetchAssets(filtersRef.current)
+    void fetchAssets(filtersRef.current, { page: 1, pageSize })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accessResolved, isAdmin, scopeEmployeeId])
 
@@ -236,7 +242,7 @@ export default function AllAssets() {
       const next = { ...current, search: value || undefined }
       filtersRef.current = next
       debounceRef.current = setTimeout(() => {
-        void fetchAssets(next)
+        void fetchAssets(next, { page: 1, pageSize })
       }, SEARCH_DEBOUNCE_MS)
       return next
     })
@@ -247,7 +253,7 @@ export default function AllAssets() {
     setFilters((current) => {
       const next = { ...current, ...partial }
       filtersRef.current = next
-      void fetchAssets(next)
+      void fetchAssets(next, { page: 1, pageSize })
       return next
     })
   }
@@ -285,18 +291,17 @@ export default function AllAssets() {
 
   const handleRefresh = () => {
     if (debounceRef.current) clearTimeout(debounceRef.current)
-    void fetchAssets(filtersRef.current, {
-      limit: Math.max(PAGE_SIZE, assets.length || PAGE_SIZE),
-    })
+    void fetchAssets(filtersRef.current, { page: currentPage, pageSize })
   }
 
-  const handleLoadMore = () => {
-    if (loading || loadingMore || !hasMoreAssets) return
-    void fetchAssets(filtersRef.current, {
-      append: true,
-      offset: assets.length,
-      limit: PAGE_SIZE,
-    })
+  const handlePageChange = (page: number) => {
+    if (loading || page === currentPage) return
+    void fetchAssets(filtersRef.current, { page, pageSize })
+  }
+
+  const handlePageSizeChange = (nextPageSize: number) => {
+    if (loading || nextPageSize === pageSize) return
+    void fetchAssets(filtersRef.current, { page: 1, pageSize: nextPageSize })
   }
 
   const handleViewQR = async (e: React.MouseEvent, asset: AssetInventoryRecord) => {
@@ -368,8 +373,11 @@ export default function AllAssets() {
     try {
       await softDeleteAssetById(asset.id)
       setDeleteTarget(null)
+      const nextTotal = Math.max(0, totalAssets - 1)
+      const lastPage = Math.max(1, Math.ceil(nextTotal / pageSize))
       await fetchAssets(filtersRef.current, {
-        limit: Math.max(PAGE_SIZE, assets.length || PAGE_SIZE),
+        page: Math.min(currentPage, lastPage),
+        pageSize,
       })
     } catch (err) {
       logDevError('assets.soft_delete', err)
@@ -412,6 +420,38 @@ export default function AllAssets() {
 
   return (
     <main className="min-h-screen bg-app text-primary px-4 sm:px-6 py-6 sm:py-8">
+      <PageHeaderActions
+        title="All Assets"
+        auxiliary={
+          <DataPagination
+            currentPage={currentPage}
+            totalCount={totalAssets}
+            pageSize={pageSize}
+            pageSizeOptions={PAGE_SIZE_OPTIONS}
+            loading={loading}
+            itemLabel="assets"
+            showSummary={false}
+            showNavigation={false}
+            onPageChange={handlePageChange}
+            onPageSizeChange={handlePageSizeChange}
+          />
+        }
+        actions={[
+          {
+            id: 'new-asset',
+            label: 'New Asset',
+            icon: 'plus',
+            onClick: () => navigate('/assets/new'),
+          },
+          {
+            id: 'scan-asset',
+            label: 'Scan Asset Now',
+            icon: 'scan',
+            onClick: () => navigate('/assets/scan'),
+          },
+        ]}
+      />
+
       <div className="mb-6 overflow-x-auto pb-1">
         <div className="flex min-w-max items-center gap-3">
           <div className="min-w-[260px] flex-1 sm:min-w-[320px]">
@@ -627,7 +667,7 @@ export default function AllAssets() {
       {!error && (
         <>
         <div
-          className={`overflow-x-auto rounded-xl border border-base transition-opacity ${(loading || loadingMore) ? 'opacity-60 pointer-events-none' : ''}`}
+          className={`overflow-x-auto rounded-xl border border-base transition-opacity ${loading ? 'opacity-60 pointer-events-none' : ''}`}
         >
           <table className="w-full min-w-[1000px] text-left text-sm">
             <thead className="bg-surface-2 text-subtle text-xs uppercase">
@@ -646,7 +686,7 @@ export default function AllAssets() {
                     if (asset.asset_tag) navigate(`/assets/${asset.asset_tag}`)
                   }}
                 >
-                  <td className="px-4 py-3 text-muted">{index + 1}</td>
+                  <td className="px-4 py-3 text-muted">{(currentPage - 1) * pageSize + index + 1}</td>
                   <td className="px-4 py-3 relative" onClick={(e) => e.stopPropagation()}>
                     {isAdmin ? (
                       <div className="relative inline-flex" data-asset-action-menu>
@@ -792,12 +832,16 @@ export default function AllAssets() {
             </tbody>
           </table>
         </div>
-        <LoadMorePagination
-          loadedCount={assets.length}
+        <DataPagination
+          currentPage={currentPage}
           totalCount={totalAssets}
-          loading={loadingMore}
+          pageSize={pageSize}
+          pageSizeOptions={PAGE_SIZE_OPTIONS}
+          loading={loading}
           itemLabel="assets"
-          onLoadMore={handleLoadMore}
+          showPageSizeSelector={false}
+          onPageChange={handlePageChange}
+          onPageSizeChange={handlePageSizeChange}
         />
         </>
       )}

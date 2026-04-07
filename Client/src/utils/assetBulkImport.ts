@@ -5,7 +5,7 @@ import { parseBooleanCell } from './employeeBulkImport'
 export const ASSET_IMPORT_TEMPLATE_HREF = '/asset-import-template.xlsx'
 
 /** Bump when columns or rules change; embedded in `metadata` on each create. */
-export const ASSET_IMPORT_TEMPLATE_VERSION = 1
+export const ASSET_IMPORT_TEMPLATE_VERSION = 2
 
 /** Safety limit for sequential `createAsset` calls. */
 export const ASSET_IMPORT_MAX_ROWS = 500
@@ -37,6 +37,13 @@ const FORBIDDEN_HEADERS = new Set([
   'holder',
   'holder_name',
 ])
+
+const HEADER_ALIASES: Record<string, string> = {
+  manufacturer: 'manufacturer_name',
+  location: 'location_name',
+}
+
+const CUSTOM_PREFIX = 'custom_'
 
 type CustomMeta = {
   field_key: string
@@ -114,10 +121,18 @@ const ALL_CUSTOM_KEYS_SORTED = Array.from(
   new Set(Object.values(CUSTOM_META_BY_CATEGORY).flatMap((defs) => defs.map((d) => d.field_key))),
 ).sort((a, b) => a.localeCompare(b))
 
-/** Core columns after optional `category_slug` (Mode A). */
+const CUSTOM_TYPE_HINT = new Map<string, CustomMeta['data_type']>()
+for (const defs of Object.values(CUSTOM_META_BY_CATEGORY)) {
+  for (const d of defs) {
+    if (!CUSTOM_TYPE_HINT.has(d.field_key)) CUSTOM_TYPE_HINT.set(d.field_key, d.data_type)
+  }
+}
+
+/** Core columns after optional category columns. */
 export const ASSET_IMPORT_CORE_COLUMNS = [
   'manufacturer_name',
   'category_name',
+  'category_slug',
   'model',
   'serial_number',
   'location_code',
@@ -131,10 +146,19 @@ export const ASSET_IMPORT_CORE_COLUMNS = [
 const PLACEHOLDER_EMPTY = new Set(['', 'n/a', 'na', '—', '-'])
 
 function normalizeHeaderCell(cell: unknown): string {
-  return String(cell ?? '')
+  const key = String(cell ?? '')
     .trim()
     .toLowerCase()
     .replace(/\s+/g, '_')
+  return HEADER_ALIASES[key] ?? key
+}
+
+function slugify(input: string): string {
+  return input
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
 }
 
 function isSimCategory(slug: string): boolean {
@@ -150,6 +174,10 @@ function cellTrimmed(line: unknown[], idx: number | undefined): string {
   return String(line[idx] ?? '').trim()
 }
 
+function isCellEmpty(raw: string): boolean {
+  return PLACEHOLDER_EMPTY.has(raw.trim().toLowerCase())
+}
+
 function isRowMeaningfullyEmpty(line: unknown[]): boolean {
   return line.every((c) => {
     const s = String(c ?? '').trim()
@@ -157,30 +185,28 @@ function isRowMeaningfullyEmpty(line: unknown[]): boolean {
   })
 }
 
-function coerceCustomField(
+function coerceByType(
   raw: string,
-  meta: CustomMeta,
+  dataType: CustomMeta['data_type'],
   rowLabel: string,
+  fieldKey: string,
 ): { ok: true; value: unknown } | { ok: false; message: string } {
   const t = raw.trim()
-  if (!t || PLACEHOLDER_EMPTY.has(t.toLowerCase())) {
-    if (meta.is_required) return { ok: false, message: `${rowLabel}: "${meta.field_key}" is required.` }
-    return { ok: true, value: undefined }
-  }
+  if (!t || isCellEmpty(t)) return { ok: true, value: undefined }
 
-  switch (meta.data_type) {
+  switch (dataType) {
     case 'number': {
       const n = Number(t.replace(/,/g, ''))
-      if (!Number.isFinite(n)) return { ok: false, message: `${rowLabel}: "${meta.field_key}" must be a number.` }
+      if (!Number.isFinite(n)) return { ok: false, message: `${rowLabel}: "${fieldKey}" must be a number.` }
       return { ok: true, value: n }
     }
     case 'boolean': {
       const b = parseBooleanCell(t, false)
-      if (!b.ok) return { ok: false, message: `${rowLabel}: "${meta.field_key}" — ${b.message}` }
+      if (!b.ok) return { ok: false, message: `${rowLabel}: "${fieldKey}" — ${b.message}` }
       return { ok: true, value: b.value }
     }
     case 'date': {
-      const iso = normalizeDateToIso(t, rowLabel, meta.field_key)
+      const iso = normalizeDateToIso(t, rowLabel, fieldKey)
       if (!iso.ok) return iso
       return { ok: true, value: iso.value }
     }
@@ -223,21 +249,16 @@ export type AssetImportParseResult =
   | { ok: false; errors: string[] }
 
 export type ParseAssetImportOptions = {
-  /**
-   * When set (New Asset — selected standard category): file must **not** include `category_slug`;
-   * every row uses this slug.
-   */
-  fixedCategorySlug?: string
+  /** Fallback category when sheet omits both `category_slug` and `category_name`. */
+  defaultCategorySlug?: string
 }
 
-/** Ordered header row for Mode B template / strict validation (no `category_slug`). */
 export function getExpectedHeadersModeB(): string[] {
-  return [...ASSET_IMPORT_CORE_COLUMNS, ...ALL_CUSTOM_KEYS_SORTED]
+  return [...ASSET_IMPORT_CORE_COLUMNS.filter((k) => k !== 'category_slug'), ...ALL_CUSTOM_KEYS_SORTED]
 }
 
-/** Mode A = includes `category_slug` first. */
 export function getExpectedHeadersModeA(): string[] {
-  return ['category_slug', ...getExpectedHeadersModeB()]
+  return [...ASSET_IMPORT_CORE_COLUMNS, ...ALL_CUSTOM_KEYS_SORTED]
 }
 
 export function isBulkImportAllowedCategorySlug(slug: string | null | undefined): boolean {
@@ -245,9 +266,34 @@ export function isBulkImportAllowedCategorySlug(slug: string | null | undefined)
   return ALLOWLIST.has(slug)
 }
 
+function resolveCategoryForRow(
+  line: unknown[],
+  idx: Record<string, number | undefined>,
+  defaultCategorySlug: string | undefined,
+): { slug: string; displayName?: string } | { error: string } {
+  const slugRaw = cellTrimmed(line, idx.category_slug)
+  const nameRaw = cellTrimmed(line, idx.category_name)
+
+  if (slugRaw) {
+    return {
+      slug: slugify(slugRaw),
+      ...(nameRaw ? { displayName: nameRaw } : {}),
+    }
+  }
+  if (nameRaw) {
+    const slug = slugify(nameRaw)
+    if (!slug) return { error: 'category_name is invalid.' }
+    return { slug, displayName: nameRaw }
+  }
+  if (defaultCategorySlug) {
+    return { slug: defaultCategorySlug }
+  }
+  return { error: 'category_slug or category_name is required.' }
+}
+
 /**
- * First row = headers. Data from row 2+. Headers: normalized like employee import.
- * Duplicate `(category_slug, serial_number)` in-file fails entire parse when serial is non-empty.
+ * First row = headers. Data from row 2+. Headers are normalized (lowercase, spaces => underscores).
+ * Known-category rows enforce strict seeded custom fields. Unknown categories can use `custom_*` columns.
  */
 export function parseAssetImportMatrix(
   matrix: unknown[][],
@@ -257,9 +303,9 @@ export function parseAssetImportMatrix(
     return { ok: false, errors: ['The spreadsheet is empty.'] }
   }
 
-  const fixed = options.fixedCategorySlug?.trim().toLowerCase()
-  if (fixed && !ALLOWLIST.has(fixed)) {
-    return { ok: false, errors: ['Bulk import is not available for this category.'] }
+  const fallback = options.defaultCategorySlug?.trim().toLowerCase()
+  if (fallback && fallback !== 'other' && !fallback.match(/^[a-z0-9-]+$/)) {
+    return { ok: false, errors: ['Invalid fallback category on import page.'] }
   }
 
   const headerRow = matrix[0] ?? []
@@ -269,22 +315,13 @@ export function parseAssetImportMatrix(
     if (key && !headerMap.has(key)) headerMap.set(key, idx)
   })
 
-  const hasCategoryCol = headerMap.has('category_slug')
-  if (fixed) {
-    if (hasCategoryCol) {
-      return {
-        ok: false,
-        errors: [
-          'This import uses the category selected on the page. Remove the "category_slug" column from the file, or use a multi-category template without a fixed category.',
-        ],
-      }
-    }
-  } else if (!hasCategoryCol) {
-    return { ok: false, errors: ['Missing required column: "category_slug".'] }
+  const hasCategorySlug = headerMap.has('category_slug')
+  const hasCategoryName = headerMap.has('category_name')
+  if (!hasCategorySlug && !hasCategoryName && !fallback) {
+    return { ok: false, errors: ['Provide category_name or category_slug in the file, or select a category on the page.'] }
   }
 
-  const allowedHeaderSet = new Set<string>([
-    ...(fixed ? [] : ['category_slug']),
+  const knownHeaderSet = new Set<string>([
     ...ASSET_IMPORT_CORE_COLUMNS,
     ...ALL_CUSTOM_KEYS_SORTED,
   ])
@@ -293,17 +330,22 @@ export function parseAssetImportMatrix(
   for (const [name] of headerMap) {
     if (FORBIDDEN_HEADERS.has(name)) {
       headerErrors.push(`Column "${name}" is not allowed on asset import (assignment belongs in the app).`)
-    } else if (!allowedHeaderSet.has(name)) {
-      headerErrors.push(`Unknown column "${name.replace(/_/g, ' ')}". Use the sample file headers only.`)
+      continue
     }
+    if (knownHeaderSet.has(name)) continue
+    if (name.startsWith(CUSTOM_PREFIX) && name.length > CUSTOM_PREFIX.length) continue
+    headerErrors.push(
+      `Unknown column "${name.replace(/_/g, ' ')}". Use the sample headers or custom_* columns for custom categories.`,
+    )
   }
   if (headerErrors.length) return { ok: false, errors: headerErrors }
 
   const idx: Record<string, number | undefined> = {}
-  for (const h of allowedHeaderSet) {
-    const i = headerMap.get(h)
-    if (i !== undefined) idx[h] = i
-  }
+  for (const [k, i] of headerMap) idx[k] = i
+
+  const customDynamicKeys = Array.from(headerMap.keys()).filter(
+    (k) => k.startsWith(CUSTOM_PREFIX) && k.length > CUSTOM_PREFIX.length,
+  )
 
   const dataRowCount = matrix.length - 1
   if (dataRowCount > ASSET_IMPORT_MAX_ROWS) {
@@ -315,33 +357,35 @@ export function parseAssetImportMatrix(
     }
   }
 
-  const dupBuckets = new Map<string, number[]>()
+  // Preflight duplicate serial uniqueness (global across the file)
+  const serialRows = new Map<string, number[]>()
+  const preflightErrors: string[] = []
   for (let i = 1; i < matrix.length; i += 1) {
     const excelRow = i + 1
     const line = matrix[i] ?? []
     if (isRowMeaningfullyEmpty(line as unknown[])) continue
 
-    const categorySlugRaw = fixed ?? cellTrimmed(line, idx.category_slug)
-    const cat = categorySlugRaw.trim().toLowerCase()
-    const serialRaw = cellTrimmed(line, idx.serial_number)
-    if (!cat || !ALLOWLIST.has(cat) || serialRaw === '') continue
+    const cat = resolveCategoryForRow(line, idx, fallback)
+    if ('error' in cat) {
+      preflightErrors.push(`Row ${excelRow}: ${cat.error}`)
+      continue
+    }
 
-    const dupKey = `${cat}\x00${serialRaw.toLowerCase()}`
-    const list = dupBuckets.get(dupKey)
-    if (list) list.push(excelRow)
-    else dupBuckets.set(dupKey, [excelRow])
+    const serial = cellTrimmed(line, idx.serial_number)
+    if (serial && !isCellEmpty(serial)) {
+      const key = serial.toLowerCase()
+      const rows = serialRows.get(key)
+      if (rows) rows.push(excelRow)
+      else serialRows.set(key, [excelRow])
+    }
   }
-
-  const dupErrors: string[] = []
-  for (const [, rowNums] of dupBuckets) {
-    if (rowNums.length < 2) continue
-    dupErrors.push(
-      `Duplicate category + serial in file (rows ${rowNums.join(', ')}). Fix before importing — no rows will be saved.`,
+  for (const [serial, rows] of serialRows) {
+    if (rows.length < 2) continue
+    preflightErrors.push(
+      `Duplicate serial_number "${serial}" in file (rows ${rows.join(', ')}). No rows were imported.`,
     )
   }
-  if (dupErrors.length) {
-    return { ok: false, errors: dupErrors }
-  }
+  if (preflightErrors.length) return { ok: false, errors: preflightErrors }
 
   const rows: AssetImportParsedRow[] = []
   const errors: string[] = []
@@ -353,54 +397,46 @@ export function parseAssetImportMatrix(
     if (isRowMeaningfullyEmpty(line as unknown[])) continue
 
     const rowErrors: string[] = []
+    const customPayload: Record<string, unknown> = {}
 
-    const categorySlugRaw = fixed ?? cellTrimmed(line, idx.category_slug)
-    const cat = categorySlugRaw.trim().toLowerCase()
-    if (!cat) {
-      errors.push(`${rowLabel}: category_slug is required.`)
+    const cat = resolveCategoryForRow(line, idx, fallback)
+    if ('error' in cat) {
+      errors.push(`${rowLabel}: ${cat.error}`)
       continue
     }
-    if (!ALLOWLIST.has(cat)) {
-      errors.push(
-        `${rowLabel}: category "${categorySlugRaw}" is not supported in bulk import. Use a standard category from the template, or create "Other" assets with the form.`,
-      )
-      continue
-    }
-
-    const serialRaw = cellTrimmed(line, idx.serial_number)
+    const categorySlug = cat.slug
+    const isKnownCategory = ALLOWLIST.has(categorySlug)
 
     const manufacturer = cellTrimmed(line, idx.manufacturer_name)
     const model = cellTrimmed(line, idx.model)
     const locationName = cellTrimmed(line, idx.location_name)
-    const serial = serialRaw
+    const serial = cellTrimmed(line, idx.serial_number)
     const purchase = cellTrimmed(line, idx.purchase_date)
     const warranty = cellTrimmed(line, idx.warranty_expiry)
     const notes = cellTrimmed(line, idx.notes)
-    const categoryNameOverride = cellTrimmed(line, idx.category_name)
+    const locationCode = cellTrimmed(line, idx.location_code)
 
-    if (!manufacturer || PLACEHOLDER_EMPTY.has(manufacturer.toLowerCase())) {
+    if (!manufacturer || isCellEmpty(manufacturer)) {
       rowErrors.push(`${rowLabel}: manufacturer_name is required (use N/A if not applicable).`)
     }
-    if (!isSimCategory(cat)) {
-      if (!model || PLACEHOLDER_EMPTY.has(model.toLowerCase())) {
-        rowErrors.push(`${rowLabel}: model is required (use N/A if not applicable).`)
-      }
+    if (!isSimCategory(categorySlug) && (!model || isCellEmpty(model))) {
+      rowErrors.push(`${rowLabel}: model is required (use N/A if not applicable).`)
     }
-    if (!locationName || PLACEHOLDER_EMPTY.has(locationName.toLowerCase())) {
+    if (!locationName || isCellEmpty(locationName)) {
       rowErrors.push(`${rowLabel}: location_name is required (use N/A if unknown).`)
     }
 
-    if (!isNetworkingCategory(cat)) {
-      if (!serial || PLACEHOLDER_EMPTY.has(serial.toLowerCase())) {
+    if (!isNetworkingCategory(categorySlug)) {
+      if (!serial || isCellEmpty(serial)) {
         rowErrors.push(`${rowLabel}: serial_number is required (use N/A if not available).`)
       }
-      if (!purchase || PLACEHOLDER_EMPTY.has(purchase.toLowerCase())) {
+      if (!purchase || isCellEmpty(purchase)) {
         rowErrors.push(`${rowLabel}: purchase_date is required (yyyy-mm-dd or similar).`)
       } else {
         const d = normalizeDateToIso(purchase, rowLabel, 'purchase_date')
         if (!d.ok) rowErrors.push(d.message)
       }
-      if (!warranty || PLACEHOLDER_EMPTY.has(warranty.toLowerCase())) {
+      if (!warranty || isCellEmpty(warranty)) {
         rowErrors.push(`${rowLabel}: warranty_expiry is required (yyyy-mm-dd or similar).`)
       } else {
         const d = normalizeDateToIso(warranty, rowLabel, 'warranty_expiry')
@@ -425,38 +461,57 @@ export function parseAssetImportMatrix(
       )
     }
 
-    const customPayload: Record<string, unknown> = {}
-    const validKeys = KEYS_BY_CATEGORY[cat]!
-    for (const meta of CUSTOM_META_BY_CATEGORY[cat]!) {
-      const colIdx = idx[meta.field_key]
-      const rawStr = cellTrimmed(line, colIdx)
-      const coerced = coerceCustomField(rawStr, meta, rowLabel)
-      if (!coerced.ok) {
-        rowErrors.push(coerced.message)
-        continue
+    if (isKnownCategory) {
+      const validKeys = KEYS_BY_CATEGORY[categorySlug]!
+      for (const meta of CUSTOM_META_BY_CATEGORY[categorySlug]!) {
+        const raw = cellTrimmed(line, idx[meta.field_key])
+        const coerced = coerceByType(raw, meta.data_type, rowLabel, meta.field_key)
+        if (!coerced.ok) {
+          rowErrors.push(coerced.message)
+          continue
+        }
+        if ((raw === '' || isCellEmpty(raw)) && meta.is_required) {
+          rowErrors.push(`${rowLabel}: "${meta.field_key}" is required.`)
+          continue
+        }
+        if (coerced.value !== undefined) customPayload[meta.field_key] = coerced.value
       }
-      if (coerced.value !== undefined) customPayload[meta.field_key] = coerced.value
+      for (const key of ALL_CUSTOM_KEYS_SORTED) {
+        if (validKeys.has(key)) continue
+        const raw = cellTrimmed(line, idx[key])
+        if (raw && !isCellEmpty(raw)) {
+          rowErrors.push(
+            `${rowLabel}: column "${key}" is not used for category "${categorySlug}". Leave it empty for this row.`,
+          )
+        }
+      }
+    } else {
+      // Custom category row: allow non-empty known keys + custom_* keys as custom_fields.
+      for (const key of ALL_CUSTOM_KEYS_SORTED) {
+        const raw = cellTrimmed(line, idx[key])
+        if (!raw || isCellEmpty(raw)) continue
+        const hinted = CUSTOM_TYPE_HINT.get(key) ?? 'text'
+        const coerced = coerceByType(raw, hinted, rowLabel, key)
+        if (!coerced.ok) rowErrors.push(coerced.message)
+        else if (coerced.value !== undefined) customPayload[key] = coerced.value
+      }
     }
 
-    for (const key of ALL_CUSTOM_KEYS_SORTED) {
-      if (validKeys.has(key)) continue
-      const colIdx = idx[key]
-      const stray = cellTrimmed(line, colIdx)
-      if (stray && !PLACEHOLDER_EMPTY.has(stray.toLowerCase())) {
-        rowErrors.push(
-          `${rowLabel}: column "${key}" is not used for category "${cat}". Leave it empty or use a multi-category file with the correct category_slug per row.`,
-        )
-      }
+    for (const dyn of customDynamicKeys) {
+      const raw = cellTrimmed(line, idx[dyn])
+      if (!raw || isCellEmpty(raw)) continue
+      const outputKey = dyn.slice(CUSTOM_PREFIX.length)
+      if (!outputKey) continue
+      customPayload[outputKey] = raw
     }
 
-    const locationCode = cellTrimmed(line, idx.location_code)
     let purchaseDateOut: string | undefined
     let warrantyOut: string | undefined
-    if (purchase && !PLACEHOLDER_EMPTY.has(purchase.toLowerCase())) {
+    if (purchase && !isCellEmpty(purchase)) {
       const d = normalizeDateToIso(purchase, rowLabel, 'purchase_date')
       if (d.ok) purchaseDateOut = d.value
     }
-    if (warranty && !PLACEHOLDER_EMPTY.has(warranty.toLowerCase())) {
+    if (warranty && !isCellEmpty(warranty)) {
       const d = normalizeDateToIso(warranty, rowLabel, 'warranty_expiry')
       if (d.ok) warrantyOut = d.value
     }
@@ -464,6 +519,7 @@ export function parseAssetImportMatrix(
     const metadata: Record<string, unknown> = {
       source: 'bulk_import',
       template_version: ASSET_IMPORT_TEMPLATE_VERSION,
+      category_mode: isKnownCategory ? 'predefined' : 'custom',
     }
     if (notes) metadata.notes = notes
 
@@ -473,15 +529,15 @@ export function parseAssetImportMatrix(
     }
 
     const input: AssetWriteInput = {
-      category_slug: cat,
-      ...(categoryNameOverride ? { category_name: categoryNameOverride } : {}),
+      category_slug: categorySlug,
+      ...(cat.displayName ? { category_name: cat.displayName } : {}),
       manufacturer_name: manufacturer,
-      model: isSimCategory(cat) ? model || undefined : model,
-      serial_number: isNetworkingCategory(cat) ? serial || undefined : serial || undefined,
+      model: isSimCategory(categorySlug) ? model || undefined : model || undefined,
+      serial_number: serial || undefined,
       location_code: locationCode || undefined,
       location_name: locationName,
-      purchase_date: isNetworkingCategory(cat) ? purchaseDateOut : purchaseDateOut,
-      warranty_expiry: isNetworkingCategory(cat) ? warrantyOut : warrantyOut,
+      purchase_date: purchaseDateOut,
+      warranty_expiry: warrantyOut,
       status: statusVal,
       custom_fields: customPayload,
       metadata,

@@ -12,7 +12,14 @@ import {
 } from './api'
 import { startTelemetryBuffer, trackTelemetryEvent } from './telemetry'
 import { getSessionEmployee, type SessionEmployee } from './api'
-import { applyDocumentPreferences, applyStoredPreferences, getInitialDensity, getInitialFont, getInitialTheme } from './utils/theme'
+import {
+  applyDocumentPreferences,
+  applyStoredPreferences,
+  getInitialDensity,
+  getInitialFont,
+  getInitialTextScale,
+  getInitialTheme,
+} from './utils/theme'
 import { getUserFacingMessage, logDevError } from './utils/errors'
 import AnimatedNavIcon from './components/common/AnimatedNavIcon'
 import Breadcrumbs from './components/common/Breadcrumbs'
@@ -76,8 +83,8 @@ function AppRoutes() {
 
   useEffect(() => {
     const onStorage = (event: StorageEvent) => {
-      if (!event.key || !['ams-theme', 'ams-density', 'ams-font'].includes(event.key)) return
-      applyDocumentPreferences(getInitialTheme(), getInitialDensity(), getInitialFont())
+      if (!event.key || !['ams-theme', 'ams-density', 'ams-font', 'ams-text-scale'].includes(event.key)) return
+      applyDocumentPreferences(getInitialTheme(), getInitialDensity(), getInitialFont(), getInitialTextScale())
     }
     window.addEventListener('storage', onStorage)
     return () => {

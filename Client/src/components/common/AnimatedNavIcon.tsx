@@ -4,6 +4,7 @@ export type IconName =
   | 'home'
   | 'guide'
   | 'boxes'
+  | 'box-3d'
   | 'scan'
   | 'edit'
   | 'users'
@@ -72,9 +73,20 @@ export default function AnimatedNavIcon({ name, className = '' }: { name: IconNa
   if (name === 'boxes') {
     return (
       <BaseIcon className={className}>
-        <path className="ai-box-shell" d="M21 8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.7l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z" />
-        <path className="ai-box-lid" d="m3.3 7 8.7 5 8.7-5" />
-        <path className="ai-box-center" d="M12 22V12" />
+        <path className="ai-box-shell" d="M7 8.5V8a5 5 0 0 1 10 0v.5" />
+        <rect className="ai-box-lid" x="4" y="8.5" width="16" height="11.5" rx="3" />
+        <path className="ai-box-center" d="M10 13h4" />
+        <path className="ai-box-center" d="M12 11v4" />
+      </BaseIcon>
+    )
+  }
+
+  if (name === 'box-3d') {
+    return (
+      <BaseIcon className={className}>
+        <path className="ai-box-shell" d="M12 3.5 20 8v8l-8 4.5L4 16V8Z" />
+        <path className="ai-box-lid" d="m4 8 8 4.5L20 8" />
+        <path className="ai-box-center" d="M12 21V12.5" />
       </BaseIcon>
     )
   }
@@ -94,10 +106,11 @@ export default function AnimatedNavIcon({ name, className = '' }: { name: IconNa
   if (name === 'users') {
     return (
       <BaseIcon className={className}>
-        <circle className="ai-user-head" cx="8.5" cy="7" r="3.2" />
-        <path className="ai-user-body" d="M2.5 20v-1a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v1" />
-        <path className="ai-user-plus-v" d="M20 8v6" />
-        <path className="ai-user-plus-h" d="M23 11h-6" />
+        <circle className="ai-user-head" cx="9" cy="8" r="4" />
+        <path className="ai-user-body" d="M3.5 20v-1.2a5.5 5.5 0 0 1 5.5-5.5h0a5.5 5.5 0 0 1 5.5 5.5V20" />
+        <path className="ai-fade-in" d="M7.6 9.1h.01" />
+        <path className="ai-fade-in" d="M10.4 9.1h.01" />
+        <path className="ai-move-up" d="M7.4 11.4a2.2 2.2 0 0 0 3.2 0" />
       </BaseIcon>
     )
   }

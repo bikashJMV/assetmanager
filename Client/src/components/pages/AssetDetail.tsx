@@ -8,6 +8,7 @@ import {
   softDeleteAssetById,
   type AssetAssignmentRecord,
   type AssetDetailRecord,
+  type EmployeeRecord,
 } from '../../api'
 import AssetForm from '../form/AssetForm'
 import Error from '../common/Error'
@@ -19,6 +20,7 @@ import AssetChangeHistory from '../asset/AssetChangeHistory'
 import InventoryStatusBadge from '../common/InventoryStatusBadge'
 import AnimatedNavIcon, { type IconName } from '../common/AnimatedNavIcon'
 import { useToast } from '../common/ToastProvider'
+import EmployeeAssignLookup from '../common/EmployeeAssignLookup'
 
 // function formatInventryStatus=(status:string)=>{
 //   if(status.toLowerCase()==='in_stock'){
@@ -51,7 +53,8 @@ export default function AssetDetail() {
   const [errorDebug, setErrorDebug] = useState<string | undefined>(undefined)
   const [loading, setLoading] = useState(true)
   const [showEdit, setShowEdit] = useState(false)
-  const [assignCode, setAssignCode] = useState('')
+  const [assignQuery, setAssignQuery] = useState('')
+  const [selectedAssignee, setSelectedAssignee] = useState<EmployeeRecord | null>(null)
   const [assignNotes, setAssignNotes] = useState('')
   const [actionLoading, setActionLoading] = useState(false)
   const [canManage, setCanManage] = useState(false)
@@ -109,8 +112,8 @@ export default function AssetDetail() {
       setError('Active admin access is required to assign assets')
       return
     }
-    if (!assignCode.trim()) {
-      setError('Employee code is required for assignment')
+    if (!selectedAssignee?.employee_code.trim()) {
+      setError('Select an employee from the suggestions before assigning this asset')
       return
     }
     setError('')
@@ -125,13 +128,14 @@ export default function AssetDetail() {
 
   const handleAssign = async () => {
     if (!detail?.asset.asset_tag) return
+    if (!selectedAssignee?.employee_code.trim()) return
     setActionLoading(true)
     setError('')
     setErrorDebug(undefined)
     try {
       const result = await assignAsset({
         asset_tag: detail.asset.asset_tag,
-        employee_code: assignCode.trim(),
+        employee_code: selectedAssignee.employee_code.trim(),
         notes: assignNotes.trim() || undefined,
       })
       const msg =
@@ -140,10 +144,12 @@ export default function AssetDetail() {
           : 'Asset assigned successfully.'
       showToast({ message: msg, variant: 'success' })
       setAssignDialogOpen(false)
-      setAssignCode('')
+      setAssignQuery('')
+      setSelectedAssignee(null)
       setAssignNotes('')
       await refresh()
     } catch (err) {
+      setAssignDialogOpen(false)
       logDevError('assetDetail.assign', err)
       setError(getUserFacingMessage(err, 'Unable to assign this asset right now.'))
       setErrorDebug(getErrorDebugDetail(err))
@@ -191,6 +197,7 @@ export default function AssetDetail() {
       setAssignNotes('')
       await refresh()
     } catch (err) {
+      setReturnDialogOpen(false)
       logDevError('assetDetail.return', err)
       setError(getUserFacingMessage(err, 'Unable to return this asset right now.'))
       setErrorDebug(getErrorDebugDetail(err))
@@ -242,6 +249,7 @@ export default function AssetDetail() {
     .map((value) => formatDisplay(value))
     .filter((value) => value !== '-')
     .join(' ') || '-'
+  const selectedAssigneeLabel = formatEmployeeAssignSummary(selectedAssignee)
 
   return (
     <main className="min-h-screen bg-app text-primary px-4 sm:px-6 py-6 sm:py-8">
@@ -291,6 +299,7 @@ export default function AssetDetail() {
           </div>
         </div>
 
+        {canManage ? (
         <section className="bg-surface border border-base rounded-xl p-4 sm:p-5">
           <h2 className="text-sm font-semibold uppercase tracking-[0.14em] text-subtle mb-2">Assign or return</h2>
           <p className="text-xs text-subtle mb-3 leading-relaxed">
@@ -299,24 +308,28 @@ export default function AssetDetail() {
               : 'Read-only: you can view this asset but cannot change custody. Admin or IT Ops access is required to assign or return.'}
           </p>
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
-            <input
-              value={assignCode}
-              onChange={(e) => setAssignCode(e.target.value)}
-              placeholder="Employee Code (e.g., EMP0001)"
-              disabled={!canManage}
-              className="w-full bg-surface-2 border border-base rounded-lg px-3 py-2.5 text-sm"
+            <EmployeeAssignLookup
+              id="asset-detail-assignee"
+              label="Employee"
+              value={assignQuery}
+              onChange={setAssignQuery}
+              selectedEmployee={selectedAssignee}
+              onSelectedEmployeeChange={setSelectedAssignee}
+              placeholder="Search by user name or employee code"
+              hideLabel
+              disabled={actionLoading}
             />
             <input
               value={assignNotes}
               onChange={(e) => setAssignNotes(e.target.value)}
               placeholder="Optional notes"
-              disabled={!canManage}
+              disabled={actionLoading}
               className="w-full bg-surface-2 border border-base rounded-lg px-3 py-2.5 text-sm"
             />
             <div className="flex gap-2">
               <button
                 onClick={openAssignDialog}
-                disabled={actionLoading || !canManage}
+                disabled={actionLoading}
                 className="flex-1 bg-accent text-white font-semibold px-3 py-2.5 rounded-lg text-sm disabled:opacity-60"
                 type="button"
               >
@@ -324,7 +337,7 @@ export default function AssetDetail() {
               </button>
               <button
                 onClick={openReturnDialog}
-                disabled={actionLoading || !openAssignment || !canManage}
+                disabled={actionLoading || !openAssignment}
                 className="flex-1 border border-base text-muted px-3 py-2.5 rounded-lg text-sm hover:bg-surface-2 disabled:opacity-60"
                 type="button"
               >
@@ -337,6 +350,7 @@ export default function AssetDetail() {
           </p>
           {error ? <p className="text-accent text-sm mt-2">{error}</p> : null}
         </section>
+        ) : null}
 
         <Section
           title="Assignment Summary"
@@ -361,11 +375,11 @@ export default function AssetDetail() {
             <Info label="Model" value={formatDisplay(asset.model)} />
             <Info label="Serial Number" value={formatDisplay(asset.serial_number)} />
             <Info label="Location" value={formatDisplay(asset.location_name)} />
-            <Info label="Inventory Status" value={formatDisplay(asset.status)} />
+            <Info label="Inventory Status" value={formatEnumLabel(asset.status)} />
             <Info label="Purchase Date" value={formatDisplay(asset.purchase_date)} />
             <Info label="Warranty Expiry" value={formatDisplay(asset.warranty_expiry)} />
-            <Info label="Created by (auth user)" value={formatAuthUserRef(asset.created_by)} />
-            <Info label="Last updated by (auth user)" value={formatAuthUserRef(asset.updated_by)} />
+            <Info label="Created by" value={formatAuditActorDisplay(detail.audit_actors.created_by)} />
+            <Info label="Last updated by" value={formatAuditActorDisplay(detail.audit_actors.updated_by)} />
           </div>
         </Section>
 
@@ -490,7 +504,7 @@ export default function AssetDetail() {
       <ConfirmDialog
         open={assignDialogOpen}
         title="Assign Asset"
-        message={`Assign ${detail.asset.asset_tag || 'this asset'} to ${assignCode.trim()}?${assignNotes.trim() ? ` Notes: ${assignNotes.trim()}` : ''}`}
+        message={`Assign ${detail.asset.asset_tag || 'this asset'} to ${selectedAssigneeLabel || assignQuery.trim()}?${assignNotes.trim() ? ` Notes: ${assignNotes.trim()}` : ''}`}
         confirmLabel="Confirm Assign"
         loading={actionLoading}
         showDismissIcon
@@ -580,6 +594,37 @@ function Info({ label, value }: { label: string; value: string }) {
 function formatAuthUserRef(id: string | null | undefined): string {
   if (!id) return '—'
   return id.length > 10 ? `${id.slice(0, 8)}…` : id
+}
+
+function formatAuditActorDisplay(
+  actor: AssetDetailRecord['audit_actors']['created_by'] | AssetDetailRecord['audit_actors']['updated_by'],
+): string {
+  if (!actor) return '-'
+
+  const name = actor.name?.trim()
+  const employeeCode = actor.employee_code?.trim()
+
+  if (name && employeeCode) {
+    return `${name} - ${employeeCode}`
+  }
+
+  if (name) return name
+  if (employeeCode) return employeeCode
+
+  return formatAuthUserRef(actor.auth_user_id)
+}
+
+function formatEmployeeAssignSummary(employee: EmployeeRecord | null): string {
+  if (!employee) return ''
+
+  const name = employee.name.trim()
+  const employeeCode = employee.employee_code.trim()
+
+  if (name && employeeCode) {
+    return `${name} (${employeeCode})`
+  }
+
+  return name || employeeCode
 }
 
 function AssignmentRow({ entry }: { entry: AssetAssignmentRecord }) {

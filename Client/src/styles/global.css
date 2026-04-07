@@ -1,25 +1,27 @@
 /* Global density tokens */
 :root {
-  --text-scale: 1;
+  --density-text-scale: 1;
+  --user-text-scale: 1;
+  --text-scale: calc(var(--density-text-scale) * var(--user-text-scale));
   --app-font-family: 'Segoe UI Variable', 'Segoe UI', 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif;
   --app-letter-spacing: 0;
   --app-line-height: 1.5;
 }
 
 :root[data-density='compact'] {
-  --text-scale: 0.94;
+  --density-text-scale: 0.94;
 }
 
 :root[data-density='normal'] {
-  --text-scale: 1;
+  --density-text-scale: 1;
 }
 
 :root[data-density='large'] {
-  --text-scale: 1.07;
+  --density-text-scale: 1.07;
 }
 
 :root[data-density='spacious'] {
-  --text-scale: 1.14;
+  --density-text-scale: 1.14;
 }
 
 :root[data-font='claude'] {
@@ -144,6 +146,10 @@
   select option {
     color: var(--text);
     background-color: var(--surface-2);
+  }
+
+  input[type='range'] {
+    accent-color: var(--accent);
   }
 
   html, body, #root {

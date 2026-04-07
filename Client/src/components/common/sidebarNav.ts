@@ -27,13 +27,28 @@ export type SidebarNavActionKind =
   | 'font-mono'
   | 'font-serif'
 
+export type SidebarNavControlKind = 'font-scale'
+
 export type SidebarNavAction = SidebarNavCommon & {
   type: 'action'
   icon: IconName
   action: SidebarNavActionKind
 }
 
-export type SidebarNavGroupChild = SidebarNavLink | SidebarNavAction
+export type SidebarNavControl = SidebarNavCommon & {
+  type: 'control'
+  icon: IconName
+  control: SidebarNavControlKind
+}
+
+export type SidebarNavNestedGroup = SidebarNavCommon & {
+  type: 'nested-group'
+  icon: IconName
+  defaultOpen?: boolean
+  children: Array<SidebarNavLink | SidebarNavAction | SidebarNavControl>
+}
+
+export type SidebarNavGroupChild = SidebarNavLink | SidebarNavAction | SidebarNavControl | SidebarNavNestedGroup
 
 export type SidebarNavGroup = SidebarNavCommon & {
   type: 'group'
@@ -56,29 +71,8 @@ export const sidebarSections: SidebarNavSection[] = [
     title: 'Main',
     items: [
       { id: 'home', type: 'link', label: 'Home', to: '/', icon: 'home', matchPrefix: false },
-      {
-        id: 'assets',
-        type: 'group',
-        label: 'Assets',
-        icon: 'boxes',
-        defaultOpen: true,
-        children: [
-          { id: 'all-assets', type: 'link', label: 'All Assets', to: '/assets', icon: 'boxes', matchPrefix: true },
-          { id: 'scan-asset', type: 'link', label: 'Scan QR', to: '/assets/scan', icon: 'scan', matchPrefix: true },
-          { id: 'new-asset', type: 'link', label: 'New Asset', to: '/assets/new', icon: 'plus', tone: 'accent', visibility: 'manage' },
-        ],
-      },
-      {
-        id: 'employees',
-        type: 'group',
-        label: 'Employees',
-        icon: 'users',
-        defaultOpen: true,
-        children: [
-          { id: 'all-employees', type: 'link', label: 'Employees', to: '/employee', icon: 'users', matchPrefix: true },
-          { id: 'new-employee', type: 'link', label: 'New Employee', to: '/employee/new', icon: 'plus', tone: 'accent', visibility: 'manage' },
-        ],
-      },
+      { id: 'assets', type: 'link', label: 'Assets', to: '/assets', icon: 'box-3d', matchPrefix: true },
+      { id: 'employees', type: 'link', label: 'Employees', to: '/employee', icon: 'users', matchPrefix: true },
     ],
   },
   {
@@ -87,31 +81,36 @@ export const sidebarSections: SidebarNavSection[] = [
     items: [
       { id: 'analysis', type: 'link', label: 'Analysis', to: '/analysis', icon: 'chart-column', visibility: 'authenticated' },
       // { id: 'notifications', type: 'link', label: 'Notifications', to: '/notifications', icon: 'bell', visibility: 'authenticated' },
-      { id: 'recycle-bin', type: 'link', label: 'Recycle Bin', to: '/recycle-bin', icon: 'trash', visibility: 'manage' },
-      { id: 'theme-toggle', type: 'action', label: 'Theme: Light/Dark', icon: 'settings', action: 'toggle-theme' },
-      { id: 'guide', type: 'link', label: 'Guide', to: '/guide', icon: 'guide' },
       {
-        id: 'text-layout',
+        id: 'settings',
         type: 'group',
-        label: 'Text Layout',
-        icon: 'text-layout',
+        label: 'Settings',
+        icon: 'settings',
         children: [
-          { id: 'density-tight', type: 'action', label: 'Tight', icon: 'text-layout', action: 'density-compact' },
-          { id: 'density-usual', type: 'action', label: 'Usual', icon: 'text-layout', action: 'density-normal' },
-          { id: 'density-big', type: 'action', label: 'Big', icon: 'text-layout', action: 'density-large' },
-          { id: 'density-airy', type: 'action', label: 'Airy', icon: 'text-layout', action: 'density-spacious' },
-        ],
-      },
-      {
-        id: 'text-font',
-        type: 'group',
-        label: 'Text Font',
-        icon: 'text-font',
-        children: [
-          { id: 'font-claude', type: 'action', label: 'Claude', icon: 'text-font', action: 'font-claude' },
-          { id: 'font-clean', type: 'action', label: 'Clean', icon: 'text-font', action: 'font-clean' },
-          { id: 'font-mono', type: 'action', label: 'Mono', icon: 'text-font', action: 'font-mono' },
-          { id: 'font-serif', type: 'action', label: 'Serif', icon: 'text-font', action: 'font-serif' },
+          { id: 'recycle-bin', type: 'link', label: 'Recycle Bin', to: '/recycle-bin', icon: 'trash', visibility: 'manage' },
+          { id: 'guide', type: 'link', label: 'Guide', to: '/guide', icon: 'guide' },
+          { id: 'theme-toggle', type: 'action', label: 'Theme: Light/Dark', icon: 'settings', action: 'toggle-theme' },
+          {
+            id: 'text-layout',
+            type: 'nested-group',
+            label: 'Text UI',
+            icon: 'text-layout',
+            children: [
+              { id: 'font-scale-slider', type: 'control', label: 'Scale', icon: 'text-layout', control: 'font-scale' },
+            ],
+          },
+          {
+            id: 'text-font',
+            type: 'nested-group',
+            label: 'Font Family',
+            icon: 'text-font',
+            children: [
+              { id: 'font-claude', type: 'action', label: 'Claude', icon: 'text-font', action: 'font-claude' },
+              { id: 'font-clean', type: 'action', label: 'Clean', icon: 'text-font', action: 'font-clean' },
+              { id: 'font-mono', type: 'action', label: 'Mono', icon: 'text-font', action: 'font-mono' },
+              { id: 'font-serif', type: 'action', label: 'Serif', icon: 'text-font', action: 'font-serif' },
+            ],
+          },
         ],
       },
     ],

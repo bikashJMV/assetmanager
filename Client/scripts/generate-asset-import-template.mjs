@@ -8,6 +8,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const core = [
   'manufacturer_name',
   'category_name',
+  'category_slug',
   'model',
   'serial_number',
   'location_code',
@@ -60,15 +61,16 @@ const ws = XLSX.utils.aoa_to_sheet(importData)
 XLSX.utils.book_append_sheet(wb, ws, 'Import')
 
 const readme = [
-  ['Asset bulk import (v1)'],
+  ['Asset bulk import (v2)'],
   [''],
   ['Use the Import sheet. Row 1 = headers; add your data from row 2 onward.'],
-  ['Do not add a category_slug column when importing from the New Asset page (category comes from the UI).'],
-  ['For multi-category files (advanced), include category_slug as the first column — not used by the current UI flow.'],
+  ['Provide category_name or category_slug per row (mixed/predefined/custom categories supported).'],
+  ['If both category_name and category_slug are blank, page-selected category is used as fallback.'],
+  ['For custom fields in custom categories, use columns prefixed with custom_ (example: custom_band, custom_vendor).'],
   ['Dates: yyyy-mm-dd. Booleans: true/false. Empty or N/A = optional field omitted.'],
   ['asset_tag is system-generated; do not add a column for it.'],
-  ['Reject: duplicate (category + serial) within the same file; employee/assignment columns.'],
-  ['template_version in app: 1'],
+  ['Reject: duplicate serial_number within the same file; employee/assignment columns; unknown random headers.'],
+  ['template_version in app: 2'],
 ]
 const wsR = XLSX.utils.aoa_to_sheet(readme)
 XLSX.utils.book_append_sheet(wb, wsR, 'Readme')

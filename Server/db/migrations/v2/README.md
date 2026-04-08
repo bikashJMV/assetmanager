@@ -22,6 +22,7 @@ Apply the files in this exact order:
 16. `16_employee_erp_active.sql`
 17. `17_fn_public_scan_minimal.sql`
 18. `18_asset_event_audit_diffs.sql`
+19. `19_assign_same_employee_error.sql`
 
 ## Important invariants
 
@@ -39,6 +40,7 @@ Apply the files in this exact order:
 - `16_employee_erp_active.sql` appends new columns when replacing `v_asset_inventory`; changing view column order incorrectly can break `CREATE OR REPLACE VIEW`.
 - `17_fn_public_scan_minimal.sql` keeps anonymous scan payloads minimal and restores `qr_scanned` lifecycle logging.
 - `18_asset_event_audit_diffs.sql` adds richer audit payloads, actor snapshots, field-level diffs, and explicit delete/restore event types.
+- `19_assign_same_employee_error.sql` turns same-holder assignment attempts into a validation error instead of a success-style no-op.
 
 ## Re-run guidance
 

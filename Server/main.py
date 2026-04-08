@@ -7,6 +7,7 @@ import time
 from fastapi import FastAPI, HTTPException, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from core.auth import require_backend_api_key, _resolve_request_role
+from core.middleware import EnvelopeMiddleware, RequestIdMiddleware
 from core.settings import settings
 from core.errors import custom_http_exception_handler, generic_exception_handler
 from core.deps import get_db
@@ -19,7 +20,10 @@ def create_app() -> FastAPI:
         version="2.0.0"
     )
 
-    # CORS Setup
+    # Middleware stack (last added = outermost = runs first)
+    # Execution order: CORS → Envelope → RequestId → route handler
+    app.add_middleware(RequestIdMiddleware)
+    app.add_middleware(EnvelopeMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.ALLOWED_ORIGINS,

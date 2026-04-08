@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { getSession, hasActiveItOpsAccess } from '../../api'
+import { fetchEnveloped } from '../../utils/apiEnvelope'
 
 export default function Analysis() {
   return (
@@ -72,15 +73,10 @@ function AnalysisInner() {
           return
         }
 
-        const resp = await fetch(`${backendBase}/analysis?limit=${pageSize}&offset=0`, {
-          headers: { authorization: `Bearer ${token}` },
-        })
-        if (!resp.ok) {
-          const text = await resp.text()
-          throw new Error(text || `Request failed: ${resp.status}`)
-        }
-
-        const data = (await resp.json()) as { events?: TelemetryEventRow[] }
+        const { data } = await fetchEnveloped<{ events?: TelemetryEventRow[] }>(
+          `${backendBase}/analysis?limit=${pageSize}&offset=0`,
+          { headers: { authorization: `Bearer ${token}` } },
+        )
         const next = Array.isArray(data.events) ? data.events : []
 
         if (!mounted) return
@@ -111,15 +107,10 @@ function AnalysisInner() {
       if (!token) throw new Error('Missing session token.')
 
       const nextOffset = offset + pageSize
-      const resp = await fetch(`${backendBase}/analysis?limit=${pageSize}&offset=${nextOffset}`, {
-        headers: { authorization: `Bearer ${token}` },
-      })
-      if (!resp.ok) {
-        const text = await resp.text()
-        throw new Error(text || `Request failed: ${resp.status}`)
-      }
-
-      const data = (await resp.json()) as { events?: TelemetryEventRow[] }
+      const { data } = await fetchEnveloped<{ events?: TelemetryEventRow[] }>(
+        `${backendBase}/analysis?limit=${pageSize}&offset=${nextOffset}`,
+        { headers: { authorization: `Bearer ${token}` } },
+      )
       const next = Array.isArray(data.events) ? data.events : []
 
       setEvents((prev) => [...prev, ...next])

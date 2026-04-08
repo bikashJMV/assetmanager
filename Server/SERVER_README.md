@@ -98,6 +98,70 @@ Useful URLs:
 - Asset, employee, log, and assignment write routes require a valid bearer token with the appropriate employee role.
 - `GET /analysis` requires an IT Ops bearer token and then calls `TelemetryServer/` server-to-server.
 
+## API response envelope (v2)
+
+All routes support an optional **standardized response envelope**. The envelope is transparent — v1 callers are not affected.
+
+### How to opt in
+
+| Method | Example |
+| --- | --- |
+| **Path prefix** | `GET /v2/assets` instead of `GET /assets` |
+| **Request header** | `X-Response-Envelope: true` on any existing route |
+
+### Envelope shape
+
+**Success**
+
+```json
+{
+  "status_code": 200,
+  "status": true,
+  "message": "Request successful.",
+  "data": { /* original route response */ },
+  "meta": {
+    "request_id": "uuid",
+    "timestamp": "ISO-8601",
+    "count": 3
+  }
+}
+```
+
+**Error**
+
+```json
+{
+  "status_code": 400,
+  "status": false,
+  "message": "Human-readable message",
+  "data": null,
+  "error": { "code": "BAD_REQUEST", "detail": "..." },
+  "meta": {
+    "request_id": "uuid",
+    "timestamp": "ISO-8601",
+    "count": 0
+  }
+}
+```
+
+### `meta.count` rules
+
+| Scenario | `count` value |
+| --- | --- |
+| `data` is a list | Length of the list |
+| `data` is a single object | `1` |
+| `data` is `null` (error or empty) | `0` |
+
+### Request tracing
+
+Every response includes an `x-request-id` header. Pass your own via `X-Request-Id` to propagate a trace ID through logs and response metadata.
+
+### Contract tests
+
+```bash
+python -m pytest tests/test_envelope.py -v
+```
+
 ## Behavior notes
 
 - This server bypasses RLS because it uses the Supabase service-role key.

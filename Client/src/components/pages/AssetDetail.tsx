@@ -139,6 +139,8 @@ export default function AssetDetail() {
     () => detail?.assignments.find((entry) => entry.returned_at === null) || null,
     [detail]
   )
+  const currentHolderCode = openAssignment?.employee?.employee_code.trim().toUpperCase() ?? ''
+  const selectedAssigneeCode = selectedAssignee?.employee_code.trim().toUpperCase() ?? ''
   const visibleLifecycleEvents = useMemo(
     () =>
       detail?.lifecycle_events.filter(
@@ -155,6 +157,14 @@ export default function AssetDetail() {
     }
     if (!selectedAssignee?.employee_code.trim()) {
       setError('Select an employee from the suggestions before assigning this asset')
+      return
+    }
+    if (currentHolderCode && selectedAssigneeCode === currentHolderCode) {
+      setError(
+        openAssignment?.employee?.name?.trim()
+          ? `${detail.asset.asset_tag || 'This asset'} is already assigned to ${openAssignment.employee.name.trim()}.`
+          : 'This asset is already assigned to the selected employee.',
+      )
       return
     }
     setError('')

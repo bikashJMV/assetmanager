@@ -13,6 +13,7 @@ import Loader from '../common/Loader'
 import InfoHint from '../common/InfoHint'
 import IconActionButton from '../common/IconActionButton'
 import AnimatedNavIcon, { type IconName } from '../common/AnimatedNavIcon'
+import RowActionMenu from '../common/RowActionMenu'
 import {
   getCurrentEmployeeAssets,
   getAssets,
@@ -315,29 +316,6 @@ export default function Employee() {
     window.localStorage.setItem(EMPLOYEE_VIEW_MODE_STORAGE_KEY, viewMode)
   }, [viewMode])
 
-  useEffect(() => {
-    if (!actionMenuEmployeeId) return
-
-    const onDocumentClick = (event: MouseEvent) => {
-      const target = event.target as HTMLElement | null
-      if (target?.closest?.('[data-employee-action-menu]')) return
-      setActionMenuEmployeeId(null)
-    }
-
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setActionMenuEmployeeId(null)
-      }
-    }
-
-    document.addEventListener('mousedown', onDocumentClick)
-    document.addEventListener('keydown', onKeyDown)
-    return () => {
-      document.removeEventListener('mousedown', onDocumentClick)
-      document.removeEventListener('keydown', onKeyDown)
-    }
-  }, [actionMenuEmployeeId])
-
   const handleSearchChange = (value: string) => {
     setFiltersInput((current) => {
       const nextInput = { ...current, search: value }
@@ -618,7 +596,7 @@ export default function Employee() {
   }
 
   return (
-    <main className="min-h-screen bg-app text-primary px-4 sm:px-6 py-6 sm:py-8">
+    <main className="flex min-h-screen flex-col bg-app px-4 py-6 text-primary sm:px-6 sm:py-8">
       <PageHeaderActions
         title="All Employees"
         auxiliary={
@@ -849,7 +827,7 @@ export default function Employee() {
         </div>
       ) : null}
 
-      <section className="min-w-0">
+      <section className="min-w-0 flex flex-1 flex-col">
         {!accessResolved || (loading && employees.length === 0) ? (
           <Loader embedded />
         ) : viewMode === 'table' ? (
@@ -980,17 +958,19 @@ export default function Employee() {
           </div>
         )}
 
-        <DataPagination
-          currentPage={currentPage}
-          totalCount={totalEmployees}
-          pageSize={pageSize}
-          pageSizeOptions={PAGE_SIZE_OPTIONS}
-          loading={loading}
-          itemLabel="employees"
-          showPageSizeSelector={false}
-          onPageChange={handlePageChange}
-          onPageSizeChange={handlePageSizeChange}
-        />
+        <div className="mt-auto">
+          <DataPagination
+            currentPage={currentPage}
+            totalCount={totalEmployees}
+            pageSize={pageSize}
+            pageSizeOptions={PAGE_SIZE_OPTIONS}
+            loading={loading}
+            itemLabel="employees"
+            showPageSizeSelector={false}
+            onPageChange={handlePageChange}
+            onPageSizeChange={handlePageSizeChange}
+          />
+        </div>
       </section>
 
       {editEmployee && (
@@ -1268,28 +1248,14 @@ function EmployeeActions({
 
   if (display === 'menu') {
     return (
-      <div className="relative inline-flex" data-employee-action-menu>
-        <button
-          type="button"
-          aria-label={`Open actions for ${employee.name}`}
-          aria-haspopup="menu"
-          aria-expanded={menuOpen ? 'true' : 'false'}
-          onClick={onMenuToggle}
-          className={`inline-flex h-9 w-9 items-center justify-center rounded-xl border transition ${
-            menuOpen
-              ? 'border-[color:var(--accent-soft)] bg-[color:var(--accent-soft)]/15 text-accent'
-              : 'border-base bg-surface text-muted hover:border-accent-soft hover:bg-[color:var(--accent-soft)]/15 hover:text-accent'
-          }`}
-        >
-          <MoreActionsIcon />
-        </button>
-
-        {menuOpen ? (
-          <div
-            role="menu"
-            aria-label={`Actions for ${employee.name}`}
-            className="absolute left-0 top-full z-30 mt-2 min-w-[220px] rounded-2xl border border-base bg-app p-1.5 shadow-[0_18px_48px_rgba(0,0,0,0.22)]"
-          >
+      <RowActionMenu
+        open={menuOpen}
+        onToggle={() => onMenuToggle?.()}
+        onClose={() => onMenuClose?.()}
+        triggerLabel={`Open actions for ${employee.name}`}
+        menuLabel={`Actions for ${employee.name}`}
+        triggerContent={<MoreActionsIcon />}
+      >
             {showYouBadge ? (
               <div className="px-3 pb-2 pt-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-subtle">
                 Your account
@@ -1320,9 +1286,7 @@ function EmployeeActions({
                 </span>
               </button>
             ))}
-          </div>
-        ) : null}
-      </div>
+      </RowActionMenu>
     )
   }
 

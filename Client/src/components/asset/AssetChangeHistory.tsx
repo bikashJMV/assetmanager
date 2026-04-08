@@ -48,11 +48,6 @@ const LIFECYCLE_EVENT_HINTS: Array<{
     accentClassName: 'text-rose-600',
     description: 'The asset was moved to the recycle bin.',
   },
-  {
-    label: 'QR Scanned',
-    accentClassName: 'text-accent',
-    description: 'The asset QR code was scanned to open or view its details.',
-  },
 ]
 
 function getInitialViewMode(): HistoryViewMode {

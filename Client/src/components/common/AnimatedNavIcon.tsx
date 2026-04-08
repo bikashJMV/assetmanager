@@ -6,6 +6,7 @@ export type IconName =
   | 'boxes'
   | 'box-3d'
   | 'scan'
+  | 'qr'
   | 'edit'
   | 'users'
   | 'plus'
@@ -99,6 +100,22 @@ export default function AnimatedNavIcon({ name, className = '' }: { name: IconNa
         <path className="ai-scan-bl" d="M4 16v3h3" />
         <path className="ai-scan-br" d="M20 16v3h-3" />
         <path className="ai-scan-line" d="M7 12h10" />
+      </BaseIcon>
+    )
+  }
+
+  if (name === 'qr') {
+    return (
+      <BaseIcon className={className}>
+        <rect x="3.5" y="3.5" width="6" height="6" rx="1.2" />
+        <rect x="14.5" y="3.5" width="6" height="6" rx="1.2" />
+        <rect x="3.5" y="14.5" width="6" height="6" rx="1.2" />
+        <path d="M14.5 14.5h2.5v2.5H14.5z" />
+        <path d="M18.5 14.5h2v2" />
+        <path d="M17 17h3.5" />
+        <path d="M12.5 11h2.5" />
+        <path d="M11 12.5h2.5" />
+        <path d="M14 12.5h1.5" />
       </BaseIcon>
     )
   }

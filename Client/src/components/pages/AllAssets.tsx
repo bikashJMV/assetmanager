@@ -5,9 +5,7 @@ import {
   getQrDataUriForAssetTag,
   getSessionEmployee,
   hasActiveAdminAccess,
-  hasActiveItOpsAccess,
   listCategories,
-  regenerateQrDataUriForAssetTag,
   softDeleteAssetById,
   type AssetFilters,
   type AssetInventoryRecord,
@@ -23,6 +21,7 @@ import DataPagination from '../common/DataPagination'
 import PageHeaderActions from '../common/PageHeaderActions'
 import AnimatedNavIcon, { type IconName } from '../common/AnimatedNavIcon'
 import InventoryStatusBadge, { getInventoryStatusTone } from '../common/InventoryStatusBadge'
+import RowActionMenu from '../common/RowActionMenu'
 import assetInfoHint from '../../data/assetInfoHint.json'
 import { getErrorDebugDetail, getUserFacingMessage, logDevError } from '../../utils/errors'
 import { formatDisplay, formatEnumLabel } from '../../utils/formatDisplay'
@@ -82,7 +81,6 @@ export default function AllAssets() {
   const [qrLoading, setQrLoading] = useState(false)
   const [categories, setCategories] = useState<CategoryRecord[]>([])
   const [isAdmin, setIsAdmin] = useState(false)
-  const [isItOps, setIsItOps] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<AssetInventoryRecord | null>(null)
   const [scopeEmployeeId, setScopeEmployeeId] = useState<string | null>(null)
   const [accessResolved, setAccessResolved] = useState(false)
@@ -175,18 +173,16 @@ export default function AllAssets() {
     let mounted = true
     void (async () => {
       try {
-        const [rows, adminAllowed, profile, itOpsAllowed] = await Promise.all([
+        const [rows, adminAllowed, profile] = await Promise.all([
           listCategories().catch(() => [] as CategoryRecord[]),
           hasActiveAdminAccess(),
           getSessionEmployee(),
-          hasActiveItOpsAccess(),
         ])
         if (!mounted) return
         const profileAdmin = Boolean(profile?.is_active && profile?.role !== 'employee')
         const effectiveAdmin = adminAllowed || profileAdmin
         setCategories(rows)
         setIsAdmin(effectiveAdmin)
-        setIsItOps(itOpsAllowed)
         setScopeEmployeeId(effectiveAdmin ? null : (profile?.id || null))
       } catch {
         // Keep UI usable even if categories fail.
@@ -216,24 +212,6 @@ export default function AllAssets() {
 
   useEffect(() => () => {
     if (debounceRef.current) clearTimeout(debounceRef.current)
-  }, [])
-
-  // Close action menu on outside click (click anywhere except the open popover).
-  useEffect(() => {
-    const onDocClick = (event: MouseEvent) => {
-      const target = event.target as HTMLElement | null
-      if (target?.closest?.('[data-asset-action-menu]')) return
-      setActionMenuId(null)
-    }
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setActionMenuId(null)
-    }
-    document.addEventListener('mousedown', onDocClick)
-    document.addEventListener('keydown', onKeyDown)
-    return () => {
-      document.removeEventListener('mousedown', onDocClick)
-      document.removeEventListener('keydown', onKeyDown)
-    }
   }, [])
 
   const handleSearchChange = (value: string) => {
@@ -419,7 +397,7 @@ export default function AllAssets() {
   }
 
   return (
-    <main className="min-h-screen bg-app text-primary px-4 sm:px-6 py-6 sm:py-8">
+    <main className="flex min-h-screen flex-col bg-app px-4 py-6 text-primary sm:px-6 sm:py-8">
       <PageHeaderActions
         title="All Assets"
         auxiliary={
@@ -437,16 +415,20 @@ export default function AllAssets() {
           />
         }
         actions={[
-          {
-            id: 'new-asset',
-            label: 'New Asset',
-            icon: 'plus',
-            onClick: () => navigate('/assets/new'),
-          },
+          ...(isAdmin
+            ? [
+                {
+                  id: 'new-asset',
+                  label: 'New Asset',
+                  icon: 'plus' as const,
+                  onClick: () => navigate('/assets/new'),
+                },
+              ]
+            : []),
           {
             id: 'scan-asset',
             label: 'Scan Asset Now',
-            icon: 'scan',
+            icon: 'scan' as const,
             onClick: () => navigate('/assets/scan'),
           },
         ]}
@@ -665,7 +647,7 @@ export default function AllAssets() {
       </FilterPopup>
 
       {!error && (
-        <>
+        <div className="flex flex-1 flex-col">
         <div
           className={`overflow-x-auto rounded-xl border border-base transition-opacity ${loading ? 'opacity-60 pointer-events-none' : ''}`}
         >
@@ -687,30 +669,16 @@ export default function AllAssets() {
                   }}
                 >
                   <td className="px-4 py-3 text-muted">{(currentPage - 1) * pageSize + index + 1}</td>
-                  <td className="px-4 py-3 relative" onClick={(e) => e.stopPropagation()}>
+                  <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                     {isAdmin ? (
-                      <div className="relative inline-flex" data-asset-action-menu>
-                        <button
-                          type="button"
-                          aria-label="Actions"
-                          title="Actions"
-                          aria-haspopup="menu"
-                          aria-expanded={actionMenuId === asset.id ? 'true' : 'false'}
-                          onClick={() => setActionMenuId((prev) => (prev === asset.id ? null : asset.id))}
-                          className={`inline-flex h-9 w-9 items-center justify-center rounded-xl border transition ${
-                            actionMenuId === asset.id
-                              ? 'border-[color:var(--accent-soft)] bg-[color:var(--accent-soft)]/15 text-accent'
-                              : 'border-base bg-surface text-muted hover:border-accent-soft hover:bg-[color:var(--accent-soft)]/15 hover:text-accent'
-                          }`}
-                        >
-                          <MoreActionsIcon />
-                        </button>
-                        {actionMenuId === asset.id ? (
-                          <div
-                            role="menu"
-                            aria-label={`Actions for ${formatDisplay(asset.asset_tag) || asset.model || 'asset'}`}
-                            className="absolute left-0 top-full z-30 mt-2 min-w-[220px] rounded-2xl border border-base bg-app p-1.5 shadow-[0_18px_48px_rgba(0,0,0,0.22)]"
-                          >
+                      <RowActionMenu
+                        open={actionMenuId === asset.id}
+                        onToggle={() => setActionMenuId((prev) => (prev === asset.id ? null : asset.id))}
+                        onClose={() => setActionMenuId(null)}
+                        triggerLabel={`Open actions for ${formatDisplay(asset.asset_tag) || asset.model || 'asset'}`}
+                        menuLabel={`Actions for ${formatDisplay(asset.asset_tag) || asset.model || 'asset'}`}
+                        triggerContent={<MoreActionsIcon />}
+                      >
                             <button
                               type="button"
                               onClick={(e) => {
@@ -781,9 +749,7 @@ export default function AllAssets() {
                                 {qrLoading ? 'Preparing QR...' : 'Download QR'}
                               </span>
                             </button>
-                          </div>
-                        ) : null}
-                      </div>
+                      </RowActionMenu>
                     ) : (
                       <span className="text-subtle text-xs">-</span>
                     )}
@@ -826,24 +792,26 @@ export default function AllAssets() {
               ))}
               {assets.length === 0 && (
                 <tr>
-                  <td colSpan={10} className="text-center py-10 text-subtle">No assets found</td>
+                  <td colSpan={10} className="text-center py-10 text-subtle">No assets, assigned to you</td>
                 </tr>
               )}
             </tbody>
           </table>
         </div>
-        <DataPagination
-          currentPage={currentPage}
-          totalCount={totalAssets}
-          pageSize={pageSize}
-          pageSizeOptions={PAGE_SIZE_OPTIONS}
-          loading={loading}
-          itemLabel="assets"
-          showPageSizeSelector={false}
-          onPageChange={handlePageChange}
-          onPageSizeChange={handlePageSizeChange}
-        />
-        </>
+          <div className="mt-auto">
+            <DataPagination
+              currentPage={currentPage}
+              totalCount={totalAssets}
+              pageSize={pageSize}
+              pageSizeOptions={PAGE_SIZE_OPTIONS}
+              loading={loading}
+              itemLabel="assets"
+              showPageSizeSelector={false}
+              onPageChange={handlePageChange}
+              onPageSizeChange={handlePageSizeChange}
+            />
+          </div>
+        </div>
       )}
 
       {qrModal && (
@@ -874,31 +842,6 @@ export default function AllAssets() {
               />
             </div>
             <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-2">
-              {isItOps ? (
-                <button
-                  onClick={async () => {
-                    setQrLoading(true)
-                    try {
-                      const newQrCode = await regenerateQrDataUriForAssetTag(qrModal.assetTag)
-                      setQrModal({
-                        assetTag: qrModal.assetTag,
-                        assetLabel: qrModal.assetLabel,
-                        qrCode: newQrCode,
-                      })
-                    } catch (err) {
-                      logDevError('assets.qr.regenerate', err)
-                      setError(getUserFacingMessage(err, 'Unable to regenerate QR right now.'))
-                    } finally {
-                      setQrLoading(false)
-                    }
-                  }}
-                  disabled={qrLoading}
-                  className="border border-[color:var(--accent-soft)] text-primary font-semibold px-6 py-2 rounded-lg hover:bg-surface-3 transition text-sm w-full"
-                  type="button"
-                >
-                  {qrLoading ? 'Regenerating...' : 'Regenerate QR'}
-                </button>
-              ) : null}
               <button
                 onClick={handleDownloadQr}
                 className="border border-base text-primary font-semibold px-6 py-2 rounded-lg hover:bg-surface-3 transition text-sm w-full inline-flex items-center justify-center"

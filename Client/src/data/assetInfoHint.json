@@ -6,8 +6,7 @@
       "heading": "Admin and IT Ops",
       "bullets": [
         "You see the full asset catalog. Search by tag, model, manufacturer, or holder; filter by inventory status and category; optionally hide rows where the current holder is ERP-inactive. Use Refresh to reload the grid.",
-        "Click a row to open that asset’s detail page. In Actions: View QR opens a dialog (Download saves the PNG); Edit goes to the same detail page; Delete moves the asset to the Recycle Bin after you confirm.",
-        "In the QR dialog, IT Ops users also get Regenerate QR if a code must be rebuilt from the server."
+        "Click a row to open that asset’s detail page. In Actions: View QR opens a dialog (Download saves the PNG); Edit goes to the same detail page; Delete moves the asset to the Recycle Bin after you confirm."
       ]
     },
     {

@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import {
   assignAsset,
   getAssetDetail,
+  getQrDataUriForAssetTag,
   hasActiveAdminAccess,
   returnAsset,
   softDeleteAssetById,
@@ -61,6 +62,9 @@ export default function AssetDetail() {
   const [assignDialogOpen, setAssignDialogOpen] = useState(false)
   const [returnDialogOpen, setReturnDialogOpen] = useState(false)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [qrDataUri, setQrDataUri] = useState<string | null>(null)
+  const [qrLoading, setQrLoading] = useState(false)
+  const [qrError, setQrError] = useState<string | null>(null)
   const { showToast } = useToast()
 
   const refresh = useCallback(async () => {
@@ -101,9 +105,46 @@ export default function AssetDetail() {
     }
   }, [])
 
+  useEffect(() => {
+    const assetTag = detail?.asset.asset_tag?.trim()
+    if (!assetTag) {
+      setQrDataUri(null)
+      setQrError(null)
+      setQrLoading(false)
+      return
+    }
+
+    let cancelled = false
+    setQrDataUri(null)
+    setQrError(null)
+    setQrLoading(true)
+
+    void getQrDataUriForAssetTag(assetTag)
+      .then((uri) => {
+        if (!cancelled) setQrDataUri(uri)
+      })
+      .catch((err) => {
+        if (!cancelled) setQrError(getUserFacingMessage(err, 'Unable to load QR'))
+      })
+      .finally(() => {
+        if (!cancelled) setQrLoading(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [detail?.asset.asset_tag])
+
   const openAssignment = useMemo(
     () => detail?.assignments.find((entry) => entry.returned_at === null) || null,
     [detail]
+  )
+  const visibleLifecycleEvents = useMemo(
+    () =>
+      detail?.lifecycle_events.filter(
+        (evt) => evt.event_type?.toLowerCase() !== 'qr_scanned',
+      ) ?? [],
+    [detail?.lifecycle_events],
   )
 
   const openAssignDialog = () => {
@@ -251,22 +292,33 @@ export default function AssetDetail() {
     .join(' ') || '-'
   const selectedAssigneeLabel = formatEmployeeAssignSummary(selectedAssignee)
 
+  const handleDownloadQr = () => {
+    if (!qrDataUri || !detail?.asset.asset_tag) return
+    const link = document.createElement('a')
+    link.href = qrDataUri
+    link.download = `${detail.asset.asset_tag}-qr.png`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+  }
+
   return (
-    <main className="min-h-screen bg-app text-primary px-4 sm:px-6 py-6 sm:py-8">
-      <div className="flex flex-wrap items-center gap-3">
-        {canManage ? (
-          <div className="flex items-center gap-2">
+    <main className="min-h-screen bg-app text-primary px-4 sm:px-6 py-4 sm:py-5">
+      <div className="max-w-7xl mx-auto flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <h1 className="sr-only">{formatDisplay(asset.asset_tag)}</h1>
+          <div className="flex items-center gap-2 ml-auto">
             <HeaderActionButton
               icon="edit"
               label="Edit Asset"
               onClick={() => setShowEdit(true)}
-              disabled={actionLoading}
+              disabled={actionLoading || !canManage}
             />
             <HeaderActionButton
               icon="trash"
               label="Delete Asset"
               onClick={() => setDeleteDialogOpen(true)}
-              disabled={actionLoading}
+              disabled={actionLoading || !canManage}
             />
             <HeaderActionButton
               icon="refresh-cw"
@@ -274,30 +326,90 @@ export default function AssetDetail() {
               onClick={() => void refresh()}
               disabled={actionLoading}
             />
-          </div>
-        ) : null}
-      </div>
-
-      <div className="max-w-7xl mx-auto mt-5 space-y-5">
-        <div className="bg-gradient-to-r from-[color:var(--surface-2)] via-[color:var(--bg)] to-[color:var(--surface-3)] px-4 sm:p-5 flex flex-col gap-4">
-          <p className="text-xs text-subtle leading-relaxed">
-            At-a-glance snapshot: lifecycle status, holder ERP entitlement when someone is assigned, and how this device is labeled in
-            inventory.
-          </p>
-          <div className="flex flex-wrap items-center gap-2">
-            <InventoryStatusBadge status={asset.status} size="md" />
-            {asset.current_employee_id ? (
-              <span className={`px-3 text-xs font-semibold rounded-full ${asset.current_employee_erp_active ? 'bg-surface border border-base text-muted' : 'bg-surface border border-base text-accent'}`}>
-                Holder ERP: {asset.current_employee_erp_active ? 'Active' : 'Inactive'}
-              </span>
-            ) : null}
-          </div>
-          <div>
-            <p className="text-muted text-xs uppercase tracking-wide">Inventory</p>
-            <p className="text-xl sm:text-2xl font-bold leading-tight">{assetTitle}</p>
-            <p className="text-sm text-subtle">Location: {formatDisplay(asset.location_name)}</p>
+            <HeaderActionButton
+              icon="download"
+              label="Download QR"
+              onClick={handleDownloadQr}
+              disabled={actionLoading || !qrDataUri}
+            />
           </div>
         </div>
+      </div>
+
+      <div className="max-w-7xl mx-auto mt-3 space-y-3">
+        <div className="grid grid-cols-1 lg:grid-cols-[1.7fr_0.8fr] gap-3 items-start">
+          <section className="rounded-xl border border-base bg-gradient-to-r from-[color:var(--surface-2)] via-[color:var(--bg)] to-[color:var(--surface-3)] px-3 py-3 sm:px-4 sm:py-4 flex flex-col gap-2.5">
+            <p className="text-xs text-subtle leading-relaxed">
+              Snapshot: status, holder ERP, and how this asset is labeled.
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <InventoryStatusBadge status={asset.status} size="md" />
+              {asset.current_employee_id ? (
+                <span className={`px-3 text-xs font-semibold rounded-full ${asset.current_employee_erp_active ? 'bg-surface border border-base text-muted' : 'bg-surface border border-base text-accent'}`}>
+                  Holder ERP: {asset.current_employee_erp_active ? 'Active' : 'Inactive'}
+                </span>
+              ) : null}
+            </div>
+            <div>
+              <p className="text-muted text-xs uppercase tracking-wide">Inventory</p>
+              <p className="text-xl sm:text-2xl font-bold leading-tight">{assetTitle}</p>
+              <p className="text-sm text-subtle">Location: {formatDisplay(asset.location_name)}</p>
+            </div>
+          </section>
+
+          <section className=" px-3 w-full lg:min-w-[36px]">
+            <div className="flex items-center justify-center min-h-[9.5rem]">
+              {qrLoading ? (
+                <div className="h-36 w-36 rounded-lg border border-base bg-surface-2 animate-pulse" />
+              ) : qrError ? (
+                <div className="text-xs text-accent text-center space-y-1">
+                  <p>{qrError}</p>
+                  <button
+                    type="button"
+                    className="text-accent font-semibold hover:underline"
+                    onClick={() => {
+                      if (!detail?.asset.asset_tag) return
+                      setQrError(null)
+                      setQrLoading(true)
+                      void getQrDataUriForAssetTag(detail.asset.asset_tag)
+                        .then((uri) => setQrDataUri(uri))
+                        .catch((err) => setQrError(getUserFacingMessage(err, 'Unable to load QR')))
+                        .finally(() => setQrLoading(false))
+                    }}
+                  >
+                    Retry
+                  </button>
+                </div>
+              ) : qrDataUri ? (
+                <img
+                  src={qrDataUri}
+                  alt={`QR for ${asset.asset_tag}`}
+                  className="h-36 w-36 rounded-lg border border-base bg-white"
+                />
+              ) : null}
+            </div>
+            
+          </section>
+        </div>
+
+        <Section
+          title="Inventory Details"
+          description="Identity, classification, location, warranty, and audit hints."
+        >
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            <Info label="Asset Tag" value={formatDisplay(asset.asset_tag)} />
+            <Info label="Category" value={formatDisplay(asset.category_name)} />
+            <Info label="Manufacturer" value={formatDisplay(asset.manufacturer_name)} />
+            <Info label="Model" value={formatDisplay(asset.model)} />
+            <Info label="Serial Number" value={formatDisplay(asset.serial_number)} />
+            <Info label="Location" value={formatDisplay(asset.location_name)} />
+            <Info label="Inventory Status" value={formatEnumLabel(asset.status)} />
+            <Info label="Purchase Date" value={formatDisplay(asset.purchase_date)} />
+            <Info label="Warranty Expiry" value={formatDisplay(asset.warranty_expiry)} />
+            <Info label="Created by" value={formatAuditActorDisplay(detail.audit_actors.created_by)} />
+            <Info label="Last updated by" value={formatAuditActorDisplay(detail.audit_actors.updated_by)} />
+          </div>
+        </Section>
 
         {canManage ? (
         <section className="bg-surface border border-base rounded-xl p-4 sm:p-5">
@@ -354,32 +466,13 @@ export default function AssetDetail() {
 
         <Section
           title="Assignment Summary"
-          description="The current open assignment only—who holds the asset now, when it started, and whether custody is still open. If no one is assigned, these fields stay empty."
+          description="Current holder, start time, and whether custody is still open."
         >
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <Info label="Current Holder" value={formatDisplay(asset.current_employee_name)} />
             <Info label="Current Holder Code" value={formatDisplay(asset.current_employee_code)} />
             <Info label="Assigned At" value={formatDateTime(asset.assigned_at)} />
             <Info label="Open Assignment" value={openAssignment ? 'Yes' : 'No'} />
-          </div>
-        </Section>
-
-        <Section
-          title="Inventory Details"
-          description="Canonical catalog data: identity, classification, location, warranty, in-stock status, and audit hints for who created or last edited this record in the app."
-        >
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            <Info label="Asset Tag" value={formatDisplay(asset.asset_tag)} />
-            <Info label="Category" value={formatDisplay(asset.category_name)} />
-            <Info label="Manufacturer" value={formatDisplay(asset.manufacturer_name)} />
-            <Info label="Model" value={formatDisplay(asset.model)} />
-            <Info label="Serial Number" value={formatDisplay(asset.serial_number)} />
-            <Info label="Location" value={formatDisplay(asset.location_name)} />
-            <Info label="Inventory Status" value={formatEnumLabel(asset.status)} />
-            <Info label="Purchase Date" value={formatDisplay(asset.purchase_date)} />
-            <Info label="Warranty Expiry" value={formatDisplay(asset.warranty_expiry)} />
-            <Info label="Created by" value={formatAuditActorDisplay(detail.audit_actors.created_by)} />
-            <Info label="Last updated by" value={formatAuditActorDisplay(detail.audit_actors.updated_by)} />
           </div>
         </Section>
 
@@ -438,7 +531,7 @@ export default function AssetDetail() {
 
         <Section
           title="Assignment History"
-          description="Every assign and return in order, with each holder’s ERP status on that row. Use it to see who had this asset assigned to them over time—not only who holds it today in the summary above."
+          description="All assigns/returns in order with holder ERP status."
         >
           <div className="overflow-x-auto rounded-lg border border-base">
             <table className="w-full min-w-[720px] text-sm">
@@ -470,13 +563,11 @@ export default function AssetDetail() {
           title="Lifecycle log"
           description={
             <>
-             <b>Note:</b> This timeline records what happened to the asset over time—new records, field changes, assignments and returns. Entries are
-              append-only (nothing is deleted or rewritten), so you can reconstruct custody and spot unusual patterns. Admins and IT Ops
-              can view the full log; other roles may see a limited or empty history.
+             Append-only timeline of changes, assignments, and returns. Admin/IT Ops see full history; others may see limited data.
             </>
           }
         >
-          <AssetChangeHistory events={detail.lifecycle_events} isCapped={detail.lifecycle_is_capped} />
+          <AssetChangeHistory events={visibleLifecycleEvents} isCapped={detail.lifecycle_is_capped} />
         </Section>
       </div>
 

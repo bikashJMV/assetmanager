@@ -2,7 +2,7 @@ import type { AuthChangeEvent, Session, User } from '@supabase/supabase-js'
 import QRCode from 'qrcode'
 import { supabase } from './supabaseClient'
 
-/** Production deploy origin embedded in QRs when `npm run build` runs (override with `VITE_PUBLIC_APP_ORIGIN`). */
+/** Default origin in all QRs unless `VITE_PUBLIC_APP_ORIGIN` is set (staging / fork). */
 const PRODUCTION_QR_APP_ORIGIN = 'https://web-assetmanager.vercel.app'
 
 export type SessionEmployee = {
@@ -1866,63 +1866,6 @@ export async function getQrDataUriForAssetTag(assetTag: string): Promise<string>
   }
 
   const asset = await getAssetIdentityByTag(normalizedTag)
-
-  const hasExplicitPublicOrigin =
-    typeof import.meta.env.VITE_PUBLIC_APP_ORIGIN === 'string' &&
-    import.meta.env.VITE_PUBLIC_APP_ORIGIN.trim() !== ''
-
-  // Stored `asset_logs.qr_code` embeds whatever origin existed at creation time (often localhost
-  // during dev). In production, always render a fresh QR from the current deployment origin so
-  // scans do not open stale hosts. With an explicit VITE_PUBLIC_APP_ORIGIN, same idea for previews.
-  const useStoredFromDb =
-    import.meta.env.VITE_TRUST_STORED_ASSET_QR === 'true' ||
-    (import.meta.env.DEV && !hasExplicitPublicOrigin)
-
-  if (useStoredFromDb) {
-    const { data, error } = await supabase
-      .from('asset_logs')
-      .select('qr_code,created_at')
-      .eq('asset_id', asset.id)
-      .not('qr_code', 'is', null)
-      .order('created_at', { ascending: false })
-      .limit(100)
-
-    ensureNoSupabaseError(error, 'Unable to fetch QR log')
-
-    const storedQr = (data ?? []).find(
-      (row) => typeof row?.qr_code === 'string' && row.qr_code.trim().length > 0
-    )?.qr_code
-
-    if (storedQr) return storedQr.trim()
-
-    const created = await createLogForAsset(
-      asset.id,
-      asset.asset_tag || normalizedTag,
-      'Auto-generated individual QR for asset'
-    )
-    if (typeof created?.qr_code === 'string' && created.qr_code.trim().length > 0) {
-      return created.qr_code.trim()
-    }
-  }
-
-  return buildAssetQrDataUri(asset.asset_tag || normalizedTag)
-}
-
-export async function regenerateQrDataUriForAssetTag(assetTag: string): Promise<string> {
-  await assertActiveItOpsAccess()
-
-  const normalizedTag = assetTag.trim()
-  if (!normalizedTag) {
-    throw new Error('Asset tag is required to generate QR')
-  }
-
-  const asset = await getAssetIdentityByTag(normalizedTag)
-  const created = await createLogForAsset(asset.id, asset.asset_tag, 'Regenerated individual QR for asset')
-
-  if (typeof created?.qr_code === 'string' && created.qr_code.trim().length > 0) {
-    return created.qr_code.trim()
-  }
-
   return buildAssetQrDataUri(asset.asset_tag || normalizedTag)
 }
 
@@ -2020,8 +1963,8 @@ async function createLogForAsset(assetId: string, assetTag: string, note: string
 
 /**
  * Origin embedded in asset QR codes (`/scan/{tag}`).
- * - **Production build:** `https://web-assetmanager.vercel.app` unless `VITE_PUBLIC_APP_ORIGIN` is set (staging / fork).
- * - **Development:** `window.location.origin`, or set `VITE_PUBLIC_APP_ORIGIN` for LAN phone testing.
+ * Defaults to `https://web-assetmanager.vercel.app` in dev and production so scans work from a phone
+ * even when the admin UI runs on localhost. Override with `VITE_PUBLIC_APP_ORIGIN` for staging/forks.
  */
 export function getScanPageBaseUrl(): string {
   const raw = import.meta.env.VITE_PUBLIC_APP_ORIGIN
@@ -2030,12 +1973,6 @@ export function getScanPageBaseUrl(): string {
     if (trimmed && /^https?:\/\//i.test(trimmed)) {
       return trimmed
     }
-  }
-  if (import.meta.env.PROD) {
-    return PRODUCTION_QR_APP_ORIGIN
-  }
-  if (typeof window !== 'undefined' && window.location?.origin) {
-    return window.location.origin
   }
   return PRODUCTION_QR_APP_ORIGIN
 }
@@ -2047,7 +1984,11 @@ async function buildAssetQrDataUri(assetTag: string): Promise<string> {
 }
 
 export async function scanAsset(assetTag: string) {
-  const asset = await getAsset(assetTag)
+  const [asset, sessionEmp] = await Promise.all([getAsset(assetTag), getSessionEmployee()])
+  const isPrivileged = Boolean(sessionEmp?.is_active && sessionEmp?.role !== 'employee')
+  if (!isPrivileged && sessionEmp?.id && asset.current_employee_id && asset.current_employee_id !== sessionEmp.id) {
+    throw new Error('You can only view assets assigned to you.')
+  }
 
   return {
     asset_tag: asset.asset_tag,

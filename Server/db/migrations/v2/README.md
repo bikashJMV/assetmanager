@@ -1,6 +1,8 @@
 # AMS Database Migrations
 
-Apply in this exact order:
+This folder is the source of truth for the main Asset Manager database.
+
+Apply the files in this exact order:
 
 1. `01_tables.sql`
 2. `02_functions.sql`
@@ -21,66 +23,41 @@ Apply in this exact order:
 17. `17_fn_public_scan_minimal.sql`
 18. `18_asset_event_audit_diffs.sql`
 
+## Important invariants
+
+- Canonical role is `employees.role`.
+- `it_ops` is the highest role.
+- `employees.is_active` and `employees.erp_active` serve different purposes.
+- Asset status must not be derived from ERP status.
+- Runtime assign/return flows must use `fn_assign_asset` and `fn_return_asset`.
+- Public QR scan must stay minimal and uses `fn_public_scan_asset`.
+- Soft delete and recycle-bin behavior are part of the schema contract.
+
 ## Notes
 
-- **`17_fn_public_scan_minimal.sql`:** Replaces `fn_public_scan_asset` so anonymous scans return only `asset_tag`, `category`, `manufacturer`, `model`, and `status`, and reinstates `qr_scanned` logging via `fn_internal_record_asset_event` (the SQL-only rewrite in `16` omitted it).
-- **`18_asset_event_audit_diffs.sql`:** Upgrades lifecycle audit payloads with immutable `actor_snapshot`, adds field-level `changes` for `asset_updated`, introduces explicit `asset_deleted` / `asset_restored` event types, and enriches assign/return payloads with employee snapshot details.
-- **`16_employee_erp_active.sql`:** When replacing `v_asset_inventory`, new columns must be **appended** at the end of the `SELECT` list so `CREATE OR REPLACE VIEW` does not trip PostgreSQL’s “cannot change name of view column” error. The file keeps `current_employee_erp_active` after `updated_by`.
-- All scripts are idempotent and safe to re-run.
-- If you already applied these migrations once, re-run `03_views.sql`, `04_rls_policies.sql`, `07_admin_audit.sql`, `08_it_ops_rbac.sql`, `09_warranty_notifications.sql`, `10_user_welcome_notification.sql`, `11_soft_delete_recycle_bin.sql`, `12_employee_code_standardization.sql`, `13_asset_audit_and_events.sql`, `14_fn_assign_employee_code_normalize.sql`, `15_fn_assign_assigned_at_coalesce.sql`, `16_employee_erp_active.sql`, `17_fn_public_scan_minimal.sql`, and `18_asset_event_audit_diffs.sql` after pulling latest changes.
-- Seed uses conflict-safe inserts/upserts.
-- Asset status is derived from assignment state via DB trigger.
-- `employees.is_active` = employee / account active; `employees.erp_active` = ERP entitlement (see `16_employee_erp_active.sql`).
-- `ERP Status` must never be used to set `assets.status`.
-- Runtime assign/return must use DB RPCs: `fn_assign_asset` and `fn_return_asset`.
-- Public QR scan uses RPC `fn_public_scan_asset(p_asset_tag, p_user_agent optional)` (granted to `anon`); records `qr_scanned` in `asset_events`.
-- Privileged runtime access uses `employees.role` (and keeps `metadata.role` in sync via trigger after `08_it_ops_rbac.sql`).
+- The scripts are intended to be idempotent and safe to re-run.
+- `16_employee_erp_active.sql` appends new columns when replacing `v_asset_inventory`; changing view column order incorrectly can break `CREATE OR REPLACE VIEW`.
+- `17_fn_public_scan_minimal.sql` keeps anonymous scan payloads minimal and restores `qr_scanned` lifecycle logging.
+- `18_asset_event_audit_diffs.sql` adds richer audit payloads, actor snapshots, field-level diffs, and explicit delete/restore event types.
 
-## Auth Domain Restriction
+## Re-run guidance
 
-`fn_handle_new_auth_user` enforces optional email-domain checks via Postgres setting `app.allowed_email_domain`.
+If your database was already created and you are syncing to the current repo state, re-run the changed migration files in sequence rather than inventing ad hoc SQL patches. In practice that usually means re-running the later files after `03_views.sql`, depending on what changed in your branch.
 
-Example (set once per database):
+## Import helper
 
-```sql
-alter database postgres set app.allowed_email_domain = 'yourcompany.com';
-```
-
-Leave unset to disable domain filtering.
-
-## Rollback Order
-
-If you need to revert, roll back in reverse dependency order:
-
-1. Drop auth trigger / publication additions / storage policies and bucket changes from `05_storage_realtime_auth.sql`
-2. Drop RLS policies from `04_rls_policies.sql`
-3. Drop views from `03_views.sql`
-4. Drop triggers/functions/sequence from `02_functions.sql`
-5. Drop base tables/types from `01_tables.sql`
-
-## Import
-
-Use:
+Use the spreadsheet import utility from `Server/`:
 
 ```powershell
 python scripts/import_v2_from_sheet.py --file "C:\path\to\your-sheet.xlsx" --sheet "Sheet1"
 ```
 
-Validation-only mode:
+Validation only:
 
 ```powershell
 python scripts/import_v2_from_sheet.py --file "C:\path\to\your-sheet.xlsx" --validate-only
 ```
 
-The script prints a JSON report with:
+## Staging rollout
 
-- Sheet-vs-DB counts
-- Assignment integrity checks
-- Inactive employees with open assignments
-- Warnings and row-level errors
-
-## Staging Execution
-
-Use the full staging rollout checklist in:
-
-- `db/migrations/v2/STAGING_RUNBOOK.md`
+Use [`STAGING_RUNBOOK.md`](./STAGING_RUNBOOK.md) for staging execution and rollback sequencing.

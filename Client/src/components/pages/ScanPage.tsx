@@ -245,7 +245,6 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
           {protectedRoute ? 'Asset Passport' : 'Asset'}
         </p>
         <h1 className="text-2xl font-bold">{heading || '-'}</h1>
-        <p className="text-subtle text-sm mt-1">{formatDisplay(asset.asset_tag)}</p>
       </div>
 
       <div className="flex justify-center mb-8">
@@ -294,7 +293,7 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
         </div>
       ) : null}
 
-      <p className="text-center text-subtle text-xs mt-10">Powered by AMS</p>
+      <p className="text-center text-subtle text-xs mt-10">Powered by Asset Manager</p>
     </main>
   )
 }

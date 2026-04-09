@@ -206,6 +206,29 @@ export type PublicDashboardSummary = {
   categoryBreakdown: Array<{ category: string; count: number }>
 }
 
+export type OverviewAnalysisMetric = {
+  label: string
+  count: number
+}
+
+export type OverviewAnalysisEmployeeLoad = {
+  employee_id: string
+  employee_name: string
+  employee_code: string | null
+  department: string | null
+  assigned_assets: number
+}
+
+export type OverviewAnalysisSnapshot = {
+  totalAssets: number
+  assignedAssets: number
+  inStockAssets: number
+  activeEmployees: number
+  statusBreakdown: OverviewAnalysisMetric[]
+  categoryBreakdown: OverviewAnalysisMetric[]
+  employeeLoad: OverviewAnalysisEmployeeLoad[]
+}
+
 export type WarrantyNotification = {
   notification_id: string
   asset_id: string
@@ -2371,6 +2394,138 @@ export async function getDashboardStats() {
     inStockAssets: Math.max(totalAssets - assignedAssets, 0),
     activeEmployees,
     totalEmployees,
+  }
+}
+
+const OVERVIEW_STATUS_ORDER = ['assigned', 'in_stock', 'in_repair', 'retired', 'lost', 'disposed'] as const
+
+export async function getOverviewAnalysisData(
+  options: { employeeLimit?: number } = {},
+): Promise<OverviewAnalysisSnapshot> {
+  await assertActiveAdminAccess()
+
+  const employeeLimit = Math.min(Math.max(1, options.employeeLimit ?? 5), 10)
+  const [assetsRes, activeEmployeesRes] = await Promise.all([
+    supabase
+      .from('v_asset_inventory')
+      .select(
+        'status,category_name,current_employee_id,current_employee_name,current_employee_code,current_employee_department',
+      ),
+    listEmployeesPage(
+      { is_active: true },
+      {
+        offset: 0,
+        limit: 1,
+      },
+    ),
+  ])
+
+  ensureNoSupabaseError(assetsRes.error, 'Unable to load overview analysis assets')
+
+  type OverviewAssetRow = Pick<
+    AssetInventoryRecord,
+    | 'status'
+    | 'category_name'
+    | 'current_employee_id'
+    | 'current_employee_name'
+    | 'current_employee_code'
+    | 'current_employee_department'
+  >
+
+  const rows = (assetsRes.data ?? []) as OverviewAssetRow[]
+  const statusMap = new Map<string, number>()
+  const categoryMap = new Map<string, number>()
+  const employeeLoadMap = new Map<
+    string,
+    {
+      employee_id: string
+      employee_name: string
+      employee_code: string | null
+      department: string | null
+      assigned_assets: number
+    }
+  >()
+
+  let assignedAssets = 0
+  let inStockAssets = 0
+
+  for (const row of rows) {
+    const status = typeof row.status === 'string' && row.status.trim() ? row.status.trim() : 'unknown'
+    const categoryName =
+      typeof row.category_name === 'string' && row.category_name.trim()
+        ? row.category_name.trim()
+        : 'Uncategorized'
+    const employeeId =
+      typeof row.current_employee_id === 'string' && row.current_employee_id.trim()
+        ? row.current_employee_id.trim()
+        : ''
+    const employeeName =
+      typeof row.current_employee_name === 'string' && row.current_employee_name.trim()
+        ? row.current_employee_name.trim()
+        : 'Unknown employee'
+    const employeeCode =
+      typeof row.current_employee_code === 'string' && row.current_employee_code.trim()
+        ? row.current_employee_code.trim()
+        : null
+    const employeeDepartment =
+      typeof row.current_employee_department === 'string' && row.current_employee_department.trim()
+        ? row.current_employee_department.trim()
+        : null
+
+    statusMap.set(status, (statusMap.get(status) ?? 0) + 1)
+    categoryMap.set(categoryName, (categoryMap.get(categoryName) ?? 0) + 1)
+
+    if (status === 'in_stock') {
+      inStockAssets += 1
+    }
+
+    if (!employeeId) continue
+
+    assignedAssets += 1
+    const current = employeeLoadMap.get(employeeId)
+    if (current) {
+      current.assigned_assets += 1
+      continue
+    }
+
+    employeeLoadMap.set(employeeId, {
+      employee_id: employeeId,
+      employee_name: employeeName,
+      employee_code: employeeCode,
+      department: employeeDepartment,
+      assigned_assets: 1,
+    })
+  }
+
+  const orderedStatusBreakdown: OverviewAnalysisMetric[] = []
+  for (const status of OVERVIEW_STATUS_ORDER) {
+    orderedStatusBreakdown.push({
+      label: status,
+      count: statusMap.get(status) ?? 0,
+    })
+  }
+
+  const extraStatusBreakdown = Array.from(statusMap.entries())
+    .filter(([label]) => !OVERVIEW_STATUS_ORDER.includes(label as (typeof OVERVIEW_STATUS_ORDER)[number]))
+    .map(([label, count]) => ({ label, count }))
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label))
+
+  const categoryBreakdown = Array.from(categoryMap.entries())
+    .map(([label, count]) => ({ label, count }))
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label))
+
+  const employeeLoad = Array.from(employeeLoadMap.values())
+    .sort((a, b) => b.assigned_assets - a.assigned_assets || a.employee_name.localeCompare(b.employee_name))
+    .slice(0, employeeLimit)
+
+  return {
+    totalAssets: rows.length,
+    assignedAssets,
+    inStockAssets,
+    activeEmployees: activeEmployeesRes.total,
+    statusBreakdown: [...orderedStatusBreakdown, ...extraStatusBreakdown],
+    categoryBreakdown,
+    employeeLoad,
   }
 }
 

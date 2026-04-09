@@ -33,6 +33,7 @@ Apply `db/migrations/001_telemetry_schema.sql` to a dedicated telemetry database
 ## Environment variables
 
 Set these in `TelemetryServer/.env` or your deployment environment.
+Start from `TelemetryServer/.env.example`.
 
 | Variable | Required | Purpose |
 | --- | --- | --- |
@@ -70,9 +71,10 @@ Protected query routes currently read `settings.ITOPS_QUERY_KEY`, and `Telemetry
 That means:
 
 - `TelemetryServer/` currently expects `TELEMETRY_ITOPS_QUERY_KEY_NEW_NEW` for query auth
-- `Server/` currently sends `TELEMETRY_ITOPS_QUERY_KEY_NEW`
+- `Server/` uses `TELEMETRY_ITOPS_QUERY_KEY_NEW` when calling telemetry query endpoints
 
 If those names are not aligned in your environment or code, `/analysis` and direct telemetry query endpoints will fail auth.
+For now, use the same underlying key value in both places.
 
 ## Local development
 

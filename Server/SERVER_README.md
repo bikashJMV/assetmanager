@@ -37,7 +37,7 @@ This service is important, but it is not the primary runtime data path. The brow
 
 ## Environment variables
 
-Create `Server/.env` manually. There is no checked-in `Server/.env.example` in this repo at the moment.
+Create `Server/.env` (start from `Server/.env.example`).
 
 | Variable | Required | Purpose |
 | --- | --- | --- |

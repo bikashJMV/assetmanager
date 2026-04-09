@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
 import { Link, useLocation } from 'react-router-dom'
+import { useBreadcrumbOverride } from '../../hooks/useBreadcrumbOverride'
 
 type Crumb = { label: string; to?: string }
 
@@ -33,7 +34,6 @@ function buildCrumbs(pathname: string): Crumb[] {
     const baseLabel = labelForSegment(seg)
     let label = baseLabel
 
-    // Special cases for common flows
     if (segments[0] === 'assets' && isLast && seg === 'new') {
       label = 'New Asset'
     } else if (segments[0] === 'employee' && isLast && seg === 'new') {
@@ -54,7 +54,15 @@ function buildCrumbs(pathname: string): Crumb[] {
 
 export default function Breadcrumbs() {
   const location = useLocation()
-  const crumbs = useMemo(() => buildCrumbs(location.pathname), [location.pathname])
+  const overrideLabel = useBreadcrumbOverride()
+  const crumbs = useMemo(() => {
+    const base = buildCrumbs(location.pathname)
+    if (overrideLabel && base.length > 1) {
+      const last = base[base.length - 1]
+      return [...base.slice(0, -1), { ...last, label: overrideLabel }]
+    }
+    return base
+  }, [location.pathname, overrideLabel])
 
   if (crumbs.length <= 1) return null
 

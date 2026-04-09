@@ -1,5 +1,46 @@
 const DEFAULT_USER_MESSAGE = 'Something went wrong. Please try again.'
 
+type FriendlyRewrite = {
+  pattern: string
+  rewrite: string | null
+}
+
+const FRIENDLY_REWRITES: FriendlyRewrite[] = [
+  { pattern: 'employee is not active', rewrite: 'This employee is currently inactive. Please verify their status before assigning assets.' },
+  { pattern: 'employee is inactive', rewrite: 'This employee is currently inactive. Please verify their status before assigning assets.' },
+  { pattern: 'employee record is not available', rewrite: 'This employee record is no longer available. It may have been removed from the system.' },
+  { pattern: 'employee code is required', rewrite: 'An employee code or email is required for this operation.' },
+  { pattern: 'no active employee found', rewrite: 'No active employee matches this identifier. Please verify the employee code or email and try again.' },
+  { pattern: 'employee identifier is empty', rewrite: 'An employee code or email is required for assignment.' },
+  { pattern: 'no open assignment found', rewrite: 'This asset has no open assignment to return. It may have already been returned.' },
+  { pattern: 'invalid status', rewrite: null },
+  { pattern: 'asset is already', rewrite: null },
+  { pattern: 'status changed from', rewrite: null },
+  { pattern: 'already assigned to', rewrite: null },
+  { pattern: 'cannot assign', rewrite: null },
+  { pattern: 'employee not found', rewrite: 'Employee not found in the system. Please verify the employee code or email and try again.' },
+  { pattern: 'asset not found', rewrite: 'Asset not found. Please verify the asset tag and try again.' },
+]
+
+const PASSTHROUGH_HINTS = [
+  'fn_assign_asset',
+  'fn_return_asset',
+  'fn_set_asset_lifecycle_status',
+  'status update failed',
+  'unable to update asset status',
+  'unable to assign',
+  'unable to return',
+  'assign failed',
+  'return failed',
+  'no data returned from assign',
+  'no data returned from return',
+  'invalid response from server',
+  'violates foreign key',
+  'duplicate key',
+  'null value violates',
+  'check constraint',
+]
+
 export function getUserFacingMessage(error: unknown, fallback: string = DEFAULT_USER_MESSAGE): string {
   const raw = typeof error === 'string'
     ? error
@@ -12,32 +53,13 @@ export function getUserFacingMessage(error: unknown, fallback: string = DEFAULT_
 
   const normalized = message.toLowerCase()
 
-  // Assign / return RPC and DB errors — must run before broad "not found" / friendly rewrites.
-  const assignReturnHints = [
-    'employee is inactive',
-    'employee is not active',
-    'employee not found',
-    'employee record is not available',
-    'employee code is required',
-    'asset not found',
-    'already assigned to same employee',
-    'no open assignment',
-    'asset assigned successfully',
-    'unable to assign',
-    'unable to return',
-    'assign failed',
-    'return failed',
-    'no data returned from assign',
-    'no data returned from return',
-    'invalid response from server',
-    'fn_assign_asset',
-    'fn_return_asset',
-    'violates foreign key',
-    'duplicate key',
-    'null value violates',
-    'check constraint',
-  ]
-  if (assignReturnHints.some((h) => normalized.includes(h))) {
+  for (const { pattern, rewrite } of FRIENDLY_REWRITES) {
+    if (normalized.includes(pattern)) {
+      return rewrite ?? message
+    }
+  }
+
+  if (PASSTHROUGH_HINTS.some((h) => normalized.includes(h))) {
     return message
   }
 

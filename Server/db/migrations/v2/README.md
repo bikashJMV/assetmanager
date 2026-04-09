@@ -23,6 +23,8 @@ Apply the files in this exact order:
 17. `17_fn_public_scan_minimal.sql`
 18. `18_asset_event_audit_diffs.sql`
 19. `19_assign_same_employee_error.sql`
+20. `20_fn_set_asset_lifecycle_status.sql`
+21. `21_assign_lifecycle_status_guard.sql`
 
 ## Important invariants
 
@@ -31,6 +33,8 @@ Apply the files in this exact order:
 - `employees.is_active` and `employees.erp_active` serve different purposes.
 - Asset status must not be derived from ERP status.
 - Runtime assign/return flows must use `fn_assign_asset` and `fn_return_asset`.
+- `fn_assign_asset` only allows assignment when `assets.status` is `in_stock` or `assigned` (whitelist). Assets in `lost`, `disposed`, `retired`, or `in_repair` must have their status changed first.
+- Lifecycle status changes (in_stock, in_repair, retired, lost, disposed) must use `fn_set_asset_lifecycle_status` — it auto-closes open assignments and records proper audit events.
 - Public QR scan must stay minimal and uses `fn_public_scan_asset`.
 - Soft delete and recycle-bin behavior are part of the schema contract.
 
@@ -41,6 +45,8 @@ Apply the files in this exact order:
 - `17_fn_public_scan_minimal.sql` keeps anonymous scan payloads minimal and restores `qr_scanned` lifecycle logging.
 - `18_asset_event_audit_diffs.sql` adds richer audit payloads, actor snapshots, field-level diffs, and explicit delete/restore event types.
 - `19_assign_same_employee_error.sql` turns same-holder assignment attempts into a validation error instead of a success-style no-op.
+- `20_fn_set_asset_lifecycle_status.sql` adds a controlled RPC for lifecycle status transitions. Auto-closes open assignments, records per-assignment `unassigned` events, and logs an `asset_updated` event with before/after status diff.
+- `21_assign_lifecycle_status_guard.sql` adds a whitelist-based status guard to `fn_assign_asset`. Only `in_stock` and `assigned` assets can be assigned; all other statuses are rejected with a clear message.
 
 ## Re-run guidance
 

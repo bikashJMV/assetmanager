@@ -15,6 +15,7 @@ import IconActionButton from '../common/IconActionButton'
 import AnimatedNavIcon, { type IconName } from '../common/AnimatedNavIcon'
 import RowActionMenu from '../common/RowActionMenu'
 import {
+  getAssignedAssetCountsForEmployees,
   getCurrentEmployeeAssets,
   getAssets,
   getQrDataUriForAssetTag,
@@ -33,6 +34,7 @@ import {
 import { getErrorDebugDetail, getUserFacingMessage, logDevError } from '../../utils/errors'
 import { formatDisplay } from '../../utils/formatDisplay'
 import employeeInfoHint from '../../data/employeeInfoHint.json'
+import { getStoredPageSize, setStoredPageSize } from '../../utils/paginationPrefs'
 
 type EmployeePageInfoHint = {
   panelTitle: string
@@ -136,6 +138,10 @@ function erpStatusDotClass(isActive: boolean): string {
   return isActive ? 'bg-emerald-500' : 'bg-red-500'
 }
 
+function getAssignedAssetDisplay(count: number | undefined): string {
+  return (count ?? 0) > 0 ? String(count) : 'N/A'
+}
+
 function toApiFilters(input: EmployeeFiltersInput): EmployeeListFilters {
   const filters: EmployeeListFilters = { is_active: 'all', erp_active: 'all' }
 
@@ -169,9 +175,12 @@ function toApiFilters(input: EmployeeFiltersInput): EmployeeListFilters {
 export default function Employee() {
   const navigate = useNavigate()
   const [employees, setEmployees] = useState<EmployeeRecord[]>([])
+  const [assignedAssetCounts, setAssignedAssetCounts] = useState<Record<string, number>>({})
   const [totalEmployees, setTotalEmployees] = useState(0)
   const [currentPage, setCurrentPage] = useState(1)
-  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE)
+  const [pageSize, setPageSize] = useState(() =>
+    getStoredPageSize({ storageKey: 'employees', defaultValue: DEFAULT_PAGE_SIZE, allowed: PAGE_SIZE_OPTIONS }),
+  )
   const [departments, setDepartments] = useState<string[]>([])
   const [filtersInput, setFiltersInput] = useState<EmployeeFiltersInput>({
     search: '',
@@ -246,6 +255,7 @@ export default function Employee() {
 
     try {
       const result = await listEmployeesPage(filters, { offset, limit: targetPageSize })
+      const nextAssignedAssetCounts = await getAssignedAssetCountsForEmployees(result.rows.map((employee) => employee.id))
       if (requestId !== requestIdRef.current) return
 
       const totalPages = Math.max(1, Math.ceil(result.total / targetPageSize))
@@ -255,6 +265,7 @@ export default function Employee() {
       }
 
       setEmployees(result.rows)
+      setAssignedAssetCounts(nextAssignedAssetCounts)
       setTotalEmployees(result.total)
       setCurrentPage(targetPage)
       setPageSize(targetPageSize)
@@ -268,6 +279,10 @@ export default function Employee() {
         setLoading(false)
       }
     }
+  }
+
+  const openEmployeeDetail = (employeeId: string) => {
+    navigate(`/employee/${employeeId}`)
   }
 
   const loadPassportAndDepartments = async () => {
@@ -421,6 +436,7 @@ export default function Employee() {
 
   const handlePageSizeChange = (nextPageSize: number) => {
     if (loading || nextPageSize === pageSize) return
+    setStoredPageSize('employees', nextPageSize)
     void fetchEmployees(filtersRef.current, { page: 1, pageSize: nextPageSize })
   }
 
@@ -838,6 +854,7 @@ export default function Employee() {
                   <th className="px-4 py-3">S.No</th>
                   {canManageEmployees && <th className="px-4 py-3">Actions</th>}
                   <th className="px-4 py-3">Name</th>
+                  <th className="px-4 py-3">Assigned Total</th>
                   <th className="px-4 py-3">Email</th>
                   <th className="px-4 py-3">Employee Code</th>
                   <th className="px-4 py-3">Department</th>
@@ -848,10 +865,23 @@ export default function Employee() {
               </thead>
               <tbody>
                 {employees.map((employee, index) => (
-                  <tr key={employee.id} className="border-t border-base transition hover:bg-[color:var(--accent-soft)]/12">
+                  <tr
+                    key={employee.id}
+                    className="cursor-pointer border-t border-base transition hover:bg-[color:var(--accent-soft)]/12"
+                    onClick={() => openEmployeeDetail(employee.id)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault()
+                        openEmployeeDetail(employee.id)
+                      }
+                    }}
+                    tabIndex={0}
+                    role="link"
+                    aria-label={`Open ${employee.name} details`}
+                  >
                     <td className="px-4 py-3 text-muted">{(currentPage - 1) * pageSize + index + 1}</td>
                     {canManageEmployees && (
-                      <td className="px-4 py-3">
+                      <td className="px-4 py-3" onClick={(event) => event.stopPropagation()}>
                         <EmployeeActions
                           employee={employee}
                           isAdmin={isAdmin}
@@ -875,7 +905,19 @@ export default function Employee() {
                         />
                       </td>
                     )}
-                    <td className="px-4 py-3 text-primary font-medium">{employee.name}</td>
+                    <td className="px-4 py-3">
+                      <span className="font-medium text-primary transition group-hover:text-accent">
+                        {employee.name}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span
+                        className="inline-flex min-w-[3rem] items-center justify-center rounded-lg border border-base bg-surface px-2.5 py-1 text-xs font-semibold text-primary"
+                        title={`Assigned total for ${employee.name}`}
+                      >
+                        {getAssignedAssetDisplay(assignedAssetCounts[employee.id])}
+                      </span>
+                    </td>
                     <td className="px-4 py-3 text-muted">{formatDisplay(employee.email)}</td>
                     <td className="px-4 py-3 text-primary">{employee.employee_code}</td>
                     <td className="px-4 py-3 text-primary">{formatDisplay(employee.department)}</td>
@@ -896,7 +938,7 @@ export default function Employee() {
                 ))}
                 {!loading && employees.length === 0 && (
                   <tr>
-                    <td colSpan={canManageEmployees ? 9 : 8} className="text-center py-8 text-subtle">No employees found</td>
+                    <td colSpan={canManageEmployees ? 10 : 9} className="text-center py-8 text-subtle">No employees found</td>
                   </tr>
                 )}
               </tbody>
@@ -905,10 +947,25 @@ export default function Employee() {
         ) : (
           <div className={`grid grid-cols-1 gap-4 transition-opacity md:grid-cols-2 xl:grid-cols-3 ${tableBusy ? 'opacity-60 pointer-events-none' : ''}`}>
             {employees.map((employee) => (
-              <article key={employee.id} className="rounded-xl border border-base bg-surface-2 p-4 transition hover:border-accent-soft hover:bg-[color:var(--accent-soft)]/10">
+              <article
+                key={employee.id}
+                className="cursor-pointer rounded-xl border border-base bg-surface-2 p-4 transition hover:border-accent-soft hover:bg-[color:var(--accent-soft)]/10"
+                onClick={() => openEmployeeDetail(employee.id)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault()
+                    openEmployeeDetail(employee.id)
+                  }
+                }}
+                tabIndex={0}
+                role="link"
+                aria-label={`Open ${employee.name} details`}
+              >
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <h2 className="text-lg font-semibold">{employee.name}</h2>
+                    <span className="text-left text-lg font-semibold text-primary transition hover:text-accent">
+                      {employee.name}
+                    </span>
                     <p className="text-sm text-muted">{formatDisplay(employee.email)}</p>
                   </div>
                   <div className="flex flex-col items-end gap-1 shrink-0">
@@ -925,13 +982,24 @@ export default function Employee() {
                 <div className="mt-4 space-y-1 text-sm">
                   <p className="text-subtle uppercase tracking-[0.14em] text-[11px]">Employee Code</p>
                   <p className="text-primary">{employee.employee_code}</p>
+                  <p className="text-subtle uppercase tracking-[0.14em] text-[11px] mt-3">Assigned Total</p>
+                  <div
+                    className="inline-flex items-center gap-2 rounded-lg border border-base bg-surface px-2.5 py-1 text-sm font-semibold text-primary"
+                    title={`Assigned total for ${employee.name}`}
+                  >
+                    <span>{getAssignedAssetDisplay(assignedAssetCounts[employee.id])}</span>
+                    <span className="text-xs text-muted">total</span>
+                  </div>
                   <p className="text-subtle uppercase tracking-[0.14em] text-[11px] mt-3">Department</p>
                   <p className="text-primary">{formatDisplay(employee.department)}</p>
                   <p className="text-subtle uppercase tracking-[0.14em] text-[11px] mt-3">Role</p>
                   <p className="text-primary">{formatRoleLabel(employee.role)}</p>
                 </div>
                 {canManageEmployees && (
-                  <div className="mt-4 border-t border-base pt-4">
+                  <div
+                    className="mt-4 border-t border-base pt-4"
+                    onClick={(event) => event.stopPropagation()}
+                  >
                     <EmployeeActions
                       employee={employee}
                       isAdmin={isAdmin}

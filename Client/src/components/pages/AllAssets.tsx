@@ -25,6 +25,8 @@ import RowActionMenu from '../common/RowActionMenu'
 import assetInfoHint from '../../data/assetInfoHint.json'
 import { getErrorDebugDetail, getUserFacingMessage, logDevError } from '../../utils/errors'
 import { formatDisplay, formatEnumLabel } from '../../utils/formatDisplay'
+import { getStoredPageSize, setStoredPageSize } from '../../utils/paginationPrefs'
+import InventoryBulkUpdateModal from '../form/InventoryBulkUpdateModal'
 
 const SEARCH_DEBOUNCE_MS = 300
 const DEFAULT_PAGE_SIZE = 10
@@ -72,7 +74,9 @@ export default function AllAssets() {
   const [assets, setAssets] = useState<AssetInventoryRecord[]>([])
   const [totalAssets, setTotalAssets] = useState(0)
   const [currentPage, setCurrentPage] = useState(1)
-  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE)
+  const [pageSize, setPageSize] = useState(() =>
+    getStoredPageSize({ storageKey: 'assets', defaultValue: DEFAULT_PAGE_SIZE, allowed: PAGE_SIZE_OPTIONS }),
+  )
   const [filters, setFilters] = useState<AssetFilters>({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -86,6 +90,7 @@ export default function AllAssets() {
   const [accessResolved, setAccessResolved] = useState(false)
   const [actionMenuId, setActionMenuId] = useState<string | null>(null)
   const [filtersOpen, setFiltersOpen] = useState(false)
+  const [bulkUpdateOpen, setBulkUpdateOpen] = useState(false)
   const [draftAdvancedFilters, setDraftAdvancedFilters] = useState<AssetAdvancedFiltersInput>({
     status: STATUS_ALL,
     categorySlug: '',
@@ -173,14 +178,14 @@ export default function AllAssets() {
     let mounted = true
     void (async () => {
       try {
-        const [rows, adminAllowed, profile] = await Promise.all([
+        const [rows, profile] = await Promise.all([
           listCategories().catch(() => [] as CategoryRecord[]),
-          hasActiveAdminAccess(),
           getSessionEmployee(),
         ])
         if (!mounted) return
         const profileAdmin = Boolean(profile?.is_active && profile?.role !== 'employee')
-        const effectiveAdmin = adminAllowed || profileAdmin
+        const effectiveAdmin = profileAdmin || await hasActiveAdminAccess()
+        if (!mounted) return
         setCategories(rows)
         setIsAdmin(effectiveAdmin)
         setScopeEmployeeId(effectiveAdmin ? null : (profile?.id || null))
@@ -279,6 +284,7 @@ export default function AllAssets() {
 
   const handlePageSizeChange = (nextPageSize: number) => {
     if (loading || nextPageSize === pageSize) return
+    setStoredPageSize('assets', nextPageSize)
     void fetchAssets(filtersRef.current, { page: 1, pageSize: nextPageSize })
   }
 
@@ -422,6 +428,12 @@ export default function AllAssets() {
                   label: 'New Asset',
                   icon: 'plus' as const,
                   onClick: () => navigate('/assets/new'),
+                },
+                {
+                  id: 'bulk-inventory-update',
+                  label: 'Bulk Inventory Update',
+                  icon: 'upload' as const,
+                  onClick: () => setBulkUpdateOpen(true),
                 },
               ]
             : []),
@@ -877,6 +889,14 @@ export default function AllAssets() {
           if (deleteTarget) void handleSoftDeleteAsset(deleteTarget)
         }}
       />
+
+      {isAdmin && (
+        <InventoryBulkUpdateModal
+          open={bulkUpdateOpen}
+          onClose={() => setBulkUpdateOpen(false)}
+          onSuccess={() => void fetchAssets(filtersRef.current, { page: currentPage, pageSize })}
+        />
+      )}
     </main>
   )
 }

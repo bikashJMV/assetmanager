@@ -31,6 +31,18 @@ export type EmployeeRecord = {
   metadata: Record<string, unknown>
 }
 
+export type EmployeeAssetCountMap = Record<string, number>
+
+export type EmployeeAssignedAssetRecord = AssetInventoryRecord & {
+  assigned_by_name: string | null
+}
+
+export type EmployeeAssetPortfolio = {
+  employee: EmployeeRecord
+  totalAssignedAssets: number
+  assets: EmployeeAssignedAssetRecord[]
+}
+
 export type RecycleBinEntry = {
   entry_id: string
   entity_type: 'asset' | 'employee'
@@ -535,6 +547,7 @@ export function onAuthStateChange(
   callback: (session: Session | null, event: AuthChangeEvent) => void,
 ) {
   const { data } = supabase.auth.onAuthStateChange((event, session) => {
+    resetAuthDerivedCache()
     callback(session, event)
   })
   return () => {
@@ -570,6 +583,36 @@ let postSignInIntroBootstrapResult: boolean | undefined
 
 export function resetPostSignInIntroBootstrapClaim() {
   postSignInIntroBootstrapResult = undefined
+}
+
+const AUTH_DERIVED_CACHE_TTL_MS = 10_000
+
+type AdminAccessState = { allowed: boolean; reason?: string }
+type CachedAuthValue<T> = {
+  key: string
+  value?: T
+  promise?: Promise<T>
+  expiresAt: number
+}
+
+let sessionEmployeeCache: CachedAuthValue<SessionEmployee | null> | null = null
+let adminAccessCache: CachedAuthValue<AdminAccessState> | null = null
+
+function buildAuthCacheKey(user?: Pick<User, 'id' | 'email'> | null): string {
+  if (!user?.id) return 'anonymous'
+  return `${user.id}:${user.email ?? ''}`
+}
+
+function readCachedAuthValue<T>(cache: CachedAuthValue<T> | null, key: string): T | Promise<T> | null {
+  if (!cache || cache.key !== key || cache.expiresAt <= Date.now()) return null
+  if ('value' in cache) return cache.value as T
+  if (cache.promise) return cache.promise
+  return null
+}
+
+function resetAuthDerivedCache() {
+  sessionEmployeeCache = null
+  adminAccessCache = null
 }
 
 /**
@@ -644,6 +687,7 @@ export async function signInWithGoogle(nextPath?: string) {
 }
 
 export async function signOut() {
+  resetAuthDerivedCache()
   resetPostSignInIntroBootstrapClaim()
   try {
     sessionStorage.removeItem(AMS_PENDING_POST_SIGNIN_INTRO)
@@ -654,9 +698,9 @@ export async function signOut() {
   ensureNoSupabaseError(error, 'Unable to sign out')
 }
 
-async function claimCurrentEmployeeAuthLink(): Promise<string | null> {
-  const session = await getSession()
-  if (!session?.user?.email) return null
+async function claimCurrentEmployeeAuthLink(session?: Session | null): Promise<string | null> {
+  const activeSession = session ?? await getSession()
+  if (!activeSession?.user?.email) return null
 
   const { data, error } = await supabase.rpc('fn_claim_employee_auth_link')
   if (error) {
@@ -679,35 +723,66 @@ async function claimCurrentEmployeeAuthLink(): Promise<string | null> {
   return null
 }
 
-async function getActiveAdminAccessState(): Promise<{ allowed: boolean; reason?: string }> {
-  const session = await getSession()
+async function getActiveAdminAccessState(user?: User | null): Promise<{ allowed: boolean; reason?: string }> {
+  const session = user ? ({ user } as Session) : await getSession()
   if (!session?.user) {
     return { allowed: false, reason: 'You are not signed in.' }
   }
 
-  const profile = await getSessionEmployee(session.user)
-  if (profile && profile.role !== 'employee' && profile.is_active) {
-    return { allowed: true }
+  const cacheKey = buildAuthCacheKey(session.user)
+  const cached = readCachedAuthValue(adminAccessCache, cacheKey)
+  if (cached) {
+    return await cached
   }
 
-  const linkIssue = await claimCurrentEmployeeAuthLink()
-  const { data, error } = await supabase.rpc('fn_is_admin_or_it_ops')
-  if (error && !isMissingRpcError(error, 'fn_is_admin_or_it_ops')) {
-    ensureNoSupabaseError(error, 'Unable to verify access')
+  const loadState = (async () => {
+    const profile = await getSessionEmployee(session.user)
+    if (profile && profile.role !== 'employee' && profile.is_active) {
+      return { allowed: true }
+    }
+
+    const linkIssue = await claimCurrentEmployeeAuthLink(session)
+    const { data, error } = await supabase.rpc('fn_is_admin_or_it_ops')
+    if (error && !isMissingRpcError(error, 'fn_is_admin_or_it_ops')) {
+      ensureNoSupabaseError(error, 'Unable to verify access')
+    }
+
+    const allowed = error ? false : (extractRpcScalarBoolean(data, ['fn_is_admin_or_it_ops']) ?? false)
+    if (allowed) {
+      return { allowed: true }
+    }
+
+    if (linkIssue) {
+      return { allowed: false, reason: linkIssue }
+    }
+
+    return {
+      allowed: false,
+      reason: 'Signed-in account must be linked to an active admin/IT Ops employee record.',
+    }
+  })()
+
+  adminAccessCache = {
+    key: cacheKey,
+    promise: loadState,
+    expiresAt: Date.now() + AUTH_DERIVED_CACHE_TTL_MS,
   }
 
-  const allowed = error ? false : (extractRpcScalarBoolean(data, ['fn_is_admin_or_it_ops']) ?? false)
-  if (allowed) {
-    return { allowed: true }
-  }
-
-  if (linkIssue) {
-    return { allowed: false, reason: linkIssue }
-  }
-
-  return {
-    allowed: false,
-    reason: 'Signed-in account must be linked to an active admin/IT Ops employee record.',
+  try {
+    const state = await loadState
+    if (adminAccessCache?.key === cacheKey) {
+      adminAccessCache = {
+        key: cacheKey,
+        value: state,
+        expiresAt: Date.now() + AUTH_DERIVED_CACHE_TTL_MS,
+      }
+    }
+    return state
+  } catch (error) {
+    if (adminAccessCache?.key === cacheKey) {
+      adminAccessCache = null
+    }
+    throw error
   }
 }
 
@@ -749,10 +824,7 @@ async function assertActiveItOpsAccess() {
   }
 }
 
-export async function getSessionEmployee(user?: User | null): Promise<SessionEmployee | null> {
-  const activeUser = user ?? (await getSession())?.user
-  if (!activeUser) return null
-
+async function loadSessionEmployeeForUser(activeUser: User): Promise<SessionEmployee | null> {
   const columns = 'id,employee_code,name,email,is_active,erp_active,role,metadata,department:departments(name)'
   let data: Record<string, unknown> | null = null
 
@@ -802,6 +874,48 @@ export async function getSessionEmployee(user?: User | null): Promise<SessionEmp
   return {
     ...normalized,
     department: normalized.department,
+  }
+}
+
+export async function getSessionEmployee(user?: User | null): Promise<SessionEmployee | null> {
+  const activeUser = user ?? (await getSession())?.user
+  if (!activeUser) {
+    sessionEmployeeCache = {
+      key: 'anonymous',
+      value: null,
+      expiresAt: Date.now() + AUTH_DERIVED_CACHE_TTL_MS,
+    }
+    return null
+  }
+
+  const cacheKey = buildAuthCacheKey(activeUser)
+  const cached = readCachedAuthValue(sessionEmployeeCache, cacheKey)
+  if (cached) {
+    return await cached
+  }
+
+  const loadProfile = loadSessionEmployeeForUser(activeUser)
+  sessionEmployeeCache = {
+    key: cacheKey,
+    promise: loadProfile,
+    expiresAt: Date.now() + AUTH_DERIVED_CACHE_TTL_MS,
+  }
+
+  try {
+    const profile = await loadProfile
+    if (sessionEmployeeCache?.key === cacheKey) {
+      sessionEmployeeCache = {
+        key: cacheKey,
+        value: profile,
+        expiresAt: Date.now() + AUTH_DERIVED_CACHE_TTL_MS,
+      }
+    }
+    return profile
+  } catch (error) {
+    if (sessionEmployeeCache?.key === cacheKey) {
+      sessionEmployeeCache = null
+    }
+    throw error
   }
 }
 
@@ -1018,6 +1132,84 @@ export async function listEmployeesPage(
     rows,
     total: count ?? rows.length,
   }
+}
+
+export async function getEmployeeById(employeeId: string): Promise<EmployeeRecord> {
+  const trimmedId = employeeId.trim()
+  if (!trimmedId) {
+    throw new Error('Employee not found')
+  }
+
+  const selectWithErp =
+    'id,employee_code,name,email,is_active,erp_active,role,metadata,department:departments(name)'
+  const selectWithoutErp =
+    'id,employee_code,name,email,is_active,role,metadata,department:departments(name)'
+
+  let response = await supabase
+    .from('employees')
+    .select(selectWithErp)
+    .eq('id', trimmedId)
+    .eq('is_deleted', false)
+    .limit(1)
+    .maybeSingle()
+
+  if (isMissingColumnError(response.error, 'employees', 'erp_active')) {
+    response = await supabase
+      .from('employees')
+      .select(selectWithoutErp)
+      .eq('id', trimmedId)
+      .eq('is_deleted', false)
+      .limit(1)
+      .maybeSingle()
+  }
+
+  if (isMissingColumnError(response.error, 'employees', 'is_deleted')) {
+    response = await supabase
+      .from('employees')
+      .select(selectWithErp)
+      .eq('id', trimmedId)
+      .limit(1)
+      .maybeSingle()
+
+    if (isMissingColumnError(response.error, 'employees', 'erp_active')) {
+      response = await supabase
+        .from('employees')
+        .select(selectWithoutErp)
+        .eq('id', trimmedId)
+        .limit(1)
+        .maybeSingle()
+    }
+  }
+
+  ensureNoSupabaseError(response.error, 'Unable to load employee')
+  if (!response.data) {
+    throw new Error('Employee not found')
+  }
+
+  return normalizeEmployeeRow(response.data as Record<string, unknown>)
+}
+
+export async function getAssignedAssetCountsForEmployees(employeeIds: string[]): Promise<EmployeeAssetCountMap> {
+  const ids = [...new Set(employeeIds.map((id) => id.trim()).filter(Boolean))]
+  if (ids.length === 0) return {}
+
+  const { data, error } = await supabase
+    .from('v_asset_inventory')
+    .select('current_employee_id')
+    .in('current_employee_id', ids)
+
+  ensureNoSupabaseError(error, 'Unable to load employee asset counts')
+
+  const counts: EmployeeAssetCountMap = {}
+  for (const id of ids) counts[id] = 0
+
+  for (const row of data ?? []) {
+    const employeeId = typeof row.current_employee_id === 'string' ? row.current_employee_id : ''
+    if (!employeeId) continue
+    counts[employeeId] = (counts[employeeId] ?? 0) + 1
+  }
+
+  return counts
 }
 
 export async function searchAssignableEmployees(
@@ -1480,6 +1672,102 @@ export async function getAssets(filters: AssetFilters = {}): Promise<AssetInvent
   return (data ?? []) as AssetInventoryRecord[]
 }
 
+function buildEmployeeAssetPortfolio(
+  employee: EmployeeRecord,
+  assets: EmployeeAssignedAssetRecord[],
+): EmployeeAssetPortfolio {
+  return {
+    employee,
+    totalAssignedAssets: assets.length,
+    assets,
+  }
+}
+
+export async function getEmployeeAssetPortfolio(employeeId: string): Promise<EmployeeAssetPortfolio> {
+  const [employee, assets] = await Promise.all([
+    getEmployeeById(employeeId),
+    getAssets({ current_employee_id: employeeId }),
+  ])
+
+  const assignmentIds = [...new Set(
+    assets
+      .map((asset) => asset.assignment_id?.trim() || '')
+      .filter(Boolean),
+  )]
+
+  const assetIds = [...new Set(
+    assets
+      .map((asset) => asset.id?.trim() || '')
+      .filter(Boolean),
+  )]
+
+  const assignedByByAssignmentId = new Map<string, string | null>()
+
+  if (assetIds.length > 0) {
+    try {
+      const { data: events, error: eventsError } = await supabase
+        .from('asset_events')
+        .select('asset_id,actor_id,payload,event_type,created_at')
+        .eq('event_type', 'assigned')
+        .in('asset_id', assetIds)
+        .order('created_at', { ascending: false })
+
+      if (eventsError) {
+        ensureNoSupabaseError(eventsError, 'Unable to load employee assignment history')
+      }
+
+      const actorIds = [...new Set(
+        (events ?? [])
+          .map((row) => (typeof row.actor_id === 'string' ? row.actor_id.trim() : ''))
+          .filter(Boolean),
+      )]
+
+      const actorByAuthUserId = new Map<string, string>()
+      if (actorIds.length > 0) {
+        const { data: actorRows, error: actorError } = await supabase
+          .from('employees')
+          .select('auth_user_id,name,employee_code')
+          .in('auth_user_id', actorIds)
+
+        if (actorError) {
+          ensureNoSupabaseError(actorError, 'Unable to resolve assignment actors')
+        }
+
+        for (const row of actorRows ?? []) {
+          const authUserId = typeof row.auth_user_id === 'string' ? row.auth_user_id.trim() : ''
+          if (!authUserId) continue
+          const name = typeof row.name === 'string' ? row.name.trim() : ''
+          const employeeCode = typeof row.employee_code === 'string' ? row.employee_code.trim() : ''
+          const display = name || employeeCode
+          if (display) actorByAuthUserId.set(authUserId, display)
+        }
+      }
+
+      for (const row of events ?? []) {
+        const payload = row.payload && typeof row.payload === 'object' && !Array.isArray(row.payload)
+          ? row.payload as Record<string, unknown>
+          : null
+        const assignmentId = typeof payload?.assignment_id === 'string' ? payload.assignment_id.trim() : ''
+        if (!assignmentId || assignedByByAssignmentId.has(assignmentId) || !assignmentIds.includes(assignmentId)) {
+          continue
+        }
+
+        const actorId = typeof row.actor_id === 'string' ? row.actor_id.trim() : ''
+        assignedByByAssignmentId.set(assignmentId, actorByAuthUserId.get(actorId) ?? null)
+      }
+    } catch {
+      // Employee detail should still render even when assignment actor history is unavailable.
+    }
+  }
+
+  const enrichedAssets: EmployeeAssignedAssetRecord[] = assets.map((asset) => ({
+    ...asset,
+    assigned_by_name: asset.assignment_id ? (assignedByByAssignmentId.get(asset.assignment_id) ?? null) : null,
+  }))
+
+  return buildEmployeeAssetPortfolio(employee, enrichedAssets)
+}
+
 export async function getAssetsPage(
   filters: AssetFilters = {},
   options: AssetPageOptions = {}
@@ -1782,6 +2070,59 @@ export async function returnAsset(payload: ReturnAssetPayload) {
     throw new Error(msg)
   }
   return result
+}
+
+export async function setAssetLifecycleStatus(
+  assetTag: string,
+  newStatus: string,
+  notes?: string,
+): Promise<Record<string, unknown>> {
+  await assertActiveAdminAccess()
+  const { data, error } = await supabase.rpc('fn_set_asset_lifecycle_status', {
+    p_asset_tag: assetTag.trim(),
+    p_new_status: newStatus.trim(),
+    p_source: 'bulk_update',
+    p_notes: notes || null,
+  })
+
+  ensureNoSupabaseError(error, 'Unable to update asset status')
+  const result = extractRpcJsonbObject(data)
+  if (!rpcPayloadOk(result)) {
+    const msg =
+      typeof result?.message === 'string' && result.message.trim()
+        ? result.message.trim()
+        : data == null
+          ? 'No data returned. Confirm fn_set_asset_lifecycle_status is deployed on the database.'
+          : 'Status update failed — invalid response from server.'
+    throw new Error(msg)
+  }
+  return result!
+}
+
+export async function resolveEmployeeCodeFromIdentifier(
+  identifier: string,
+): Promise<string> {
+  const trimmed = identifier.trim()
+  if (!trimmed) throw new Error('Employee identifier is empty')
+
+  if (trimmed.includes('@')) {
+    const { data, error } = await supabase
+      .from('employees')
+      .select('employee_code')
+      .ilike('email', trimmed)
+      .eq('is_active', true)
+      .eq('is_deleted', false)
+      .limit(1)
+      .maybeSingle()
+
+    ensureNoSupabaseError(error, 'Unable to resolve employee by email')
+    if (!data?.employee_code) {
+      throw new Error(`No active employee found with email "${trimmed}"`)
+    }
+    return data.employee_code
+  }
+
+  return trimmed
 }
 
 export async function getCurrentEmployeeAssets(user?: User | null) {

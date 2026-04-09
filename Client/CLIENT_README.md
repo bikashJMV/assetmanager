@@ -12,10 +12,12 @@ React 19 + Vite 7 + TypeScript single-page app for Asset Manager.
 
 ## Source-of-truth files
 
-- `src/App.tsx` - route tree, auth bootstrap, shell layout, idle timeout, telemetry startup
+- `src/App.tsx` - route tree, auth bootstrap, shell layout, idle timeout, telemetry startup, breadcrumb provider
 - `src/api.ts` - primary client integration layer for Supabase and QR helpers
 - `src/telemetry.ts` - optional client telemetry buffer and flush logic
 - `src/supabaseClient.ts` - fail-fast Supabase client bootstrap
+- `src/utils/errors.ts` - user-facing error message normalization with friendly rewrites
+- `src/hooks/useBreadcrumbOverride.ts` - breadcrumb context for detail pages to set readable labels
 
 ## Routes
 
@@ -36,6 +38,7 @@ React 19 + Vite 7 + TypeScript single-page app for Asset Manager.
 - `/assets/scan/:id`
 - `/employee`
 - `/employee/new`
+- `/employee/:id`
 - `/analysis`
 - `/notifications`
 - `/recycle-bin`
@@ -43,8 +46,9 @@ React 19 + Vite 7 + TypeScript single-page app for Asset Manager.
 ## Main feature areas
 
 - Asset list, detail, create, edit, assign, return, QR view, and soft delete
-- Employee list, create, edit, role-aware actions, and employee bulk import
+- Employee list, detail, create, edit, role-aware actions, and employee bulk import
 - Asset bulk import from spreadsheet on `/assets/new`
+- Bulk inventory status update (assign, return, lifecycle) from Excel on `/assets`
 - Public QR scan with minimal anonymous payload
 - Warranty notifications and recycle-bin restore flows
 - IT Ops telemetry analysis UI backed by the FastAPI server
@@ -52,6 +56,8 @@ React 19 + Vite 7 + TypeScript single-page app for Asset Manager.
 ## Environment variables
 
 Only `VITE_*` variables are available in browser code.
+
+Create `Client/.env` (start from `Client/.env.example`).
 
 | Variable | Required | Used by | Notes |
 | --- | --- | --- | --- |
@@ -106,6 +112,8 @@ Available scripts:
 - The public scan route must stay minimal and must not expose internal holder or location data.
 - Assignment state transitions belong to DB RPCs, not ad hoc client mutations.
 - The analysis page is the main exception to the "direct to Supabase" pattern; it fetches from the FastAPI server using the signed-in user's bearer token.
+- `src/utils/errors.ts` rewrites raw DB/RPC error messages into user-friendly guidance (e.g. "Employee is not active" → "This employee is currently inactive. Please verify their status before assigning assets."). Add new patterns there when introducing new RPCs.
+- Detail pages (asset, employee) use `useSetBreadcrumbOverride()` to push readable labels into the breadcrumb bar instead of showing raw UUIDs or bare IDs. The store resets automatically on route change.
 
 ## QR behavior
 

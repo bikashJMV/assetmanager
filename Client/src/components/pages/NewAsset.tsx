@@ -145,39 +145,40 @@ export default function NewAsset() {
                 className="shrink-0"
               >
                 <p className="text-primary font-medium">Admin / IT Ops only.</p>
-                <p>
-                  Use <span className="text-primary">.xlsx</span> or <span className="text-primary">.xls</span>. Put
-                  headers in row 1. Prefer a sheet named <span className="text-primary font-medium">Import</span>{' '}
-                  (otherwise the first sheet is used). Up to{' '}
-                  <span className="tabular-nums text-primary">{ASSET_IMPORT_MAX_ROWS}</span> data rows.
-                </p>
-                <p>
-                  <span className="text-primary font-medium">Category per row:</span> add{' '}
-                  <code className="text-[0.8rem] text-primary">category_name</code> or{' '}
-                  <code className="text-[0.8rem] text-primary">category_slug</code>. If both are empty for a row, that
-                  row uses the <span className="text-primary font-medium">category selected on this page</span>.
-                </p>
-                <p>
-                  <span className="text-primary font-medium">Standard categories</span> (laptop, sim, etc.) follow strict
-                  columns — e.g. laptop needs <code className="text-[0.8rem] text-primary">processor</code>, SIM needs{' '}
-                  <code className="text-[0.8rem] text-primary">sim_number</code>. Only fill columns that belong to that
-                  row&apos;s category.
-                </p>
-                <p>
-                  <span className="text-primary font-medium">Custom categories:</span> use columns named{' '}
-                  <code className="text-[0.8rem] text-primary">custom_something</code> for extra fields (example:{' '}
-                  <code className="text-[0.8rem] text-primary">custom_band</code>).
-                </p>
-                <p>
-                  <span className="text-primary font-medium">Duplicates:</span> the same{' '}
-                  <code className="text-[0.8rem] text-primary">serial_number</code> twice in one file stops the whole
-                  import — nothing is saved until you fix the sheet.
-                </p>
-                <p>
-                  Column names should match the sample file (e.g.{' '}
-                  <code className="text-[0.8rem] text-primary">manufacturer_name</code>). Asset tags are created by the
-                  system. Do not add assignment columns.
-                </p>
+                <ul className="list-disc space-y-2 pl-4">
+                  <li>
+                    Use <span className="text-primary">.xlsx</span> or <span className="text-primary">.xls</span> with
+                    headers in row 1. Prefer a sheet named{' '}
+                    <span className="text-primary font-medium">Import</span>. You can upload up to{' '}
+                    <span className="tabular-nums text-primary">{ASSET_IMPORT_MAX_ROWS}</span> data rows.
+                  </li>
+                  <li>
+                    <span className="text-primary font-medium">Category:</span> each row can use{' '}
+                    <code className="text-[0.8rem] text-primary">category_name</code> or{' '}
+                    <code className="text-[0.8rem] text-primary">category_slug</code>. If both are blank, the row uses
+                    the category selected on this page.
+                  </li>
+                  <li>
+                    <span className="text-primary font-medium">Standard categories:</span> use only the fields for that
+                    category. Example: laptop needs <code className="text-[0.8rem] text-primary">processor</code>, SIM
+                    needs <code className="text-[0.8rem] text-primary">sim_number</code>.
+                  </li>
+                  <li>
+                    <span className="text-primary font-medium">Custom categories:</span> add extra values in{' '}
+                    <code className="text-[0.8rem] text-primary">custom_*</code> columns like{' '}
+                    <code className="text-[0.8rem] text-primary">custom_band</code>.
+                  </li>
+                  <li>
+                    <span className="text-primary font-medium">Duplicates:</span> if the same{' '}
+                    <code className="text-[0.8rem] text-primary">serial_number</code> appears twice in the file, the whole
+                    import fails before any save.
+                  </li>
+                  <li>
+                    Match the sample column names like{' '}
+                    <code className="text-[0.8rem] text-primary">manufacturer_name</code>. Asset tags are created
+                    automatically. Do not add assignment columns.
+                  </li>
+                </ul>
                 <div className="mt-2 border-t border-base pt-3">
                   <a
                     href={ASSET_IMPORT_TEMPLATE_HREF}

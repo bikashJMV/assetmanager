@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import type { Session } from '@supabase/supabase-js'
 import Sidebar from './components/common/Sidebar'
@@ -25,6 +25,7 @@ import AnimatedNavIcon from './components/common/AnimatedNavIcon'
 import Breadcrumbs from './components/common/Breadcrumbs'
 import ScrollTopButton from './components/common/ScrollTopButton'
 import { ToastProvider } from './components/common/ToastProvider'
+import { BreadcrumbOverrideCtx, createBreadcrumbStore } from './hooks/useBreadcrumbOverride'
 import './index.css'
 
 const Home = lazy(() => import('./components/pages/Home'))
@@ -40,6 +41,7 @@ const Notifications = lazy(() => import('./components/pages/Notifications'))
 const IdleWarningModal = lazy(() => import('./components/common/IdleWarningModal'))
 import { useIdleTimeout } from './hooks/useIdleTimeout'
 const Employee = lazy(() => import('./components/pages/Employee'))
+const EmployeeDetail = lazy(() => import('./components/pages/EmployeeDetail'))
 const NewEmployee = lazy(() => import('./components/pages/NewEmployee'))
 
 export default function App() {
@@ -157,6 +159,9 @@ function AppRoutes() {
     onIdle: () => void handleAutoLogout(),
   })
 
+  const breadcrumbStore = useMemo(() => createBreadcrumbStore(), [])
+  useEffect(() => { breadcrumbStore.set(null) }, [location.pathname, breadcrumbStore])
+
   const showSidebar = !isPublicScan
   const showTopBar = !isPublicScan
   const showBreadcrumbs = !isPublicScan && location.pathname !== '/login'
@@ -203,6 +208,7 @@ function AppRoutes() {
             }
           }}
         >
+          <BreadcrumbOverrideCtx.Provider value={breadcrumbStore}>
           {showBreadcrumbs && <Breadcrumbs />}
           <Suspense fallback={<AuthLoadingScreen />}>
             <Routes>
@@ -258,6 +264,7 @@ function AppRoutes() {
                 <Route path="/404" element={<PageNotFound />} />
                 <Route path="/employee" element={<Employee />} />
                 <Route path="/employee/new" element={<NewEmployee />} />
+                <Route path="/employee/:id" element={<EmployeeDetail />} />
                 <Route path="/analysis" element={<Analysis />} />
                 <Route path="/notifications" element={<Notifications />} />
                 <Route path="/recycle-bin" element={<RecycleBin />} />
@@ -278,6 +285,7 @@ function AppRoutes() {
               />
             </Routes>
           </Suspense>
+          </BreadcrumbOverrideCtx.Provider>
         </div>
       </div>
       <ScrollTopButton scrollContainerRef={scrollContainerRef} />

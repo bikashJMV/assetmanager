@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
+import { useSetBreadcrumbOverride } from '../../hooks/useBreadcrumbOverride'
 import {
   assignAsset,
   getAssetDetail,
@@ -45,9 +46,12 @@ import EmployeeAssignLookup from '../common/EmployeeAssignLookup'
   
 // }
 
+const ASSIGNABLE_STATUSES = new Set(['in_stock', 'assigned'])
+
 export default function AssetDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
+  const setBreadcrumb = useSetBreadcrumbOverride()
 
   const [detail, setDetail] = useState<AssetDetailRecord | null>(null)
   const [error, setError] = useState('')
@@ -66,6 +70,14 @@ export default function AssetDetail() {
   const [qrLoading, setQrLoading] = useState(false)
   const [qrError, setQrError] = useState<string | null>(null)
   const { showToast } = useToast()
+
+  useEffect(() => {
+    if (!detail) return
+    const { asset_tag, category_name, status } = detail.asset
+    const name = category_name || asset_tag
+    const statusLabel = formatEnumLabel(status)
+    setBreadcrumb(asset_tag ? `${name} (${asset_tag} / ${statusLabel})` : name ?? '')
+  }, [detail, setBreadcrumb])
 
   const refresh = useCallback(async () => {
     if (!id) return
@@ -141,6 +153,7 @@ export default function AssetDetail() {
   )
   const currentHolderCode = openAssignment?.employee?.employee_code.trim().toUpperCase() ?? ''
   const selectedAssigneeCode = selectedAssignee?.employee_code.trim().toUpperCase() ?? ''
+  const isAssignableStatus = ASSIGNABLE_STATUSES.has(detail?.asset.status ?? '')
   const visibleLifecycleEvents = useMemo(
     () =>
       detail?.lifecycle_events.filter(
@@ -153,6 +166,10 @@ export default function AssetDetail() {
     if (!detail?.asset.asset_tag) return
     if (!canManage) {
       setError('Active admin access is required to assign assets')
+      return
+    }
+    if (!isAssignableStatus) {
+      setError(`Cannot assign — this asset is currently marked as "${formatEnumLabel(detail.asset.status)}". Please update its inventory status before assigning.`)
       return
     }
     if (!selectedAssignee?.employee_code.trim()) {
@@ -424,7 +441,7 @@ export default function AssetDetail() {
         {canManage ? (
         <section className="bg-surface border border-base rounded-xl p-4 sm:p-5">
           <h2 className="text-sm font-semibold uppercase tracking-[0.14em] text-subtle mb-2">Assign or return</h2>
-          <p className="text-xs text-subtle mb-3 leading-relaxed">
+          <p className="text-xs  mb-3 text-black font-bold  leading-relaxed">
             {canManage
               ? 'Move custody by assigning to an employee code, or close the open assignment to return the asset to stock. Assignments are exclusive—one active holder at a time.'
               : 'Read-only: you can view this asset but cannot change custody. Admin or IT Ops access is required to assign or return.'}
@@ -467,7 +484,7 @@ export default function AssetDetail() {
               </button>
             </div>
           </div>
-          <p className="text-[11px] text-subtle mt-2">
+          <p className="text-[11px]  text-black font-bold  mt-2">
             Reassigning to a different code ends the previous holder’s assignment automatically and opens a new row in history.
           </p>
           {error ? <p className="text-accent text-sm mt-2">{error}</p> : null}
@@ -501,13 +518,11 @@ export default function AssetDetail() {
           )}
         </Section>
 
-        <Section
-          title="Components"
-          description="Sub-items bundled with this asset—such as modules, docks, or accessories—each stored as its own line with type and serials where tracked."
-        >
-          {detail.components.length === 0 ? (
-            <p className="text-sm text-subtle">No components recorded for this asset.</p>
-          ) : (
+        {detail.components.length > 0 && (
+          <Section
+            title="Components"
+            description="Sub-items bundled with this asset—such as modules, docks, or accessories—each stored as its own line with type and serials where tracked."
+          >
             <div className="overflow-x-auto rounded-lg border border-base">
               <table className="w-full min-w-[680px] text-sm">
                 <thead className="bg-surface-2 text-muted uppercase text-xs">
@@ -536,8 +551,8 @@ export default function AssetDetail() {
                 </tbody>
               </table>
             </div>
-          )}
-        </Section>
+          </Section>
+        )}
 
         <Section
           title="Assignment History"

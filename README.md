@@ -25,6 +25,7 @@ The repo currently contains:
 - `it_ops` is the highest role.
 - `employees.is_active` and `employees.erp_active` are different flags and must not be treated as the same thing.
 - Assignment and return flows belong to DB RPCs: `fn_assign_asset` and `fn_return_asset`.
+- Lifecycle status changes (in_stock, in_repair, retired, lost, disposed) belong to `fn_set_asset_lifecycle_status`.
 - Public QR scan uses `fn_public_scan_asset` and is intentionally minimal.
 - Assets and employees use soft delete and recycle-bin workflows.
 
@@ -42,6 +43,8 @@ The repo currently contains:
 
 ### Client
 
+Create `Client/.env` (start from `Client/.env.example`), then run:
+
 ```bash
 cd Client
 npm install
@@ -50,7 +53,7 @@ npm run dev
 
 ### Server
 
-Create `Server/.env` manually, then run:
+Create `Server/.env` (start from `Server/.env.example`), then run:
 
 ```bash
 cd Server

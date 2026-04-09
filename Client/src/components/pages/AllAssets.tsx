@@ -460,27 +460,29 @@ export default function AllAssets() {
           </div>
 
           <div className="flex shrink-0 items-center gap-3">
-          <button
-            type="button"
-            onClick={openFiltersPopup}
-            className={`inline-flex h-10 items-center gap-2 rounded-lg border px-3 text-sm font-medium transition ${
-              filtersOpen || activeAdvancedFilterCount > 0
-                ? 'border-accent-soft bg-[color:var(--accent-soft)]/15 text-primary'
-                : 'border-base bg-surface text-muted hover:border-accent-soft hover:bg-[color:var(--accent-soft)]/15 hover:text-accent'
-            }`}
-            aria-expanded={filtersOpen ? 'true' : 'false'}
-            aria-haspopup="dialog"
-          >
-            <span className="h-4 w-4 shrink-0">
-              <FilterIcon />
-            </span>
-            <span>Filters</span>
-            {activeAdvancedFilterCount > 0 ? (
-              <span className="inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-accent px-1.5 py-0.5 text-[11px] font-semibold text-white">
-                {activeAdvancedFilterCount}
+          {isAdmin ? (
+            <button
+              type="button"
+              onClick={openFiltersPopup}
+              className={`inline-flex h-10 items-center gap-2 rounded-lg border px-3 text-sm font-medium transition ${
+                filtersOpen || activeAdvancedFilterCount > 0
+                  ? 'border-accent-soft bg-[color:var(--accent-soft)]/15 text-primary'
+                  : 'border-base bg-surface text-muted hover:border-accent-soft hover:bg-[color:var(--accent-soft)]/15 hover:text-accent'
+              }`}
+              aria-expanded={filtersOpen ? 'true' : 'false'}
+              aria-haspopup="dialog"
+            >
+              <span className="h-4 w-4 shrink-0">
+                <FilterIcon />
               </span>
-            ) : null}
-          </button>
+              <span>Filters</span>
+              {activeAdvancedFilterCount > 0 ? (
+                <span className="inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-accent px-1.5 py-0.5 text-[11px] font-semibold text-white">
+                  {activeAdvancedFilterCount}
+                </span>
+              ) : null}
+            </button>
+          ) : null}
           {/* Legacy inline asset filters retired in favor of the shared popup.
           <div className="relative min-w-[170px]" data-status-filter-menu>
             <button
@@ -605,58 +607,60 @@ export default function AllAssets() {
         </div>
       ) : null}
 
-      <FilterPopup
-        open={filtersOpen}
-        title="Filter assets"
-        activeCount={draftAdvancedFilterCount}
-        applyDisabled={!hasDraftAdvancedChanges}
-        clearDisabled={draftAdvancedFilterCount === 0}
-        onApply={handleApplyDraftFilters}
-        onClear={handleClearDraftFilters}
-        onClose={closeFiltersPopup}
-      >
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          <FilterSelect
-            label="Inventory status"
-            ariaLabel="Filter by inventory status"
-            value={draftAdvancedFilters.status}
-            options={statusOptions}
-            onChange={(value) =>
-              handleDraftAdvancedFilterChange({
-                status: value || STATUS_ALL,
-              })
-            }
-          />
+      {isAdmin ? (
+        <FilterPopup
+          open={filtersOpen}
+          title="Filter assets"
+          activeCount={draftAdvancedFilterCount}
+          applyDisabled={!hasDraftAdvancedChanges}
+          clearDisabled={draftAdvancedFilterCount === 0}
+          onApply={handleApplyDraftFilters}
+          onClear={handleClearDraftFilters}
+          onClose={closeFiltersPopup}
+        >
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <FilterSelect
+              label="Inventory status"
+              ariaLabel="Filter by inventory status"
+              value={draftAdvancedFilters.status}
+              options={statusOptions}
+              onChange={(value) =>
+                handleDraftAdvancedFilterChange({
+                  status: value || STATUS_ALL,
+                })
+              }
+            />
 
-          <FilterSelect
-            label="Category"
-            ariaLabel="Filter by category"
-            value={draftAdvancedFilters.categorySlug}
-            options={categoryOptions}
-            onChange={(value) =>
-              handleDraftAdvancedFilterChange({
-                categorySlug: value,
-              })
-            }
-          />
+            <FilterSelect
+              label="Category"
+              ariaLabel="Filter by category"
+              value={draftAdvancedFilters.categorySlug}
+              options={categoryOptions}
+              onChange={(value) =>
+                handleDraftAdvancedFilterChange({
+                  categorySlug: value,
+                })
+              }
+            />
 
-          <div className="md:col-span-2">
-            <label className="inline-flex w-full items-center gap-3 rounded-xl border border-base bg-surface px-4 py-3 text-sm text-primary transition hover:border-accent-soft hover:bg-[color:var(--accent-soft)]/10">
-              <input
-                type="checkbox"
-                checked={draftAdvancedFilters.hideHeldByInactive}
-                onChange={(e) =>
-                  handleDraftAdvancedFilterChange({
-                    hideHeldByInactive: e.target.checked,
-                  })
-                }
-                className="h-4 w-4 shrink-0 accent-[color:var(--accent)]"
-              />
-              <span>Hide ERP-inactive employees</span>
-            </label>
+            <div className="md:col-span-2">
+              <label className="inline-flex w-full items-center gap-3 rounded-xl border border-base bg-surface px-4 py-3 text-sm text-primary transition hover:border-accent-soft hover:bg-[color:var(--accent-soft)]/10">
+                <input
+                  type="checkbox"
+                  checked={draftAdvancedFilters.hideHeldByInactive}
+                  onChange={(e) =>
+                    handleDraftAdvancedFilterChange({
+                      hideHeldByInactive: e.target.checked,
+                    })
+                  }
+                  className="h-4 w-4 shrink-0 accent-[color:var(--accent)]"
+                />
+                <span>Hide ERP-inactive employees</span>
+              </label>
+            </div>
           </div>
-        </div>
-      </FilterPopup>
+        </FilterPopup>
+      ) : null}
 
       {!error && (
         <div className="flex flex-1 flex-col">
@@ -666,7 +670,17 @@ export default function AllAssets() {
           <table className="w-full min-w-[1000px] text-left text-sm">
             <thead className="bg-surface-2 text-subtle text-xs uppercase">
               <tr>
-                {['S.No', 'Actions', 'Asset Tag', 'Category', 'Manufacturer', 'Model', 'Holder', 'ERP Status', 'Inventory Status'].map((header) => (
+                {[
+                  'S.No',
+                  ...(isAdmin ? (['Actions'] as const) : []),
+                  'Asset Tag',
+                  'Category',
+                  'Manufacturer',
+                  'Model',
+                  'Holder',
+                  'ERP Status',
+                  'Inventory Status',
+                ].map((header) => (
                   <th key={header} className="px-4 py-3 whitespace-nowrap">{header}</th>
                 ))}
               </tr>
@@ -681,8 +695,8 @@ export default function AllAssets() {
                   }}
                 >
                   <td className="px-4 py-3 text-muted">{(currentPage - 1) * pageSize + index + 1}</td>
-                  <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
-                    {isAdmin ? (
+                  {isAdmin ? (
+                    <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                       <RowActionMenu
                         open={actionMenuId === asset.id}
                         onToggle={() => setActionMenuId((prev) => (prev === asset.id ? null : asset.id))}
@@ -762,10 +776,8 @@ export default function AllAssets() {
                               </span>
                             </button>
                       </RowActionMenu>
-                    ) : (
-                      <span className="text-subtle text-xs">-</span>
-                    )}
-                  </td>
+                    </td>
+                  ) : null}
                   <td className="px-4 py-3 text-accent font-medium">{formatDisplay(asset.asset_tag)}</td>
                   <td className="px-4 py-3 text-muted">{formatDisplay(asset.category_name)}</td>
                   <td className="px-4 py-3 text-muted">{formatDisplay(asset.manufacturer_name)}</td>
@@ -804,7 +816,9 @@ export default function AllAssets() {
               ))}
               {assets.length === 0 && (
                 <tr>
-                  <td colSpan={10} className="text-center py-10 text-subtle">No assets, assigned to you</td>
+                  <td colSpan={isAdmin ? 9 : 8} className="text-center py-10 text-subtle">
+                    No assets, assigned to you
+                  </td>
                 </tr>
               )}
             </tbody>

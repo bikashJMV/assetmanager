@@ -1,6 +1,13 @@
+import { Fragment } from 'react'
 import type { AssetLifecycleEvent } from '../../api'
 import { formatDateTime, formatDisplay } from '../../utils/formatDisplay'
-import { formatChangeValue, formatHistoryActor, getEventSummary, normalizeFieldChanges } from './assetHistoryFormatters'
+import {
+  formatChangeValue,
+  formatHistoryActor,
+  getEventSummary,
+  groupEventsByDay,
+  normalizeFieldChanges,
+} from './assetHistoryFormatters'
 
 type Props = {
   events: AssetLifecycleEvent[]
@@ -110,6 +117,8 @@ function getEventAccentClass(eventType: string): string {
 }
 
 export default function AssetHistoryTable({ events }: Props) {
+  const dayGroups = groupEventsByDay(events)
+
   return (
     <div className="overflow-x-auto">
       <table className="w-full min-w-[920px] text-sm">
@@ -125,7 +134,19 @@ export default function AssetHistoryTable({ events }: Props) {
           </tr>
         </thead>
         <tbody>
-          {events.map((event) => {
+          {dayGroups.map((dayGroup) => (
+            <Fragment key={dayGroup.dayKey}>
+              <tr className="border-t border-base bg-surface-2/70">
+                <td colSpan={7} className="px-3 py-2.5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm font-semibold text-primary">{dayGroup.dayLabel}</span>
+                    <span className="inline-flex items-center rounded-full border border-base bg-surface px-2 py-0.5 text-[11px] font-medium text-subtle">
+                      {dayGroup.events.length} change{dayGroup.events.length === 1 ? '' : 's'}
+                    </span>
+                  </div>
+                </td>
+              </tr>
+              {dayGroup.events.map((event) => {
             const actor = formatHistoryActor(event)
             const changes = normalizeFieldChanges(event)
             const actionLabel = getEventLabel(event.event_type)
@@ -177,7 +198,9 @@ export default function AssetHistoryTable({ events }: Props) {
                 <td className="px-3 py-2 text-subtle">{idx === 0 ? getEventSummary(event) : ''}</td>
               </tr>
             ))
-          })}
+              })}
+            </Fragment>
+          ))}
         </tbody>
       </table>
     </div>

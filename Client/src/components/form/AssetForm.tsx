@@ -3,6 +3,7 @@ import {
   createAsset,
   getCustomFieldDefinitions,
   listCategories,
+  setAssetLifecycleStatus,
   type AssetWriteInput,
   type CategoryRecord,
   type CustomFieldDefinition,
@@ -39,6 +40,7 @@ type FormState = {
 }
 
 const inventoryStatuses = ['in_stock', 'assigned', 'in_repair', 'retired', 'lost', 'disposed']
+const lifecycleEditStatuses = ['in_stock', 'in_repair', 'retired', 'lost', 'disposed']
 
 /** Seed category slug is `networking`; accept `network` if used elsewhere. */
 function isNetworkingAssetCategory(slug: string): boolean {
@@ -85,6 +87,7 @@ export default function AssetForm({
   lockedCategoryLabel,
 }: Props) {
   const isEditing = !!prefill.asset_tag
+  const originalStatus = prefill.status || 'in_stock'
   const isPanel = variant === 'panel'
   const lockCategory = Boolean(categoryLocked && !isEditing)
   const [form, setForm] = useState<FormState>({
@@ -169,14 +172,15 @@ export default function AssetForm({
       ...options,
     ]
   }, [categories, form.category_slug])
-  const inventoryStatusOptions = useMemo<FilterSelectOption[]>(
-    () =>
-      inventoryStatuses.map((status) => ({
-        value: status,
-        label: formatEnumLabel(status),
-      })),
-    [],
-  )
+  const inventoryStatusOptions = useMemo<FilterSelectOption[]>(() => {
+    const statuses = isEditing
+      ? Array.from(new Set([originalStatus, ...lifecycleEditStatuses]))
+      : inventoryStatuses
+    return statuses.map((status) => ({
+      value: status,
+      label: formatEnumLabel(status),
+    }))
+  }, [isEditing, originalStatus])
   const hideNetworkingLifecycleFields = isNetworkingAssetCategory(form.category_slug)
   const hideSimModelAndCategoryFields = isSimAssetCategory(form.category_slug)
 
@@ -251,17 +255,49 @@ export default function AssetForm({
         location_name: form.location_name.trim() || undefined,
         purchase_date: hideNetworkingLifecycleFields ? '' : form.purchase_date || undefined,
         warranty_expiry: hideNetworkingLifecycleFields ? '' : form.warranty_expiry || undefined,
-        status: hideNetworkingLifecycleFields ? undefined : form.status || undefined,
+        status: form.status || undefined,
         custom_fields: customFieldsForPayload,
         metadata: form.notes.trim() ? { notes: form.notes.trim() } : undefined,
       }
 
-      const result = isEditing && prefill.asset_tag
-        ? await updateAsset(prefill.asset_tag, payload)
-        : await createAsset(payload)
+      let result: unknown
+      if (isEditing && prefill.asset_tag) {
+        const metadataPayload: Partial<AssetWriteInput> = {
+          asset_tag: payload.asset_tag,
+          category_slug: payload.category_slug,
+          manufacturer_name: payload.manufacturer_name,
+          model: payload.model,
+          serial_number: payload.serial_number,
+          location_name: payload.location_name,
+          purchase_date: payload.purchase_date,
+          warranty_expiry: payload.warranty_expiry,
+          custom_fields: payload.custom_fields,
+          metadata: payload.metadata,
+        }
+        result = await updateAsset(prefill.asset_tag, metadataPayload)
+
+        if (form.status !== originalStatus) {
+          try {
+            await setAssetLifecycleStatus(prefill.asset_tag, form.status, undefined, 'asset_edit')
+          } catch (statusErr) {
+            throw new Error(
+              `Asset details were saved, but inventory status was not updated. ${getUserFacingMessage(
+                statusErr,
+                'Please retry the inventory status change.',
+              )}`,
+            )
+          }
+        }
+      } else {
+        result = await createAsset(payload)
+      }
 
       showToast({
-        message: isEditing ? 'Asset updated successfully.' : 'Asset created successfully.',
+        message: isEditing
+          ? form.status !== originalStatus
+            ? 'Asset details and inventory status updated successfully.'
+            : 'Asset updated successfully.'
+          : 'Asset created successfully.',
         variant: 'success',
       })
       onSuccess(result)
@@ -375,32 +411,36 @@ export default function AssetForm({
                   Pick a suggestion or type any address; use N/A if location is not assigned yet.
                 </p>
               </div>
-              {!hideNetworkingLifecycleFields && (
+              {(!hideNetworkingLifecycleFields || isEditing) && (
                 <>
-                  <Field
-                    label="Purchase Date"
-                    requiredMark
-                    type="date"
-                    value={form.purchase_date}
-                    placeholder="YYYY-MM-DD"
-                    onChange={(value) => setForm((current) => ({ ...current, purchase_date: value }))}
-                  />
-                  <Field
-                    label="Warranty Expiry"
-                    requiredMark
-                    type="date"
-                    value={form.warranty_expiry}
-                    placeholder="YYYY-MM-DD"
-                    onChange={(value) => setForm((current) => ({ ...current, warranty_expiry: value }))}
-                  />
+                  {!hideNetworkingLifecycleFields && (
+                    <>
+                      <Field
+                        label="Purchase Date"
+                        requiredMark
+                        type="date"
+                        value={form.purchase_date}
+                        placeholder="YYYY-MM-DD"
+                        onChange={(value) => setForm((current) => ({ ...current, purchase_date: value }))}
+                      />
+                      <Field
+                        label="Warranty Expiry"
+                        requiredMark
+                        type="date"
+                        value={form.warranty_expiry}
+                        placeholder="YYYY-MM-DD"
+                        onChange={(value) => setForm((current) => ({ ...current, warranty_expiry: value }))}
+                      />
 
-                  <Field
-                    label="Serial Number"
-                    requiredMark
-                    value={form.serial_number}
-                    placeholder="e.g. SN-ABC12345678 — or N/A"
-                    onChange={(value) => setForm((current) => ({ ...current, serial_number: value }))}
-                  />
+                      <Field
+                        label="Serial Number"
+                        requiredMark
+                        value={form.serial_number}
+                        placeholder="e.g. SN-ABC12345678 — or N/A"
+                        onChange={(value) => setForm((current) => ({ ...current, serial_number: value }))}
+                      />
+                    </>
+                  )}
                   <div>
                     <label htmlFor="asset-form-status" className="block text-muted text-xs mb-0.5">
                       Inventory Status{' '}
@@ -419,7 +459,7 @@ export default function AssetForm({
                       triggerId="asset-form-status"
                     />
                     <p className="text-[11px] text-muted mt-0.5 leading-snug">
-                      Inventory only — not employee ERP status.
+                      Inventory only — not employee ERP status. Status changes in edit mode are saved through the lifecycle workflow and logged in history.
                     </p>
                   </div>
                 </>

@@ -85,8 +85,15 @@ export default function AssetDetail() {
     setError('')
     setErrorDebug(undefined)
     try {
-      const data = await getAssetDetail(id)
+      const [data, allowed] = await Promise.all([
+        getAssetDetail(id),
+        hasActiveAdminAccess().catch((err) => {
+          logDevError('assetDetail.access', err)
+          return false
+        }),
+      ])
       setDetail(data)
+      setCanManage(allowed)
     } catch (err) {
       logDevError('assetDetail.fetch', err)
       setError(getUserFacingMessage(err, 'Unable to load asset details right now.'))
@@ -99,23 +106,6 @@ export default function AssetDetail() {
   useEffect(() => {
     void refresh()
   }, [refresh])
-
-  useEffect(() => {
-    let mounted = true
-    void (async () => {
-      try {
-        const allowed = await hasActiveAdminAccess()
-        if (!mounted) return
-        setCanManage(allowed)
-      } catch (err) {
-        logDevError('assetDetail.access', err)
-      }
-    })()
-
-    return () => {
-      mounted = false
-    }
-  }, [])
 
   useEffect(() => {
     const assetTag = detail?.asset.asset_tag?.trim()
@@ -584,16 +574,18 @@ export default function AssetDetail() {
           </div>
         </Section>
 
-        <Section
-          title="Lifecycle log"
-          description={
-            <>
-             Append-only timeline of changes, assignments, and returns. Admin/IT Ops see full history; others may see limited data.
-            </>
-          }
-        >
-          <AssetChangeHistory events={visibleLifecycleEvents} isCapped={detail.lifecycle_is_capped} />
-        </Section>
+        {canManage ? (
+          <Section
+            title="Lifecycle log"
+            description={
+              <>
+                Append-only timeline of changes, assignments, and returns.
+              </>
+            }
+          >
+            <AssetChangeHistory events={visibleLifecycleEvents} isCapped={detail.lifecycle_is_capped} />
+          </Section>
+        ) : null}
       </div>
 
       {showEdit && (

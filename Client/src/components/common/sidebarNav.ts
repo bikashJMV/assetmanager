@@ -79,7 +79,7 @@ export const sidebarSections: SidebarNavSection[] = [
     id: 'workspace',
     title: 'Tools',
     items: [
-      { id: 'analysis', type: 'link', label: 'Analysis', to: '/analysis', icon: 'chart-column', visibility: 'authenticated' },
+      { id: 'analysis', type: 'link', label: 'Analysis', to: '/analysis', icon: 'chart-column', visibility: 'manage' },
       // { id: 'notifications', type: 'link', label: 'Notifications', to: '/notifications', icon: 'bell', visibility: 'authenticated' },
       {
         id: 'settings',

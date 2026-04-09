@@ -645,26 +645,28 @@ export default function Employee() {
           </div>
 
           <div className="flex items-center gap-2 lg:flex-nowrap lg:shrink-0">
-            <button
-              type="button"
-              onClick={openFiltersPopup}
-              className={`inline-flex h-10 items-center gap-2 rounded-lg border px-3 text-sm font-medium transition ${filtersOpen || activeAdvancedFilterCount > 0
-                ? 'border-accent-soft bg-[color:var(--accent-soft)]/15 text-primary'
-                : 'border-base bg-surface text-muted hover:border-accent-soft hover:bg-[color:var(--accent-soft)]/15 hover:text-accent'
-                }`}
-              aria-expanded={filtersOpen ? 'true' : 'false'}
-              aria-haspopup="dialog"
-            >
-              <span className="h-4 w-4 shrink-0">
-                <FilterIcon />
-              </span>
-              <span>Filters</span>
-              {activeAdvancedFilterCount > 0 && (
-                <span className="inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-accent px-1.5 py-0.5 text-[11px] font-semibold text-white">
-                  {activeAdvancedFilterCount}
+            {canManageEmployees ? (
+              <button
+                type="button"
+                onClick={openFiltersPopup}
+                className={`inline-flex h-10 items-center gap-2 rounded-lg border px-3 text-sm font-medium transition ${filtersOpen || activeAdvancedFilterCount > 0
+                  ? 'border-accent-soft bg-[color:var(--accent-soft)]/15 text-primary'
+                  : 'border-base bg-surface text-muted hover:border-accent-soft hover:bg-[color:var(--accent-soft)]/15 hover:text-accent'
+                  }`}
+                aria-expanded={filtersOpen ? 'true' : 'false'}
+                aria-haspopup="dialog"
+              >
+                <span className="h-4 w-4 shrink-0">
+                  <FilterIcon />
                 </span>
-              )}
-            </button>
+                <span>Filters</span>
+                {activeAdvancedFilterCount > 0 && (
+                  <span className="inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-accent px-1.5 py-0.5 text-[11px] font-semibold text-white">
+                    {activeAdvancedFilterCount}
+                  </span>
+                )}
+              </button>
+            ) : null}
 
             <RefreshButton
               onClick={handleRefresh}
@@ -1064,61 +1066,63 @@ export default function Employee() {
         </div>
       )}
 
-      <FilterPopup
-        open={filtersOpen}
-        title="Filter employees"
-        // description="Choose one or more filters, then apply them to update the employee list."
-        activeCount={draftAdvancedFilterCount}
-        applyDisabled={!hasDraftAdvancedChanges}
-        clearDisabled={draftAdvancedFilterCount === 0}
-        onApply={handleApplyDraftFilters}
-        onClear={handleClearDraftFilters}
-        onClose={closeFiltersPopup}
-      >
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          <FilterSelect
-            label="Employee status"
-            ariaLabel="Filter by employment status (employees.is_active)"
-            title="Employment or account active flag, separate from ERP access."
-            value={draftFiltersInput.employeeStatus}
-            options={EMPLOYEE_STATUS_OPTIONS}
-            onChange={(value) =>
-              handleDraftFilterChange({
-                employeeStatus: (value || FILTER_STATUS_ALL) as EmployeeFiltersInput['employeeStatus'],
-              })
-            }
-          />
+      {canManageEmployees ? (
+        <FilterPopup
+          open={filtersOpen}
+          title="Filter employees"
+          // description="Choose one or more filters, then apply them to update the employee list."
+          activeCount={draftAdvancedFilterCount}
+          applyDisabled={!hasDraftAdvancedChanges}
+          clearDisabled={draftAdvancedFilterCount === 0}
+          onApply={handleApplyDraftFilters}
+          onClear={handleClearDraftFilters}
+          onClose={closeFiltersPopup}
+        >
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <FilterSelect
+              label="Employee status"
+              ariaLabel="Filter by employment status (employees.is_active)"
+              title="Employment or account active flag, separate from ERP access."
+              value={draftFiltersInput.employeeStatus}
+              options={EMPLOYEE_STATUS_OPTIONS}
+              onChange={(value) =>
+                handleDraftFilterChange({
+                  employeeStatus: (value || FILTER_STATUS_ALL) as EmployeeFiltersInput['employeeStatus'],
+                })
+              }
+            />
 
-          <FilterSelect
-            label="ERP access"
-            ariaLabel="Filter by ERP entitlement (employees.erp_active)"
-            title="AMS or ERP access flag, separate from employee active status."
-            value={draftFiltersInput.erpStatus}
-            options={ERP_STATUS_OPTIONS}
-            onChange={(value) =>
-              handleDraftFilterChange({
-                erpStatus: (value || FILTER_STATUS_ALL) as EmployeeFiltersInput['erpStatus'],
-              })
-            }
-          />
+            <FilterSelect
+              label="ERP access"
+              ariaLabel="Filter by ERP entitlement (employees.erp_active)"
+              title="AMS or ERP access flag, separate from employee active status."
+              value={draftFiltersInput.erpStatus}
+              options={ERP_STATUS_OPTIONS}
+              onChange={(value) =>
+                handleDraftFilterChange({
+                  erpStatus: (value || FILTER_STATUS_ALL) as EmployeeFiltersInput['erpStatus'],
+                })
+              }
+            />
 
-          <FilterSelect
-            label="Department"
-            ariaLabel="Filter by department"
-            value={draftFiltersInput.department}
-            options={departmentOptions}
-            onChange={(value) => handleDraftFilterChange({ department: value })}
-          />
+            <FilterSelect
+              label="Department"
+              ariaLabel="Filter by department"
+              value={draftFiltersInput.department}
+              options={departmentOptions}
+              onChange={(value) => handleDraftFilterChange({ department: value })}
+            />
 
-          <FilterSelect
-            label="Role"
-            ariaLabel="Filter by role"
-            value={draftFiltersInput.role}
-            options={ROLE_OPTIONS}
-            onChange={(value) => handleDraftFilterChange({ role: value || ROLE_ALL })}
-          />
-        </div>
-      </FilterPopup>
+            <FilterSelect
+              label="Role"
+              ariaLabel="Filter by role"
+              value={draftFiltersInput.role}
+              options={ROLE_OPTIONS}
+              onChange={(value) => handleDraftFilterChange({ role: value || ROLE_ALL })}
+            />
+          </div>
+        </FilterPopup>
+      ) : null}
 
       <ConfirmDialog
         open={Boolean(roleChangeTarget && roleChangeTargetRole)}

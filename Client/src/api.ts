@@ -1595,6 +1595,9 @@ export async function createAsset(payload: AssetWriteInput) {
 
 export async function updateAsset(assetTag: string, payload: Partial<AssetWriteInput>) {
   await assertActiveAdminAccess()
+  if (payload.status !== undefined) {
+    throw new Error('Use the lifecycle status update flow to change inventory status.')
+  }
   const { data: asset, error: assetError } = await supabase
     .from('assets')
     .select('id')
@@ -1615,7 +1618,6 @@ export async function updateAsset(assetTag: string, payload: Partial<AssetWriteI
   if (payload.serial_number !== undefined) patch.serial_number = payload.serial_number?.trim() || null
   if (payload.purchase_date !== undefined) patch.purchase_date = payload.purchase_date || null
   if (payload.warranty_expiry !== undefined) patch.warranty_expiry = payload.warranty_expiry || null
-  if (payload.status !== undefined) patch.status = payload.status || null
   if (payload.custom_fields !== undefined) patch.custom_fields = payload.custom_fields
   if (payload.metadata !== undefined) patch.metadata = payload.metadata
 
@@ -2076,12 +2078,13 @@ export async function setAssetLifecycleStatus(
   assetTag: string,
   newStatus: string,
   notes?: string,
+  source: string = 'runtime',
 ): Promise<Record<string, unknown>> {
   await assertActiveAdminAccess()
   const { data, error } = await supabase.rpc('fn_set_asset_lifecycle_status', {
     p_asset_tag: assetTag.trim(),
     p_new_status: newStatus.trim(),
-    p_source: 'bulk_update',
+    p_source: source,
     p_notes: notes || null,
   })
 
@@ -2429,13 +2432,15 @@ export function subscribeDashboardRealtime(onChange: () => void) {
   }
 }
 
-/** Payload from `fn_public_scan_asset` (anonymous QR): basic identity + inventory status only. */
+/** Payload from `fn_public_scan_asset` (anonymous QR): tightly-scoped public scan details. */
 export type PublicScanAsset = {
-  asset_tag: string | null
-  category: string | null
-  manufacturer: string | null
-  model: string | null
+  asset_name: string
+  asset_tag: string
   status: string
+  is_assigned: boolean
+  holder_name?: string | null
+  holder_employee_code?: string | null
+  holder_department?: string | null
 }
 
 export async function getPublicScanAsset(assetTag: string): Promise<PublicScanAsset> {
@@ -2462,11 +2467,22 @@ export async function getPublicScanAsset(assetTag: string): Promise<PublicScanAs
 
   const p = payload as Record<string, unknown>
   return {
-    asset_tag: typeof p.asset_tag === 'string' ? p.asset_tag : null,
-    category: typeof p.category === 'string' ? p.category : null,
-    manufacturer: typeof p.manufacturer === 'string' ? p.manufacturer : null,
-    model: typeof p.model === 'string' ? p.model : null,
+    asset_name:
+      typeof p.asset_name === 'string' && p.asset_name.trim()
+        ? p.asset_name
+        : typeof p.asset_tag === 'string'
+          ? p.asset_tag
+          : normalizedTag,
+    asset_tag:
+      typeof p.asset_tag === 'string' && p.asset_tag.trim()
+        ? p.asset_tag
+        : normalizedTag,
     status: typeof p.status === 'string' ? p.status : String(p.status ?? ''),
+    is_assigned: Boolean(p.is_assigned),
+    holder_name: typeof p.holder_name === 'string' ? p.holder_name : null,
+    holder_employee_code:
+      typeof p.holder_employee_code === 'string' ? p.holder_employee_code : null,
+    holder_department: typeof p.holder_department === 'string' ? p.holder_department : null,
   }
 }
 

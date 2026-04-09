@@ -25,6 +25,7 @@ Apply the files in this exact order:
 19. `19_assign_same_employee_error.sql`
 20. `20_fn_set_asset_lifecycle_status.sql`
 21. `21_assign_lifecycle_status_guard.sql`
+22. `22_public_scan_holder_details.sql`
 
 ## Important invariants
 
@@ -35,7 +36,7 @@ Apply the files in this exact order:
 - Runtime assign/return flows must use `fn_assign_asset` and `fn_return_asset`.
 - `fn_assign_asset` only allows assignment when `assets.status` is `in_stock` or `assigned` (whitelist). Assets in `lost`, `disposed`, `retired`, or `in_repair` must have their status changed first.
 - Lifecycle status changes (in_stock, in_repair, retired, lost, disposed) must use `fn_set_asset_lifecycle_status` — it auto-closes open assignments and records proper audit events.
-- Public QR scan must stay minimal and uses `fn_public_scan_asset`.
+- Public QR scan uses `fn_public_scan_asset` and must stay tightly scoped to the documented anonymous payload.
 - Soft delete and recycle-bin behavior are part of the schema contract.
 
 ## Notes
@@ -47,6 +48,10 @@ Apply the files in this exact order:
 - `19_assign_same_employee_error.sql` turns same-holder assignment attempts into a validation error instead of a success-style no-op.
 - `20_fn_set_asset_lifecycle_status.sql` adds a controlled RPC for lifecycle status transitions. Auto-closes open assignments, records per-assignment `unassigned` events, and logs an `asset_updated` event with before/after status diff.
 - `21_assign_lifecycle_status_guard.sql` adds a whitelist-based status guard to `fn_assign_asset`. Only `in_stock` and `assigned` assets can be assigned; all other statuses are rejected with a clear message.
+- `22_public_scan_holder_details.sql` updates the anonymous QR contract to expose only:
+- assigned assets: `asset_name`, `holder_name`, `holder_employee_code`, `holder_department`
+- unassigned assets: `asset_name`, `status`, `asset_tag`
+- `22_public_scan_holder_details.sql` keeps `qr_scanned` lifecycle logging and the same RPC signature.
 
 ## Re-run guidance
 

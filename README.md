@@ -26,7 +26,7 @@ The repo currently contains:
 - `employees.is_active` and `employees.erp_active` are different flags and must not be treated as the same thing.
 - Assignment and return flows belong to DB RPCs: `fn_assign_asset` and `fn_return_asset`.
 - Lifecycle status changes (in_stock, in_repair, retired, lost, disposed) belong to `fn_set_asset_lifecycle_status`.
-- Public QR scan uses `fn_public_scan_asset` and is intentionally minimal.
+- Public QR scan uses `fn_public_scan_asset` and exposes a tightly-scoped anonymous payload.
 - Assets and employees use soft delete and recycle-bin workflows.
 
 ## Repository guides
@@ -83,4 +83,8 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8010
 
 - The current client code defaults QR links to `https://web-assetmanager.vercel.app` unless `VITE_PUBLIC_APP_ORIGIN` overrides it.
 - The FastAPI server must have `FRONTEND_URL` aligned with the frontend origin for server-generated QR codes.
+- Anonymous QR scan now exposes only:
+- assigned assets: `asset_name`, `holder_name`, `holder_employee_code`, `holder_department`
+- unassigned assets: `asset_name`, `status`, `asset_tag`
+- The public QR page always keeps the sign-in redirect action and "Powered by Asset Manager" footer.
 - Treat the migration SQL as the source of truth when docs and assumptions differ.

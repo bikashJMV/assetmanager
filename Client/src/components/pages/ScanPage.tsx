@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { getPublicScanAsset, scanAsset, type PublicScanAsset } from '../../api'
 import { getUserFacingMessage, logDevError } from '../../utils/errors'
@@ -231,12 +231,14 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
     )
   }
 
-  const heading = [asset.manufacturer, asset.model]
-    .map((value) => formatDisplay(value))
-    .filter((value) => value !== '-')
-    .join(' ')
-
   const isFullPassport = protectedRoute && 'custom_fields' in asset
+  const publicAsset = !isFullPassport ? (asset as PublicScanAsset) : null
+  const heading = isFullPassport
+    ? [asset.manufacturer, asset.model]
+        .map((value) => formatDisplay(value))
+        .filter((value) => value !== '-')
+        .join(' ')
+    : publicAsset?.asset_name ?? '-'
 
   return (
     <main className="min-h-screen bg-app text-primary px-4 py-8">
@@ -247,30 +249,46 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
         <h1 className="text-2xl font-bold">{heading || '-'}</h1>
       </div>
 
-      <div className="flex justify-center mb-8">
-        <div className="inline-flex items-center gap-2">
-          <span className="text-sm text-subtle">Current status:</span>
-          <InventoryStatusBadge status={asset.status} size="md" />
-        </div>
-      </div>
+      {isFullPassport ? (
+        <>
+          <div className="flex justify-center mb-8">
+            <div className="inline-flex items-center gap-2">
+              <span className="text-sm text-subtle">Current status:</span>
+              <InventoryStatusBadge status={asset.status} size="md" />
+            </div>
+          </div>
 
-      <div className="grid grid-cols-1 gap-3 max-w-xl mx-auto">
-        <Field label="Category" value={formatDisplay(asset.category)} />
-        {isFullPassport ? (
-          <>
+          <div className="grid grid-cols-1 gap-3 max-w-xl mx-auto">
+            <Field label="Category" value={formatDisplay(asset.category)} />
             <Field label="Location" value={formatDisplay(asset.location)} />
             <Field label="Current Holder" value={formatDisplay(asset.holder)} />
             <Field label="Holder ERP status" value={asset.holder_erp_status} subtle />
             {Object.entries(asset.custom_fields || {}).map(([key, value]) => (
               <Field key={key} label={key} value={formatDisplay(value)} />
             ))}
-          </>
-        ) : (
-          <p className="text-subtle text-xs text-center px-2">
-            Sign in for assignment history, location, and full record details.
-          </p>
-        )}
-      </div>
+          </div>
+        </>
+      ) : publicAsset ? (
+        <div className="grid grid-cols-1 gap-3 max-w-xl mx-auto">
+          {publicAsset.is_assigned ? (
+            <>
+              <Field label="Asset Name" value={formatDisplay(publicAsset.asset_name)} />
+              <Field label="Current Asset Holder Name" value={formatDisplay(publicAsset.holder_name)} />
+              <Field label="Employee ID" value={formatDisplay(publicAsset.holder_employee_code)} />
+              <Field label="Department" value={formatDisplay(publicAsset.holder_department)} />
+            </>
+          ) : (
+            <>
+              <Field label="Asset Name" value={formatDisplay(publicAsset.asset_name)} />
+              <Field
+                label="Inventory Status"
+                value={<InventoryStatusBadge status={publicAsset.status} size="md" />}
+              />
+              <Field label="Asset Tag" value={formatDisplay(publicAsset.asset_tag)} />
+            </>
+          )}
+        </div>
+      ) : null}
 
       {isFullPassport && asset.holder_erp_status.toLowerCase().includes('inactive') ? (
         <p className="text-center text-subtle text-xs mt-6">
@@ -320,7 +338,15 @@ function safeDecodeURIComponent(value: string): string {
   }
 }
 
-function Field({ label, value, subtle = false }: { label: string; value: string; subtle?: boolean }) {
+function Field({
+  label,
+  value,
+  subtle = false,
+}: {
+  label: string
+  value: ReactNode
+  subtle?: boolean
+}) {
   return (
     <div className="bg-surface-2 border border-base rounded-xl px-4 py-3 flex justify-between items-start gap-4">
       <span className="text-subtle text-xs uppercase">{label}</span>

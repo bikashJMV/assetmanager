@@ -49,7 +49,7 @@ React 19 + Vite 7 + TypeScript single-page app for Asset Manager.
 - Employee list, detail, create, edit, role-aware actions, and employee bulk import
 - Asset bulk import from spreadsheet on `/assets/new`
 - Bulk inventory status update (assign, return, lifecycle) from Excel on `/assets`
-- Public QR scan with minimal anonymous payload
+- Public QR scan with a tightly-scoped anonymous payload
 - Warranty notifications and recycle-bin restore flows
 - IT Ops telemetry analysis UI backed by the FastAPI server
 
@@ -109,8 +109,13 @@ Available scripts:
 
 - The normal app runtime path is browser -> Supabase, not browser -> FastAPI.
 - `src/api.ts` is the right place for new Supabase access patterns.
-- The public scan route must stay minimal and must not expose internal holder or location data.
+- The public scan route is a deliberate anonymous exposure contract.
+- It now exposes only:
+- assigned assets: `asset_name`, `holder_name`, `holder_employee_code`, `holder_department`
+- unassigned assets: `asset_name`, `status`, `asset_tag`
+- Do not expose any additional holder, location, ERP, or custom field data on the anonymous route without an explicit contract change.
 - Assignment state transitions belong to DB RPCs, not ad hoc client mutations.
+- Generic asset edits must not mutate lifecycle status through `updateAsset()`. In edit mode, `src/components/form/AssetForm.tsx` keeps the status field in the same modal but saves status changes through `setAssetLifecycleStatus()` so history/audit stays correct.
 - The analysis page is the main exception to the "direct to Supabase" pattern; it fetches from the FastAPI server using the signed-in user's bearer token.
 - `src/utils/errors.ts` rewrites raw DB/RPC error messages into user-friendly guidance (e.g. "Employee is not active" → "This employee is currently inactive. Please verify their status before assigning assets."). Add new patterns there when introducing new RPCs.
 - Detail pages (asset, employee) use `useSetBreadcrumbOverride()` to push readable labels into the breadcrumb bar instead of showing raw UUIDs or bare IDs. The store resets automatically on route change.

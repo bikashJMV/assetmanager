@@ -1,7 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { AssetLifecycleEvent } from '../../api'
 import { formatDateTime } from '../../utils/formatDisplay'
-import { formatChangeValue, formatHistoryActor, getEventSummary, normalizeFieldChanges } from './assetHistoryFormatters'
+import {
+  formatChangeValue,
+  formatHistoryActor,
+  getEventSummary,
+  groupEventsByDay,
+  normalizeFieldChanges,
+  type AssetHistoryDayGroup,
+} from './assetHistoryFormatters'
 
 type Props = {
   events: AssetLifecycleEvent[]
@@ -10,7 +17,7 @@ type Props = {
 type MonthGroup = {
   key: string
   label: string
-  events: AssetLifecycleEvent[]
+  days: AssetHistoryDayGroup[]
 }
 
 type YearGroup = {
@@ -124,8 +131,9 @@ function getEventAccentClass(eventType: string): string {
 function buildYearGroups(events: AssetLifecycleEvent[]): YearGroup[] {
   const yearMap = new Map<string, Map<string, MonthGroup>>()
 
-  for (const event of events) {
-    const date = new Date(event.created_at)
+  for (const dayGroup of groupEventsByDay(events)) {
+    const dateSource = dayGroup.events[0]?.created_at ?? dayGroup.dayKey
+    const date = new Date(dateSource)
     const year = Number.isNaN(date.getTime()) ? 'Unknown' : String(date.getFullYear())
     const monthIndex = Number.isNaN(date.getTime()) ? -1 : date.getMonth()
     const monthKey = monthIndex >= 0 ? `${year}-${String(monthIndex + 1).padStart(2, '0')}` : `${year}-unknown`
@@ -140,14 +148,14 @@ function buildYearGroups(events: AssetLifecycleEvent[]): YearGroup[] {
     const monthMap = yearMap.get(year)!
     const existingMonth = monthMap.get(monthKey)
     if (existingMonth) {
-      existingMonth.events.push(event)
+      existingMonth.days.push(dayGroup)
       continue
     }
 
     monthMap.set(monthKey, {
       key: monthKey,
       label: monthLabel,
-      events: [event],
+      days: [dayGroup],
     })
   }
 
@@ -202,6 +210,7 @@ export default function AssetHistoryTimeline({ events }: Props) {
   const yearGroups = useMemo(() => buildYearGroups(events), [events])
   const [openYears, setOpenYears] = useState<Record<string, boolean>>({})
   const [openMonths, setOpenMonths] = useState<Record<string, boolean>>({})
+  const [openDays, setOpenDays] = useState<Record<string, boolean>>({})
 
   useEffect(() => {
     if (yearGroups.length === 0) return
@@ -227,13 +236,31 @@ export default function AssetHistoryTimeline({ events }: Props) {
       }
       return next
     })
+
+    setOpenDays((current) => {
+      const next = { ...current }
+      for (const [yearIndex, group] of yearGroups.entries()) {
+        for (const [monthIndex, month] of group.months.entries()) {
+          for (const [dayIndex, day] of month.days.entries()) {
+            if (!(day.dayKey in next)) {
+              next[day.dayKey] = yearIndex === 0 && monthIndex === 0 && dayIndex === 0
+            }
+          }
+        }
+      }
+      return next
+    })
   }, [yearGroups])
 
   return (
     <div>
       {yearGroups.map((yearGroup, yearIndex) => {
-        const yearOpen = openYears[yearGroup.year] ?? yearIndex === 0
-        const yearEventCount = yearGroup.months.reduce((sum, month) => sum + month.events.length, 0)
+        const defaultYearOpen = yearIndex === 0
+        const yearOpen = openYears[yearGroup.year] ?? defaultYearOpen
+        const yearEventCount = yearGroup.months.reduce(
+          (sum, month) => sum + month.days.reduce((daySum, day) => daySum + day.events.length, 0),
+          0,
+        )
 
         return (
           <section key={yearGroup.year}>
@@ -242,7 +269,7 @@ export default function AssetHistoryTimeline({ events }: Props) {
               onClick={() =>
                 setOpenYears((current) => ({
                   ...current,
-                  [yearGroup.year]: !(current[yearGroup.year] ?? yearIndex === 0),
+                  [yearGroup.year]: !(current[yearGroup.year] ?? defaultYearOpen),
                 }))
               }
               className={`flex w-full items-center justify-between gap-3 px-1 py-3 text-left ${yearIndex > 0 ? 'border-t border-base' : ''}`}
@@ -263,7 +290,9 @@ export default function AssetHistoryTimeline({ events }: Props) {
             {yearOpen ? (
               <div className="pl-3 sm:pl-4">
                 {yearGroup.months.map((monthGroup, monthIndex) => {
-                  const monthOpen = openMonths[monthGroup.key] ?? (yearIndex === 0 && monthIndex === 0)
+                  const defaultMonthOpen = yearIndex === 0 && monthIndex === 0
+                  const monthOpen = openMonths[monthGroup.key] ?? defaultMonthOpen
+                  const monthEventCount = monthGroup.days.reduce((sum, day) => sum + day.events.length, 0)
 
                   return (
                     <div key={monthGroup.key} className={`${monthIndex > 0 ? 'border-t border-base/70' : ''}`}>
@@ -272,7 +301,7 @@ export default function AssetHistoryTimeline({ events }: Props) {
                         onClick={() =>
                           setOpenMonths((current) => ({
                             ...current,
-                            [monthGroup.key]: !(current[monthGroup.key] ?? (yearIndex === 0 && monthIndex === 0)),
+                            [monthGroup.key]: !(current[monthGroup.key] ?? defaultMonthOpen),
                           }))
                         }
                         className="flex w-full items-center justify-between gap-3 py-3 text-left"
@@ -285,7 +314,7 @@ export default function AssetHistoryTimeline({ events }: Props) {
                             {monthGroup.label}
                           </span>
                           <span className="inline-flex items-center rounded-full border border-base bg-app px-2 py-0.5 text-[11px] font-medium text-subtle">
-                            {monthGroup.events.length} item{monthGroup.events.length === 1 ? '' : 's'}
+                            {monthEventCount} event{monthEventCount === 1 ? '' : 's'}
                           </span>
                         </div>
                         <span className="text-muted">
@@ -294,70 +323,110 @@ export default function AssetHistoryTimeline({ events }: Props) {
                       </button>
 
                       {monthOpen ? (
-                        <div className="relative pb-2 pl-4 sm:pl-5">
-                          <div className="absolute bottom-0 left-1 top-0 w-px bg-[color:var(--border)]" aria-hidden="true" />
-                          {monthGroup.events.map((event, eventIndex) => {
-                            const actor = formatHistoryActor(event)
-                            const changes = normalizeFieldChanges(event)
-                            const eventLabel = getEventLabel(event.event_type)
-                            const accentClassName = getEventAccentClass(event.event_type)
+                        <div className="space-y-3 pb-2 pl-4 sm:pl-5">
+                          {monthGroup.days.map((dayGroup, dayIndex) => {
+                            const defaultDayOpen = yearIndex === 0 && monthIndex === 0 && dayIndex === 0
+                            const dayOpen = openDays[dayGroup.dayKey] ?? defaultDayOpen
 
                             return (
-                              <article
-                                key={event.id}
-                                className={`relative py-3 ${eventIndex > 0 ? 'border-t border-base/70' : ''}`}
+                              <section
+                                key={dayGroup.dayKey}
+                                className="overflow-hidden rounded-xl border border-base bg-app"
                               >
-                                <span
-                                  className={`absolute left-[-0.15rem] top-[1.35rem] h-2.5 w-2.5 rounded-full bg-current ${accentClassName}`}
-                                  aria-hidden="true"
-                                />
-
-                                <div className="space-y-1 pl-5">
-                                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                                    <span className={`inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-[0.14em] ${accentClassName}`}>
-                                      <EventIcon eventType={event.event_type} />
-                                      {eventLabel}
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setOpenDays((current) => ({
+                                      ...current,
+                                      [dayGroup.dayKey]: !(current[dayGroup.dayKey] ?? defaultDayOpen),
+                                    }))
+                                  }
+                                  className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
+                                >
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <span className="text-sm font-semibold text-primary">{dayGroup.dayLabel}</span>
+                                    <span className="inline-flex items-center rounded-full border border-base bg-surface px-2 py-0.5 text-[11px] font-medium text-subtle">
+                                      {dayGroup.events.length} change{dayGroup.events.length === 1 ? '' : 's'}
                                     </span>
-                                    <span className="text-xs text-subtle">{formatDateTime(event.created_at)}</span>
                                   </div>
+                                  <span className="text-muted">
+                                    <Chevron open={dayOpen} />
+                                  </span>
+                                </button>
 
-                                  <p className="text-sm font-medium leading-6 text-primary">
-                                    {getEventSummary(event)}
-                                    <span className="ml-2 text-xs font-semibold uppercase tracking-[0.12em] text-subtle">
-                                      By:
-                                    </span>{' '}
-                                    <span className="text-sm font-normal text-muted">{actor.primary}</span>
-                                  </p>
+                                {dayOpen ? (
+                                  <div className="relative border-t border-base px-4 py-2 pl-9">
+                                    <div
+                                      className="absolute bottom-4 left-5 top-4 w-px bg-[color:var(--border)]"
+                                      aria-hidden="true"
+                                    />
+                                    {dayGroup.events.map((event, eventIndex) => {
+                                      const actor = formatHistoryActor(event)
+                                      const changes = normalizeFieldChanges(event)
+                                      const eventLabel = getEventLabel(event.event_type)
+                                      const accentClassName = getEventAccentClass(event.event_type)
 
-                                  {actor.secondary ? <p className="text-[11px] text-subtle">{actor.secondary}</p> : null}
+                                      return (
+                                        <article
+                                          key={event.id}
+                                          className={`relative py-3 ${eventIndex > 0 ? 'border-t border-base/70' : ''}`}
+                                        >
+                                          <span
+                                            className={`absolute left-[-1.18rem] top-[1.35rem] h-2.5 w-2.5 rounded-full bg-current ${accentClassName}`}
+                                            aria-hidden="true"
+                                          />
 
-                                  {changes.length > 0 ? (
-                                    <div className="pt-1 text-xs leading-6 text-muted">
-                                      {changes.map((change, changeIndex) => (
-                                        <p key={`${event.id}:${change.field}:${changeIndex}`}>
-                                          <span className="font-semibold text-primary">{change.label}:</span>{' '}
-                                          {formatChangeValue(change.before, change.truncated)}{' '}
-                                          <span className="inline-flex translate-y-[1px] text-accent" aria-hidden="true">
-                                            <svg
-                                              viewBox="0 0 24 24"
-                                              className="h-4 w-5"
-                                              fill="none"
-                                              stroke="currentColor"
-                                              strokeWidth="2.4"
-                                              strokeLinecap="round"
-                                              strokeLinejoin="round"
-                                            >
-                                              <path d="M3 12h15" />
-                                              <path d="m14 7 5 5-5 5" />
-                                            </svg>
-                                          </span>{' '}
-                                          {formatChangeValue(change.after, change.truncated)}
-                                        </p>
-                                      ))}
-                                    </div>
-                                  ) : null}
-                                </div>
-                              </article>
+                                          <div className="space-y-1">
+                                            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                                              <span className={`inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-[0.14em] ${accentClassName}`}>
+                                                <EventIcon eventType={event.event_type} />
+                                                {eventLabel}
+                                              </span>
+                                              <span className="text-xs text-subtle">{formatDateTime(event.created_at)}</span>
+                                            </div>
+
+                                            <p className="text-sm font-medium leading-6 text-primary">
+                                              {getEventSummary(event)}
+                                              <span className="ml-2 text-xs font-semibold uppercase tracking-[0.12em] text-subtle">
+                                                By:
+                                              </span>{' '}
+                                              <span className="text-sm font-normal text-muted">{actor.primary}</span>
+                                            </p>
+
+                                            {actor.secondary ? <p className="text-[11px] text-subtle">{actor.secondary}</p> : null}
+
+                                            {changes.length > 0 ? (
+                                              <div className="pt-1 text-xs leading-6 text-muted">
+                                                {changes.map((change, changeIndex) => (
+                                                  <p key={`${event.id}:${change.field}:${changeIndex}`}>
+                                                    <span className="font-semibold text-primary">{change.label}:</span>{' '}
+                                                    {formatChangeValue(change.before, change.truncated)}{' '}
+                                                    <span className="inline-flex translate-y-[1px] text-accent" aria-hidden="true">
+                                                      <svg
+                                                        viewBox="0 0 24 24"
+                                                        className="h-4 w-5"
+                                                        fill="none"
+                                                        stroke="currentColor"
+                                                        strokeWidth="2.4"
+                                                        strokeLinecap="round"
+                                                        strokeLinejoin="round"
+                                                      >
+                                                        <path d="M3 12h15" />
+                                                        <path d="m14 7 5 5-5 5" />
+                                                      </svg>
+                                                    </span>{' '}
+                                                    {formatChangeValue(change.after, change.truncated)}
+                                                  </p>
+                                                ))}
+                                              </div>
+                                            ) : null}
+                                          </div>
+                                        </article>
+                                      )
+                                    })}
+                                  </div>
+                                ) : null}
+                              </section>
                             )
                           })}
                         </div>

@@ -45,7 +45,7 @@ async function executeRow(row: InventoryUpdateParsedRow): Promise<void> {
       })
       break
     default:
-      await setAssetLifecycleStatus(assetTag, action, comment || undefined)
+      await setAssetLifecycleStatus(assetTag, action, comment || undefined, 'bulk_update')
       break
   }
 }

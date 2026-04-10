@@ -69,6 +69,21 @@ class Settings:
         default_factory=lambda: os.getenv("TELEMETRY_ENV", os.getenv("VITE_TELEMETRY_ENV", "local")).strip().lower()
     )
 
+    # ── Notification / Email microservice ────────────────────────────────────
+    # EMAIL_SERVICE_URL: Full base URL of the running email microservice.
+    #   e.g. https://email-notification-ams.vercel.app  (or http://localhost:8000 locally)
+    EMAIL_SERVICE_URL: str = field(
+        default_factory=lambda: os.getenv("EMAIL_SERVICE_URL", "").rstrip("/")
+    )
+    # EMAIL_SERVICE_API_KEY: X-API-Key header value accepted by the email service.
+    EMAIL_SERVICE_API_KEY: str = field(
+        default_factory=lambda: os.getenv("EMAIL_SERVICE_API_KEY", "")
+    )
+    # NOTIFICATIONS_ENABLED: Set to "true" to dispatch real emails. anything else → silent no-op.
+    NOTIFICATIONS_ENABLED: bool = field(
+        default_factory=lambda: os.getenv("NOTIFICATIONS_ENABLED", "false").strip().lower() == "true"
+    )
+
     def __post_init__(self):
         # Basic validation
         if not self.SUPABASE_URL or not self.SUPABASE_KEY:

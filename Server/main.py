@@ -41,8 +41,11 @@ def create_app() -> FastAPI:
     protected_dependencies = [Depends(require_backend_api_key)]
     app.include_router(assets.router, dependencies=protected_dependencies)
     app.include_router(logs.router, dependencies=protected_dependencies)
-    app.include_router(assignments.router, dependencies=protected_dependencies)
-    app.include_router(employees.router, dependencies=protected_dependencies)
+    # Assignments / employees: authenticated via Supabase JWT (require_manage_platform_access
+    # on routes). Requiring BACKEND_API_KEY here breaks browser flows — the client sends
+    # Bearer <session JWT>, not the backend API key.
+    app.include_router(assignments.router)
+    app.include_router(employees.router)
     # Role-based auth inside the router; do not require BACKEND_API_KEY for browser usage.
     app.include_router(analysis.router)
     

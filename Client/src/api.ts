@@ -5,6 +5,24 @@ import { supabase } from './supabaseClient'
 /** Default origin in all QRs unless `VITE_PUBLIC_APP_ORIGIN` is set (staging / fork). */
 const PRODUCTION_QR_APP_ORIGIN = 'https://web-assetmanager.vercel.app'
 
+/**
+ * BFF (FastAPI Server) base URL.
+ * Reads VITE_API_URL from env; falls back to localhost:8000 for local dev.
+ * Trailing slash stripped for safe concatenation.
+ */
+function getBffBaseUrl(): string {
+  const raw = (import.meta.env.VITE_API_URL as string | undefined)?.trim()
+  return raw ? raw.replace(/\/$/, '') : 'http://localhost:8000'
+}
+
+/** Build headers for calls to the BFF server (includes X-API-Key when configured). */
+function bffHeaders(): Record<string, string> {
+  const key = (import.meta.env.VITE_BACKEND_API_KEY as string | undefined)?.trim() ?? ''
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (key) headers['X-API-Key'] = key
+  return headers
+}
+
 export type SessionEmployee = {
   id: string
   employee_code: string
@@ -2051,50 +2069,81 @@ export async function getAssetDetail(assetTag: string): Promise<AssetDetailRecor
 
 export async function assignAsset(payload: AssignAssetPayload) {
   await assertActiveAdminAccess()
-  // Omit p_assigned_at when unset: passing null overrides the SQL arg default now() and breaks NOT NULL on assigned_at.
-  const { data, error } = await supabase.rpc('fn_assign_asset', {
-    p_asset_tag: payload.asset_tag.trim(),
-    p_employee_code: payload.employee_code.trim(),
-    ...(payload.assigned_at?.trim() ? { p_assigned_at: payload.assigned_at.trim() } : {}),
-    p_source: 'runtime',
-    p_notes: payload.notes ?? null,
+
+  // Route through the BFF so the server can dispatch email notifications.
+  // The BFF calls fn_assign_asset internally with service-role, same business rules.
+  const session = await getSession()
+  const body: Record<string, unknown> = {
+    asset_tag: payload.asset_tag.trim(),
+    employee_code: payload.employee_code.trim(),
+    source: 'runtime',
+  }
+  if (payload.assigned_at?.trim()) body.assigned_at = payload.assigned_at.trim()
+  if (payload.notes) body.notes = payload.notes
+
+  const headers = bffHeaders()
+  if (session?.access_token) headers['Authorization'] = `Bearer ${session.access_token}`
+
+  const resp = await fetch(`${getBffBaseUrl()}/assignments/assign`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(body),
   })
 
-  ensureNoSupabaseError(error, 'Unable to assign asset')
-  const result = extractRpcJsonbObject(data)
-  if (!rpcPayloadOk(result)) {
+  const json: unknown = await resp.json()
+  // Unwrap envelope if present (BFF wraps responses).
+  const data = (
+    json && typeof json === 'object' && 'data' in (json as object)
+      ? (json as { data: unknown }).data
+      : json
+  ) as Record<string, unknown> | null
+
+  if (!resp.ok || !data || data.ok === false) {
     const msg =
-      typeof result?.message === 'string' && result.message.trim()
-        ? result.message.trim()
-        : data == null
-          ? 'No data returned from assign. Confirm fn_assign_asset is deployed on the database.'
-          : 'Assign failed — invalid response from server. Confirm fn_assign_asset migrations are applied.'
+      typeof data?.message === 'string' && data.message.trim()
+        ? data.message.trim()
+        : `Assign failed (${resp.status}). Confirm the server is reachable.`
     throw new Error(msg)
   }
-  return result
+  return data
 }
 
 export async function returnAsset(payload: ReturnAssetPayload) {
   await assertActiveAdminAccess()
-  const { data, error } = await supabase.rpc('fn_return_asset', {
-    p_asset_tag: payload.asset_tag.trim(),
-    p_returned_at: payload.returned_at || null,
-    p_source: 'runtime',
-    p_notes: payload.notes || null,
+
+  // Route through the BFF so the server can dispatch email notifications.
+  const session = await getSession()
+  const body: Record<string, unknown> = {
+    asset_tag: payload.asset_tag.trim(),
+    source: 'runtime',
+  }
+  if (payload.returned_at) body.returned_at = payload.returned_at
+  if (payload.notes) body.notes = payload.notes
+
+  const headers = bffHeaders()
+  if (session?.access_token) headers['Authorization'] = `Bearer ${session.access_token}`
+
+  const resp = await fetch(`${getBffBaseUrl()}/assignments/return`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(body),
   })
 
-  ensureNoSupabaseError(error, 'Unable to return asset')
-  const result = extractRpcJsonbObject(data)
-  if (!rpcPayloadOk(result)) {
+  const json: unknown = await resp.json()
+  const data = (
+    json && typeof json === 'object' && 'data' in (json as object)
+      ? (json as { data: unknown }).data
+      : json
+  ) as Record<string, unknown> | null
+
+  if (!resp.ok || !data || data.ok === false) {
     const msg =
-      typeof result?.message === 'string' && result.message.trim()
-        ? result.message.trim()
-        : data == null
-          ? 'No data returned from return. Confirm fn_return_asset is deployed on the database.'
-          : 'Return failed — invalid response from server. Confirm fn_return_asset migrations are applied.'
+      typeof data?.message === 'string' && data.message.trim()
+        ? data.message.trim()
+        : `Return failed (${resp.status}). Confirm the server is reachable.`
     throw new Error(msg)
   }
-  return result
+  return data
 }
 
 export async function setAssetLifecycleStatus(

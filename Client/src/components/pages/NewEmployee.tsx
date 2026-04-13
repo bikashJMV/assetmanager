@@ -89,20 +89,20 @@ export default function NewEmployee() {
               </p>
               <p>
                 <span className="text-primary font-medium">Required:</span>{' '}
-                <code className="text-[0.8rem] text-primary">employee_code</code>,{' '}
+                <code className="text-[0.8rem] text-primary">employee_id</code> (or alias{' '}
+                <code className="text-[0.8rem] text-primary">employee_code</code>),{' '}
                 <code className="text-[0.8rem] text-primary">name</code>,{' '}
-                <code className="text-[0.8rem] text-primary">department</code>.{' '}
+                <code className="text-[0.8rem] text-primary">department</code>. Optional:{' '}
                 <code className="text-[0.8rem] text-primary">email</code>,{' '}
-                <code className="text-[0.8rem] text-primary">is_active</code>,{' '}
-                <code className="text-[0.8rem] text-primary">erp_active</code> (true/false).
+                <code className="text-[0.8rem] text-primary">is_active</code> (true/false).
               </p>
               <p>
-                <span className="text-primary font-medium">is_active</span>: active in this app.{' '}
-                <span className="text-primary font-medium">erp_active</span>: active in ERP/HR reporting. Bulk import adds{' '}
-                <span className="text-primary font-medium">new</span> employees only: if any row fails validation, any
-                duplicate <code className="text-[0.8rem] text-primary">employee_code</code> (in the file or already in the
-                system), or a Recycle Bin conflict, the entire import is cancelled and nothing is saved. Use the single
-                employee form to edit existing records.
+                <span className="text-primary font-medium">is_active</span>: employment / account active in this app.
+                Bulk import adds <span className="text-primary font-medium">new</span> employees only in one database
+                transaction: if any row fails to save (including duplicate <code className="text-[0.8rem] text-primary">employee_id</code> or <code className="text-[0.8rem] text-primary">email</code> in the file or database),{' '}
+                <span className="text-primary font-medium">no</span> rows are saved. Duplicate IDs in the file or
+                already in the system, or Recycle Bin conflicts, are blocked before import. Use the single employee form
+                to edit existing records.
               </p>
               <div className="mt-2 border-t border-base pt-3">
                 <a

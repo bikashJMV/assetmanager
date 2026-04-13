@@ -266,7 +266,7 @@ function EmployeeLoadSection({ rows }: { rows: OverviewAnalysisEmployeeLoad[] })
                   <p className="text-sm font-semibold text-primary">{row.employee_name}</p>
                   <p className="mt-1 text-xs text-subtle">
                     {[
-                      row.employee_code ? `ID ${row.employee_code}` : null,
+                      row.display_employee_id ? `ID ${row.display_employee_id}` : null,
                       row.department ? formatDisplay(row.department) : null,
                     ]
                       .filter(Boolean)

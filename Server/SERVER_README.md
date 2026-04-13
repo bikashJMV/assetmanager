@@ -46,6 +46,8 @@ Create `Server/.env` (start from `Server/.env.example`).
 | `FRONTEND_URL` | Strongly recommended | Origin used in server-generated QR links |
 | `ALLOWED_ORIGINS` | Recommended | Comma-separated CORS allowlist |
 | `BACKEND_API_KEY` | Recommended in production | Optional shared key for protected routes |
+| `EMAIL_SERVICE_URL` | For notifications | Base URL of the email notification microservice |
+| `BACKEND_API_KEY_EMAIL_NOTIFICATION` | For notifications | Purpose-specific `X-API-Key` used when this server calls the email notification microservice |
 | `ENV` | No | Runtime mode such as `local` or `production` |
 | `TELEMETRY_SERVER_BASE_URL` | For `/analysis` | Base URL of `TelemetryServer/` |
 | `TELEMETRY_ITOPS_QUERY_KEY_NEW` | For `/analysis` | Shared key used when this server calls `TelemetryServer/telemetry/overview/events` |
@@ -66,6 +68,12 @@ Useful URLs:
 - `http://localhost:8000/docs`
 - `http://localhost:8000/redoc`
 - `http://localhost:8000/health`
+
+## Notification secret naming
+
+- Keep `BACKEND_API_KEY` reserved for protecting this server's public backend routes.
+- Use `BACKEND_API_KEY_EMAIL_NOTIFICATION` for the separate email notification microservice secret.
+- `EMAIL_SERVICE_API_KEY` is still accepted temporarily as a legacy fallback during migration, but new environments should use `BACKEND_API_KEY_EMAIL_NOTIFICATION`.
 
 ## Python dependencies
 
@@ -173,7 +181,7 @@ python -m pytest tests/test_envelope.py -v
 
 AMS SQL lives in `db/migrations/v2/`.
 
-- Start with [`db/migrations/v2/README.md`](./db/migrations/v2/README.md)
+- Start with [`db/migrations/v2/README.md`](./db/migrations/v2/README.md) for the full ordered migration list through `45_recycle_bin_grants_v_employee_directory.sql` (employee directory vs Recycle Bin visibility).
 - Use [`db/migrations/v2/STAGING_RUNBOOK.md`](./db/migrations/v2/STAGING_RUNBOOK.md) for staged rollout work
 
 ## Related docs

@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react'
 import { listDepartments, type EmployeeRole, type EmployeeUpsertInput } from '../../api'
 import { getUserFacingMessage, logDevError } from '../../utils/errors'
 import FilterSelect, { type FilterSelectOption } from '../common/FilterSelect'
-import DepartmentCombobox from './DepartmentCombobox'
 
 type Props = {
   prefill?: Partial<EmployeeUpsertInput>
@@ -10,19 +9,20 @@ type Props = {
   onSubmit: (employee: EmployeeUpsertInput) => Promise<void> | void
   /** Department names for the suggestion list. If omitted, names are loaded from the API. */
   departmentOptions?: string[]
+  /** Whether the current user can manage admin-level fields (admin or IT Ops). */
+  canManageAdminRole?: boolean
 }
 
 const defaults: EmployeeUpsertInput = {
-  employee_code: '',
+  employee_id: '',
   name: '',
   email: '',
   department: '',
   role: 'employee',
   is_active: true,
-  erp_active: true,
 }
 
-const requiredFields: (keyof EmployeeUpsertInput)[] = ['employee_code', 'name', 'department']
+const requiredFields: (keyof EmployeeUpsertInput)[] = ['employee_id', 'name', 'department']
 
 const ROLE_OPTIONS: FilterSelectOption[] = [
   { value: 'employee', label: 'Employee' },
@@ -35,12 +35,7 @@ const EMPLOYEE_STATUS_OPTIONS: FilterSelectOption[] = [
   { value: 'inactive', label: 'Inactive employee' },
 ]
 
-const ERP_STATUS_OPTIONS: FilterSelectOption[] = [
-  { value: 'active', label: 'Active' },
-  { value: 'inactive', label: 'Inactive' },
-]
-
-export default function EmployeeForm({ prefill, onClose, onSubmit, departmentOptions }: Props) {
+export default function EmployeeForm({ prefill, onClose, onSubmit, departmentOptions, canManageAdminRole = false }: Props) {
   const [form, setForm] = useState<EmployeeUpsertInput>({
     ...defaults,
     ...prefill,
@@ -94,7 +89,7 @@ export default function EmployeeForm({ prefill, onClose, onSubmit, departmentOpt
       const normalizedRole = form.role ? (form.role as EmployeeRole) : 'employee'
       await onSubmit({
         ...form,
-        employee_code: form.employee_code.trim(),
+        employee_id: form.employee_id.trim(),
         name: form.name.trim(),
         email: form.email?.trim() || null,
         department: form.department?.trim() || null,
@@ -119,10 +114,10 @@ export default function EmployeeForm({ prefill, onClose, onSubmit, departmentOpt
         <div className=" p-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <Field
-              label="Employee Code"
-              value={form.employee_code}
+              label="Employee ID"
+              value={form.employee_id}
               required
-              onChange={(value) => setForm((current) => ({ ...current, employee_code: value }))}
+              onChange={(value) => setForm((current) => ({ ...current, employee_id: value }))}
               disabled={isEditing}
             />
             <Field
@@ -137,73 +132,49 @@ export default function EmployeeForm({ prefill, onClose, onSubmit, departmentOpt
               value={form.email || ''}
               onChange={(value) => setForm((current) => ({ ...current, email: value }))}
             />
-            <DepartmentCombobox
-              id="employee-form-department"
+            <Field
               label="Department"
-              required
               value={form.department || ''}
-              onChange={(department) => setForm((current) => ({ ...current, department }))}
+              required
+              onChange={(value) => setForm((current) => ({ ...current, department: value }))}
+              placeholder="Enter department name"
               suggestions={departmentSuggestions}
-              placeholder="Choose from list or type a new department"
-              hint="Pick a suggestion (accent underline on hover) or type a new department name."
             />
-            <div>
-              <label htmlFor="employee-form-role-trigger" className="block text-muted text-xs mb-1">
-                Role
-              </label>
-              <FilterSelect
-                hideLabel
-                dense
-                triggerId="employee-form-role-trigger"
-                label=""
-                value={form.role || 'employee'}
-                onChange={(value) =>
-                  setForm((current) => ({ ...current, role: value as EmployeeRole }))
-                }
-                options={ROLE_OPTIONS}
-                ariaLabel="Employee role"
-              />
-            </div>
-            <div>
-              <label htmlFor="employee-form-status-trigger" className="block text-muted text-xs mb-1">
-                Employee status
-              </label>
-              <FilterSelect
-                hideLabel
-                dense
-                triggerId="employee-form-status-trigger"
-                label=""
-                value={form.is_active ? 'active' : 'inactive'}
-                onChange={(value) =>
-                  setForm((current) => ({ ...current, is_active: value === 'active' }))
-                }
-                options={EMPLOYEE_STATUS_OPTIONS}
-                ariaLabel="Employee active or not active"
-              />
-              <p className="text-[11px] text-muted mt-1">
-                Employment / account flag. Assignment is blocked when not active.
-              </p>
-            </div>
-            <div>
-              <label htmlFor="employee-form-erp-trigger" className="block text-muted text-xs mb-1">
-                ERP status
-              </label>
-              <FilterSelect
-                hideLabel
-                dense
-                triggerId="employee-form-erp-trigger"
-                label=""
-                value={form.erp_active ? 'active' : 'inactive'}
-                onChange={(value) =>
-                  setForm((current) => ({ ...current, erp_active: value === 'active' }))
-                }
-                options={ERP_STATUS_OPTIONS}
-                ariaLabel="ERP platform status"
-              />
-              <p className="text-[11px] text-muted mt-1">
-                Independent of employee status. Drives holder ERP labels and filters.
-              </p>
-            </div>
+            {canManageAdminRole && (
+              <div>
+                <label htmlFor="employee-form-role-trigger" className="block text-muted text-xs mb-1">
+                  Role
+                </label>
+                <FilterSelect
+                  hideLabel
+                  dense
+                  triggerId="employee-form-role-trigger"
+                  label=""
+                  value={form.role || 'employee'}
+                  onChange={(value) =>
+                    setForm((current) => ({ ...current, role: value as EmployeeRole }))
+                  }
+                  options={ROLE_OPTIONS}
+                  ariaLabel="Employee role"
+                />
+              </div>
+            )}
+            {canManageAdminRole && (
+              <>
+                <Field
+                  label="Employee status"
+                  type="select"
+                  value={form.is_active ? 'active' : 'inactive'}
+                  onChange={(value) =>
+                    setForm((current) => ({ ...current, is_active: value === 'active' }))
+                  }
+                  options={EMPLOYEE_STATUS_OPTIONS}
+                />
+                <p className="text-[11px] text-muted mt-1">
+                  Employment / account flag. Assignment is blocked when not active.
+                </p>
+              </>
+            )}
           </div>
         </div>
 
@@ -237,6 +208,8 @@ function Field({
   type = 'text',
   disabled = false,
   options = [],
+  placeholder,
+  suggestions,
   onChange,
 }: {
   label: string
@@ -245,9 +218,12 @@ function Field({
   type?: string
   disabled?: boolean
   options?: Array<{ value: string; label: string }>
+  placeholder?: string
+  suggestions?: string[]
   onChange: (value: string) => void
 }) {
   const fieldId = `employee-form-${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`
+  const listId = suggestions && suggestions.length > 0 ? `${fieldId}-suggestions` : undefined
 
   return (
     <div>
@@ -270,14 +246,25 @@ function Field({
           ))}
         </select>
       ) : (
-        <input
-          id={fieldId}
-          type={type}
-          value={value}
-          disabled={disabled}
-          onChange={(e) => onChange(e.target.value)}
-          className="w-full bg-app border border-base rounded-lg px-3 py-2.5 text-primary placeholder:text-subtle text-sm outline-none focus:border-[color:var(--accent)] focus:ring-2 focus:ring-[color:var(--accent-soft)] transition disabled:opacity-60 disabled:cursor-not-allowed"
-        />
+        <>
+          <input
+            id={fieldId}
+            type={type}
+            value={value}
+            disabled={disabled}
+            list={listId}
+            placeholder={placeholder}
+            onChange={(e) => onChange(e.target.value)}
+            className="w-full bg-app border border-base rounded-lg px-3 py-2.5 text-primary placeholder:text-subtle text-sm outline-none focus:border-[color:var(--accent)] focus:ring-2 focus:ring-[color:var(--accent-soft)] transition disabled:opacity-60 disabled:cursor-not-allowed"
+          />
+          {listId ? (
+            <datalist id={listId}>
+              {suggestions!.map((name) => (
+                <option key={name} value={name} />
+              ))}
+            </datalist>
+          ) : null}
+        </>
       )}
     </div>
   )

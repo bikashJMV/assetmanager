@@ -1,12 +1,16 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react'
 import * as XLSX from 'xlsx'
-import { createAsset } from '../../api'
+import { bulkInsertAssets } from '../../api'
 import { getUserFacingMessage, logDevError } from '../../utils/errors'
 import {
   ASSET_IMPORT_MAX_ROWS,
   ASSET_IMPORT_TEMPLATE_HREF,
+  type AssetImportParsedRow,
+  type HeaderMappingEntry,
   parseAssetImportMatrix,
 } from '../../utils/assetBulkImport'
+import { useModalScrollLock } from '../../hooks/useModalScrollLock'
+import { ModalPortal } from '../common/ModalPortal'
 import { useToast } from '../common/ToastProvider'
 import AnimatedNavIcon from '../common/AnimatedNavIcon'
 
@@ -18,320 +22,317 @@ function pickSheetName(sheetNames: string[]): string | null {
   return imp ?? sheetNames[0] ?? null
 }
 
+type Phase =
+  | { name: 'idle' }
+  | { name: 'preview'; rows: AssetImportParsedRow[]; mapping: HeaderMappingEntry[]; fileName: string }
+  | { name: 'importing' }
+  | { name: 'error'; errors: string[]; mapping?: HeaderMappingEntry[] }
+  | { name: 'success'; inserted: number }
+
 type Props = {
   open: boolean
   onClose: () => void
-  /** After successful full import */
   onSuccess: () => void
-  /** Optional fallback category from New Asset picker if row lacks category_name/category_slug. */
   defaultCategorySlug?: string
 }
 
-export default function AssetBulkImportModal({
-  open,
-  onClose,
-  onSuccess,
-  defaultCategorySlug,
-}: Props) {
+export default function AssetBulkImportModal({ open, onClose, onSuccess, defaultCategorySlug }: Props) {
   const { showToast } = useToast()
+  useModalScrollLock(open)
   const mountedRef = useRef(true)
-  /** Stops sequential `createAsset` when dialog closes or parent unmounts (avoid orphaned background writes). */
-  const cancelledRef = useRef(false)
+  const inputRef = useRef<HTMLInputElement | null>(null)
+  const [phase, setPhase] = useState<Phase>({ name: 'idle' })
+
   useEffect(() => {
     mountedRef.current = true
-    return () => {
-      mountedRef.current = false
-      cancelledRef.current = true
-    }
+    return () => { mountedRef.current = false }
   }, [])
 
+  // Reset when modal opens/closes
   useEffect(() => {
-    if (open) cancelledRef.current = false
-    else cancelledRef.current = true
+    if (!open) setPhase({ name: 'idle' })
   }, [open])
 
-  const inputRef = useRef<HTMLInputElement | null>(null)
-  const [fileLabel, setFileLabel] = useState('')
-  const [parseErrors, setParseErrors] = useState<string[]>([])
-  const [applyErrors, setApplyErrors] = useState<string[]>([])
-  const [busy, setBusy] = useState(false)
-  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null)
-
-  const resetState = useCallback(() => {
-    setFileLabel('')
-    setParseErrors([])
-    setApplyErrors([])
-    setProgress(null)
-    if (inputRef.current) inputRef.current.value = ''
-  }, [])
-
   const handleClose = useCallback(() => {
-    if (busy) return
-    resetState()
+    if (phase.name === 'importing') return
+    if (inputRef.current) inputRef.current.value = ''
+    setPhase({ name: 'idle' })
     onClose()
-  }, [busy, onClose, resetState])
+  }, [phase.name, onClose])
 
-  const runImport = useCallback(
+  // ── Step 1: read file, parse, show preview ──────────────────────────────────
+  const handleFilePicked = useCallback(
     async (file: File) => {
-      setParseErrors([])
-      setApplyErrors([])
-      setBusy(true)
-      setProgress(null)
-      cancelledRef.current = false
-
+      if (inputRef.current) inputRef.current.value = ''
       try {
         const buf = await file.arrayBuffer()
         const workbook = XLSX.read(buf, { type: 'array' })
         const sheetName = pickSheetName(workbook.SheetNames)
         if (!sheetName) {
-          setParseErrors(['No sheets found in the workbook.'])
-          showToast({
-            variant: 'error',
-            title: 'Import cancelled',
-            message: 'Invalid workbook: no sheets found.',
-          })
-          setBusy(false)
+          setPhase({ name: 'error', errors: ['No sheets found in the workbook.'] })
           return
         }
         const sheet = workbook.Sheets[sheetName]
         if (!sheet) {
-          setParseErrors([`Sheet "${sheetName}" is missing.`])
-          showToast({ variant: 'error', title: 'Import cancelled', message: 'Could not read the sheet.' })
-          setBusy(false)
+          setPhase({ name: 'error', errors: [`Sheet "${sheetName}" is missing.`] })
           return
         }
-
-        const matrix = XLSX.utils.sheet_to_json(sheet, {
-          header: 1,
-          defval: '',
-          raw: false,
-        }) as unknown[][]
+        const matrix = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: false }) as unknown[][]
 
         const parsed = parseAssetImportMatrix(matrix, { defaultCategorySlug })
         if (!parsed.ok) {
-          setParseErrors(parsed.errors)
-          showToast({
-            variant: 'error',
-            title: 'Import cancelled',
-            message:
-              parsed.errors.some((e) => e.includes('Duplicate serial_number'))
-                ? 'Duplicate serial numbers found in the file. Fix duplicates and try again.'
-                : 'Invalid or inconsistent spreadsheet. Fix the issues below and try again.',
-          })
-          setBusy(false)
+          setPhase({ name: 'error', errors: parsed.errors, mapping: parsed.headerMapping })
           return
         }
-
-        const applyErrs: string[] = []
-        let ok = 0
-        const total = parsed.rows.length
-        setProgress({ done: 0, total })
-
-        for (let i = 0; i < parsed.rows.length; i += 1) {
-          if (cancelledRef.current) break
-          const { rowNumber, input } = parsed.rows[i]!
-          try {
-            await createAsset(input)
-            ok += 1
-          } catch (err) {
-            logDevError('assetBulkImport.row', err)
-            const line = `Row ${rowNumber} (${input.serial_number ?? input.model ?? ''}): ${getUserFacingMessage(err, 'Save failed.')}`
-            applyErrs.push(line)
-            if (ok > 0) {
-              applyErrs.push(
-                `Import stopped after ${ok} of ${total} rows saved. Earlier rows may remain; review assets or re-import missing rows.`,
-              )
-            }
-            break
-          }
-          setProgress({ done: i + 1, total })
-        }
-
-        const wasCancelled = cancelledRef.current && ok < total
-        if (applyErrs.length) {
-          if (mountedRef.current) setApplyErrors(applyErrs)
-          showToast({
-            variant: 'error',
-            title: ok > 0 ? 'Import stopped' : 'Import failed',
-            message:
-              ok > 0
-                ? `Only ${ok} of ${total} assets were saved before an error. Review the messages below.`
-                : 'No assets were imported. Review the messages below.',
-          })
-          if (ok > 0) onSuccess()
-        } else if (wasCancelled) {
-          showToast({
-            variant: 'warning',
-            title: 'Import cancelled',
-            message: ok > 0 ? `Saved ${ok} of ${total} assets before cancel.` : 'No new assets were saved.',
-          })
-          if (ok > 0) onSuccess()
-        } else {
-          showToast({
-            variant: 'success',
-            message: `Imported ${ok} new asset${ok === 1 ? '' : 's'}.`,
-          })
-          resetState()
-          onSuccess()
-          onClose()
-        }
+        setPhase({ name: 'preview', rows: parsed.rows, mapping: parsed.headerMapping, fileName: file.name })
       } catch (err) {
         logDevError('assetBulkImport.file', err)
-        if (mountedRef.current) {
-          setParseErrors([getUserFacingMessage(err, 'Could not read the Excel file.')])
-          showToast({
-            variant: 'error',
-            title: 'Import cancelled',
-            message: 'Could not read the Excel file.',
-          })
-        }
-      } finally {
-        if (mountedRef.current) {
-          setBusy(false)
-          setProgress(null)
-        }
+        setPhase({ name: 'error', errors: [getUserFacingMessage(err, 'Could not read the Excel file.')] })
       }
     },
-    [defaultCategorySlug, onClose, onSuccess, resetState, showToast],
+    [defaultCategorySlug],
   )
 
   const onPickFile = useCallback(
     (e: ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0]
-      e.target.value = ''
       if (!file) return
       const lower = file.name.toLowerCase()
       if (!lower.endsWith('.xlsx') && !lower.endsWith('.xls')) {
         showToast({ variant: 'warning', message: 'Please choose an Excel file (.xlsx or .xls).' })
         return
       }
-      setFileLabel(file.name)
-      void runImport(file)
+      void handleFilePicked(file)
     },
-    [runImport, showToast],
+    [handleFilePicked, showToast],
   )
+
+  // ── Step 2: user confirms → atomic RPC call ─────────────────────────────────
+  const runImport = useCallback(async () => {
+    if (phase.name !== 'preview') return
+    const { rows } = phase
+    setPhase({ name: 'importing' })
+
+    try {
+      const inputs = rows.map((r) => r.input)
+      const result = await bulkInsertAssets(inputs)
+      if (!mountedRef.current) return
+      setPhase({ name: 'success', inserted: result.inserted })
+      showToast({ variant: 'success', message: `Imported ${result.inserted} new asset${result.inserted === 1 ? '' : 's'}.` })
+      onSuccess()
+    } catch (err) {
+      logDevError('assetBulkImport.rpc', err)
+      if (!mountedRef.current) return
+      const msg = getUserFacingMessage(err, 'Import failed — no assets were saved.')
+      setPhase({ name: 'error', errors: [msg] })
+      showToast({
+        variant: 'error',
+        title: 'Import failed',
+        message: 'No assets were saved. See details below.',
+        durationMs: 0,
+      })
+    }
+  }, [phase, onSuccess, showToast])
 
   if (!open) return null
 
-  const issueLines = [...parseErrors, ...applyErrors]
-  const pct =
-    progress && progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0
-
   return (
-    <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/55 px-4 py-6 backdrop-blur-sm">
+    <ModalPortal>
+    <div className="fixed inset-0 z-[120] flex items-center justify-center overscroll-none bg-black/55 px-3 py-4 backdrop-blur-sm sm:px-4 sm:py-6">
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="asset-bulk-import-title"
-        className="relative flex max-h-[min(92vh,640px)] w-full max-w-lg flex-col rounded-2xl border border-base bg-app p-5 shadow-[0_20px_60px_rgba(0,0,0,0.22)] ring-1 ring-black/5 dark:ring-white/10 sm:p-6"
+        className="relative flex max-h-[min(92dvh,680px)] w-full max-w-lg flex-col rounded-2xl border border-base bg-app p-4 shadow-[0_20px_60px_rgba(0,0,0,0.22)] ring-1 ring-black/5 dark:ring-white/10 sm:p-6"
       >
+        {/* Close button */}
         <button
           type="button"
           aria-label="Close"
           onClick={handleClose}
-          disabled={busy}
+          disabled={phase.name === 'importing'}
           className="absolute right-3 top-3 z-10 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-muted transition hover:bg-surface-3 hover:text-primary disabled:pointer-events-none disabled:opacity-50"
         >
           <span className="sr-only">Close</span>
-          <svg
-            viewBox="0 0 24 24"
-            className="h-5 w-5"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            aria-hidden="true"
-          >
-            <path d="M18 6 6 18" />
-            <path d="m6 6 12 12" />
+          <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+            <path d="M18 6 6 18" /><path d="m6 6 12 12" />
           </svg>
         </button>
 
+        {/* Header */}
         <div className="shrink-0 pr-11 pt-0 sm:pr-12">
-          <h3
-            id="asset-bulk-import-title"
-            className="min-w-0 flex-1 pt-1 text-xl font-semibold tracking-tight text-primary"
-          >
+          <h3 id="asset-bulk-import-title" className="min-w-0 flex-1 pt-1 text-xl font-semibold tracking-tight text-primary">
             Bulk import assets
           </h3>
           <p className="mt-1 text-sm text-muted">
-            Use <code className="text-[0.8rem]">category_name</code> or{' '}
-            <code className="text-[0.8rem]">category_slug</code> in each row, or leave them blank to use the selected
-            page category.
+            Column names are matched flexibly — e.g. “Brand”, “Sr No”, “Category”. Short headers like “Type” or “Vendor”
+            map to custom fields; use category_slug / manufacturer_name for category and manufacturer.
           </p>
         </div>
 
-        <div className="mt-4 min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1">
-          <input
-            ref={inputRef}
-            type="file"
-            accept={ACCEPT}
-            className="hidden"
-            onChange={onPickFile}
-            disabled={busy}
-          />
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => inputRef.current?.click()}
-            className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-accent-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:pointer-events-none disabled:opacity-50 sm:w-auto"
-          >
-            <span className="inline-flex h-5 w-5 shrink-0 text-white" aria-hidden="true">
-              <AnimatedNavIcon name="upload" className="h-5 w-5 text-[color:var(--on-accent)]" />
-            </span>
-            <span>{busy ? 'Importing…' : 'Import from file'}</span>
-          </button>
+        {/* Scrollable body */}
+        <div className="mt-4 min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1 space-y-4">
 
-          {fileLabel && !busy && !parseErrors.length && !applyErrors.length ? (
-            <p className="mt-3 text-sm text-muted">
-              Selected: <span className="font-medium text-primary">{fileLabel}</span>
-            </p>
-          ) : null}
-
-          {progress ? (
-            <div className="mt-5 space-y-2" role="status" aria-live="polite" aria-busy="true">
-              <div className="flex flex-wrap items-baseline justify-between gap-2 text-sm">
-                <span className="font-medium text-primary">Saving assets…</span>
-                <span className="tabular-nums text-muted">
-                  {progress.done} of {progress.total} ({pct}%)
+          {/* ── Idle: file picker ── */}
+          {phase.name === 'idle' && (
+            <>
+              <input ref={inputRef} type="file" accept={ACCEPT} className="hidden" onChange={onPickFile} />
+              <button
+                type="button"
+                onClick={() => inputRef.current?.click()}
+                className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-accent-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent sm:w-auto"
+              >
+                <span className="inline-flex h-5 w-5 shrink-0 text-white" aria-hidden="true">
+                  <AnimatedNavIcon name="upload" className="h-5 w-5 text-[color:var(--on-accent)]" />
                 </span>
-              </div>
-              <div className="h-2.5 overflow-hidden rounded-full bg-surface-3" aria-hidden="true">
-                <div
-                  className="h-full min-w-0 rounded-full bg-accent transition-[width] duration-200 ease-out"
-                  style={{ width: `${pct}%` }}
-                />
-              </div>
-            </div>
-          ) : null}
+                <span>Choose Excel file</span>
+              </button>
+            </>
+          )}
 
-          {issueLines.length > 0 && (
-            <div
-              className="mt-5 max-h-52 overflow-y-auto rounded-xl border border-red-500/35 bg-red-500/[0.06] py-3 pl-4 pr-3 dark:border-red-400/35 dark:bg-red-400/[0.08]"
-              role="region"
-              aria-label="Import issues"
-            >
-              <p className="text-sm font-semibold text-primary">
-                {parseErrors.length > 0 && applyErrors.length > 0
-                  ? 'Validation and save issues'
-                  : parseErrors.length > 0
-                    ? 'Import was not applied — fix these in your file'
-                    : 'Import did not complete'}
-              </p>
-              <ul className="mt-2.5 list-disc space-y-2 pl-5 text-sm leading-snug text-muted marker:text-red-600 dark:marker:text-red-400">
-                {issueLines.slice(0, 80).map((line, idx) => (
-                  <li key={`${idx}-${line.slice(0, 48)}`} className="break-words pl-0.5">
-                    {line}
-                  </li>
-                ))}
-              </ul>
-              {issueLines.length > 80 ? (
-                <p className="mt-3 text-xs text-subtle">Showing the first 80 messages.</p>
-              ) : null}
+          {/* ── Preview: column mapping + row count ── */}
+          {phase.name === 'preview' && (
+            <>
+              <div className="rounded-xl border border-base bg-surface p-3">
+                <p className="text-xs font-semibold uppercase tracking-widest text-muted mb-2">
+                  Detected columns — {phase.fileName}
+                </p>
+                <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                  {phase.mapping.map((entry, i) => (
+                    <div key={i} className="flex items-center gap-2 text-xs">
+                      <span className="font-mono text-primary truncate max-w-[140px]" title={entry.raw}>
+                        "{entry.raw}"
+                      </span>
+                      <span className="text-subtle shrink-0">→</span>
+                      {entry.isForbidden ? (
+                        <span className="text-accent font-medium">not allowed</span>
+                      ) : entry.isFreeForm ? (
+                        <span className="font-mono text-muted">{entry.canonical} <span className="italic text-subtle">(custom_fields)</span></span>
+                      ) : (
+                        <span className="font-mono text-primary">{entry.canonical}</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-green-500/30 bg-green-500/[0.06] dark:bg-green-400/[0.08] px-4 py-3">
+                <p className="text-sm font-semibold text-primary">
+                  Ready to import {phase.rows.length} asset{phase.rows.length === 1 ? '' : 's'}
+                </p>
+                <p className="text-xs text-muted mt-0.5">
+                  All {phase.rows.length} rows passed validation. The import is atomic — if anything fails on the
+                  server, nothing will be saved.
+                </p>
+              </div>
+
+              <div className="flex flex-col sm:flex-row gap-2">
+                <button
+                  type="button"
+                  onClick={() => { setPhase({ name: 'idle' }); if (inputRef.current) inputRef.current.value = '' }}
+                  className="flex-1 border border-base bg-surface text-primary py-2 rounded-lg hover:bg-surface-2 transition text-sm"
+                >
+                  ← Pick a different file
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void runImport()}
+                  className="flex-1 bg-accent text-white font-semibold py-2 rounded-lg hover:bg-accent-hover transition text-sm shadow-accent"
+                >
+                  Import {phase.rows.length} asset{phase.rows.length === 1 ? '' : 's'}
+                </button>
+              </div>
+            </>
+          )}
+
+          {/* ── Importing: spinner ── */}
+          {phase.name === 'importing' && (
+            <div className="flex flex-col items-center justify-center py-8 gap-3" role="status" aria-live="polite" aria-busy="true">
+              <svg className="h-8 w-8 animate-spin text-accent" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+              </svg>
+              <p className="text-sm text-muted">Saving assets… do not close this window.</p>
             </div>
+          )}
+
+          {/* ── Success ── */}
+          {phase.name === 'success' && (
+            <div className="rounded-xl border border-green-500/30 bg-green-500/[0.06] dark:bg-green-400/[0.08] px-4 py-4 text-center">
+              <p className="text-lg font-semibold text-primary">
+                {phase.inserted} asset{phase.inserted === 1 ? '' : 's'} imported
+              </p>
+              <p className="text-sm text-muted mt-1">All rows were saved successfully.</p>
+              <button
+                type="button"
+                onClick={handleClose}
+                className="mt-4 bg-accent text-white font-semibold px-6 py-2 rounded-lg hover:bg-accent-hover transition text-sm shadow-accent"
+              >
+                Done
+              </button>
+            </div>
+          )}
+
+          {/* ── Error: parse or RPC errors ── */}
+          {phase.name === 'error' && (
+            <>
+              {phase.mapping && phase.mapping.length > 0 && (
+                <div className="rounded-xl border border-base bg-surface p-3">
+                  <p className="text-xs font-semibold uppercase tracking-widest text-muted mb-2">Detected columns</p>
+                  <div className="space-y-1.5 max-h-32 overflow-y-auto pr-1">
+                    {phase.mapping.map((entry, i) => (
+                      <div key={i} className="flex items-center gap-2 text-xs">
+                        <span className="font-mono text-primary truncate max-w-[140px]" title={entry.raw}>
+                          "{entry.raw}"
+                        </span>
+                        <span className="text-subtle shrink-0">→</span>
+                        {entry.isForbidden ? (
+                          <span className="text-accent font-medium">not allowed</span>
+                        ) : entry.isFreeForm ? (
+                          <span className="font-mono text-muted">{entry.canonical} <span className="italic text-subtle">(custom_fields)</span></span>
+                        ) : (
+                          <span className="font-mono text-primary">{entry.canonical}</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div
+                className="max-h-52 overflow-y-auto rounded-xl border border-red-500/35 bg-red-500/[0.06] py-3 pl-4 pr-3 dark:border-red-400/35 dark:bg-red-400/[0.08]"
+                role="region"
+                aria-label="Import errors"
+              >
+                <p className="text-sm font-semibold text-primary">
+                  Import was not applied — fix these issues in your file
+                </p>
+                <ul className="mt-2.5 list-disc space-y-2 pl-5 text-sm leading-snug text-muted marker:text-red-600 dark:marker:text-red-400">
+                  {phase.errors.slice(0, 80).map((line, idx) => (
+                    <li key={`${idx}-${line.slice(0, 48)}`} className="break-words pl-0.5">
+                      {line}
+                    </li>
+                  ))}
+                </ul>
+                {phase.errors.length > 80 && (
+                  <p className="mt-3 text-xs text-subtle">Showing the first 80 errors.</p>
+                )}
+              </div>
+
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => { setPhase({ name: 'idle' }); if (inputRef.current) inputRef.current.value = '' }}
+                  className="flex-1 border border-base bg-surface text-primary py-2 rounded-lg hover:bg-surface-2 transition text-sm"
+                >
+                  ← Try again
+                </button>
+              </div>
+            </>
           )}
         </div>
 
+        {/* Footer */}
         <div className="mt-4 shrink-0 border-t border-base pt-4">
           <a
             href={ASSET_IMPORT_TEMPLATE_HREF}
@@ -341,13 +342,14 @@ export default function AssetBulkImportModal({
             <span className="inline-flex h-4 w-4 shrink-0" aria-hidden="true">
               <AnimatedNavIcon name="download" className="h-4 w-4" />
             </span>
-            Download bulk import asset sample file
+            Download bulk import sample file
           </a>
           <p className="mt-2 text-xs text-subtle">
-            Use the <span className="text-primary font-medium">Import</span> sheet; max {ASSET_IMPORT_MAX_ROWS} data rows.
+            Max {ASSET_IMPORT_MAX_ROWS} rows per import. Only <span className="text-primary font-medium">serial_number</span> and <span className="text-primary font-medium">category</span> are required per row.
           </p>
         </div>
       </div>
     </div>
+    </ModalPortal>
   )
 }

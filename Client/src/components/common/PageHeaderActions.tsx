@@ -6,6 +6,7 @@ type PageHeaderAction = {
   label: string
   icon: IconName
   onClick: () => void
+  disabled?: boolean
 }
 
 type PageHeaderActionsProps = {
@@ -28,7 +29,8 @@ export default function PageHeaderActions({ title, actions, auxiliary }: PageHea
             key={action.id}
             type="button"
             onClick={action.onClick}
-            className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-base bg-surface px-4 text-sm font-semibold text-primary shadow-sm transition hover:border-[color:var(--accent-soft)] hover:bg-[color:var(--accent-soft)]/20 hover:text-accent"
+            disabled={action.disabled}
+            className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-base bg-surface px-4 text-sm font-semibold text-primary shadow-sm transition hover:border-[color:var(--accent-soft)] hover:bg-[color:var(--accent-soft)]/20 hover:text-accent disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:border-base disabled:hover:bg-surface disabled:hover:text-primary"
           >
             <span className="flex h-4 w-4 shrink-0 items-center justify-center">
               <AnimatedNavIcon name={action.icon} />

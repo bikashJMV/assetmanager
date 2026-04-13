@@ -39,8 +39,7 @@ values
   ('desktop', 'Desktop', 'Desktop workstations'),
   ('sim', 'SIM', 'SIM cards and mobile data assets'),
   ('pen-drive', 'Pen Drive', 'USB removable storage'),
-  ('monitor', 'Monitor', 'Display units'),
-  ('networking', 'Networking', 'Routers, switches, access points and similar devices')
+  ('monitor', 'Monitor', 'Display units')
 on conflict (slug) do update
 set name = excluded.name,
     description = excluded.description,
@@ -87,14 +86,7 @@ with definitions as (
     ('monitor','monitor_size_inch','Monitor Size (Inch)','number',false,10,'[]'::jsonb),
     ('monitor','resolution','Resolution','text',false,20,'[]'::jsonb),
     ('monitor','panel_type','Panel Type','text',false,30,'[]'::jsonb),
-    ('monitor','refresh_rate_hz','Refresh Rate (Hz)','number',false,40,'[]'::jsonb),
-
-    ('networking','device_type','Device Type','text',true,10,'[]'::jsonb),
-    ('networking','ip_address','IP Address','text',false,20,'[]'::jsonb),
-    ('networking','mac_lan','LAN MAC','text',false,30,'[]'::jsonb),
-    ('networking','mac_wifi','Wi-Fi MAC','text',false,40,'[]'::jsonb),
-    ('networking','firmware_version','Firmware Version','text',false,50,'[]'::jsonb),
-    ('networking','ports','Ports','number',false,60,'[]'::jsonb)
+    ('monitor','refresh_rate_hz','Refresh Rate (Hz)','number',false,40,'[]'::jsonb)
   ) as x(slug, field_key, label, data_type, is_required, sort_order, options)
 )
 insert into custom_field_definitions (

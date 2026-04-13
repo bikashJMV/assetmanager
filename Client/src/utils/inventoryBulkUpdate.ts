@@ -71,6 +71,7 @@ const HEADER_ALIASES: Record<string, string> = {
   asset_code: 'asset_tag',
   tag: 'asset_tag',
   inventory_status: 'inventory_status',
+  inventary_status: 'inventory_status',
   status: 'inventory_status',
   action: 'inventory_status',
   employee_code: 'assignee',
@@ -78,6 +79,9 @@ const HEADER_ALIASES: Record<string, string> = {
   employee_code_email: 'assignee',
   email: 'assignee',
   assignee: 'assignee',
+  employee_id: 'assignee',
+  emp_id: 'assignee',
+  employeeid: 'assignee',
   emp_tag: 'assignee',
   employee: 'assignee',
   comment: 'comment',
@@ -184,7 +188,7 @@ export function parseInventoryUpdateMatrix(
 
     if (action === 'assigned' && !assignee) {
       errors.push(
-        `${rowLabel}: "Assigned" requires an employee code or email in the assignee column.`,
+        `${rowLabel}: "Assigned" requires an employee ID (e.g. EMP...) or email in the assignee column.`,
       )
       return { ok: false, errors }
     }

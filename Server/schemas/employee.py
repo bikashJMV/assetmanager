@@ -5,14 +5,12 @@ import uuid
 
 
 class EmployeeBase(BaseModel):
-    employee_code: str
+    employee_id: str
     name: str
     email: Optional[str] = None
-    department_id: Optional[uuid.UUID] = None
-    department_name: Optional[str] = None
+    department: Optional[str] = None
     is_active: bool = True
-    role: Literal['it_ops', 'admin', 'employee'] = 'employee'
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    role: str = 'employee'
 
 
 class EmployeeCreate(EmployeeBase):
@@ -23,23 +21,19 @@ class EmployeeCreate(EmployeeBase):
 class EmployeeUpdate(BaseModel):
     name: Optional[str] = None
     email: Optional[str] = None
-    department_id: Optional[uuid.UUID] = None
-    department_name: Optional[str] = None
+    department: Optional[str] = None
     is_active: Optional[bool] = None
-    role: Optional[Literal['it_ops', 'admin', 'employee']] = None
-    metadata: Optional[dict[str, Any]] = None
+    role: Optional[str] = None
 
 
 class EmployeeOut(BaseModel):
     id: uuid.UUID
-    employee_code: str
+    employee_id: str
     name: str
     email: Optional[str] = None
-    department_id: Optional[uuid.UUID] = None
-    department_name: Optional[str] = None
+    department: Optional[str] = None
     is_active: bool
-    role: Literal['it_ops', 'admin', 'employee'] = 'employee'
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    role: str = 'employee'
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 

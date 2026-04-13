@@ -5,7 +5,7 @@ from datetime import datetime
 
 class AssignAssetRequest(BaseModel):
     asset_tag: str = Field(..., min_length=1)
-    employee_code: str = Field(..., min_length=1)
+    employee_id: str = Field(..., min_length=1)
     assigned_at: Optional[datetime] = None
     notes: Optional[str] = None
     source: str = "runtime"

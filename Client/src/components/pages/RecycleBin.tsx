@@ -1,5 +1,12 @@
 ﻿import { useCallback, useEffect, useState } from "react"
-import { listRecycleBinEntries, restoreRecycleBinEntry, type RecycleBinEntry } from "../../api"
+import {
+  deleteAssetPermanently,
+  deleteEmployeePermanently,
+  listRecycleBinEntries,
+  restoreRecycleBinEntry,
+  type RecycleBinEntry,
+} from "../../api"
+import ConfirmDialog from "../common/ConfirmDialog"
 import RefreshButton from "../common/RefreshButton"
 import InfoHint from "../common/InfoHint"
 import recycleBinInfoHint from "../../data/recyclebin.json"
@@ -31,7 +38,7 @@ function formatDeletedItem(entry: RecycleBinEntry): string {
   const p = entry.payload ?? {}
   if (entry.entity_type === "employee") {
     const name = payloadString(p, "name")
-    const code = payloadString(p, "employee_code") || entry.label.trim() || ""
+    const code = payloadString(p, "employee_id") || entry.label.trim() || ""
     const first = firstNameFromFullName(name)
     if (first && code) return `${first} / ${code}`
     if (code && name) return `${firstNameFromFullName(name)} / ${code}`
@@ -49,18 +56,20 @@ function formatDeletedItem(entry: RecycleBinEntry): string {
 
 function formatDeletedByActor(entry: RecycleBinEntry): string {
   const name = entry.deleted_by_employee_name?.trim() || ""
-  const code = entry.deleted_by_employee_code?.trim() || ""
+  const idCode = entry.deleted_by_employee_id_code?.trim() || ""
   const first = firstNameFromFullName(name)
-  if (first && code) return `${first} / ${code}`
-  if (name && code) return `${name} / ${code}`
+  if (first && idCode) return `${first} / ${idCode}`
+  if (name && idCode) return `${name} / ${idCode}`
   if (name) return name
-  if (code) return code
+  if (idCode) return idCode
   return "—"
 }
 
 export default function RecycleBin() {
   const [rows, setRows] = useState<RecycleBinEntry[]>([])
   const [restoringId, setRestoringId] = useState<string | null>(null)
+  const [purgingId, setPurgingId] = useState<string | null>(null)
+  const [purgeTarget, setPurgeTarget] = useState<RecycleBinEntry | null>(null)
   const { showToast } = useToast()
   const { loading, error, setError, run } = useRefreshableLoader({
     defaultErrorMessage: "Unable to load recycle bin right now.",
@@ -93,6 +102,29 @@ export default function RecycleBin() {
       setError(debugDetail || getUserFacingMessage(err, "Unable to restore item right now."))
     } finally {
       setRestoringId(null)
+    }
+  }
+
+  const handleConfirmPermanentDelete = async () => {
+    if (!purgeTarget) return
+    const entry = purgeTarget
+    setPurgingId(entry.entry_id)
+    setError("")
+    try {
+      if (entry.entity_type === "employee") {
+        await deleteEmployeePermanently(entry.entity_id)
+      } else {
+        await deleteAssetPermanently(entry.entity_id)
+      }
+      setPurgeTarget(null)
+      await load()
+      showToast({ message: "Item permanently removed.", variant: "success" })
+    } catch (err) {
+      logDevError("recycleBin.permanentDelete", err)
+      const debugDetail = getErrorDebugDetail(err)
+      setError(debugDetail || getUserFacingMessage(err, "Unable to permanently delete this item."))
+    } finally {
+      setPurgingId(null)
     }
   }
 
@@ -151,7 +183,7 @@ export default function RecycleBin() {
                 <th className="px-4 py-3">Deleted item</th>
                 <th className="px-4 py-3">Deleted at</th>
                 <th className="px-4 py-3">Deleted by</th>
-                <th className="px-4 py-3 text-right">Action</th>
+                <th className="px-4 py-3 text-right">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -162,14 +194,24 @@ export default function RecycleBin() {
                   <td className="px-4 py-3">{new Date(entry.deleted_at).toLocaleString()}</td>
                   <td className="px-4 py-3">{formatDeletedByActor(entry)}</td>
                   <td className="px-4 py-3 text-right">
-                    <button
-                      type="button"
-                      onClick={() => void handleRestore(entry.entry_id)}
-                      disabled={restoringId === entry.entry_id}
-                      className="rounded-lg border border-base px-3 py-1.5 text-xs font-semibold hover:bg-surface-3 transition disabled:opacity-60"
-                    >
-                      {restoringId === entry.entry_id ? "Restoring..." : "Restore"}
-                    </button>
+                    <div className="flex flex-wrap items-center justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void handleRestore(entry.entry_id)}
+                        disabled={restoringId === entry.entry_id || purgingId === entry.entry_id}
+                        className="rounded-lg border border-base px-3 py-1.5 text-xs font-semibold hover:bg-surface-3 transition disabled:opacity-60"
+                      >
+                        {restoringId === entry.entry_id ? "Restoring..." : "Restore"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPurgeTarget(entry)}
+                        disabled={restoringId === entry.entry_id || purgingId === entry.entry_id}
+                        className="rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-1.5 text-xs font-semibold text-red-600 transition hover:bg-red-500/15 disabled:opacity-60 dark:text-red-400"
+                      >
+                        {purgingId === entry.entry_id ? "Removing..." : "Delete permanently"}
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -183,6 +225,23 @@ export default function RecycleBin() {
             </tbody>
           </table>
         </section>
+
+        <ConfirmDialog
+          open={Boolean(purgeTarget)}
+          title="Delete permanently"
+          message={
+            purgeTarget
+              ? `This cannot be undone. Permanently remove this ${purgeTarget.entity_type} from the database: ${formatDeletedItem(purgeTarget)}?`
+              : ""
+          }
+          confirmLabel="Delete permanently"
+          loading={Boolean(purgingId)}
+          showDismissIcon
+          onClose={() => {
+            if (!purgingId) setPurgeTarget(null)
+          }}
+          onConfirm={() => void handleConfirmPermanentDelete()}
+        />
       </div>
     </main>
   )

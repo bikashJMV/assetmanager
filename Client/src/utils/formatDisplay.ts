@@ -24,6 +24,23 @@ export function formatEnumLabel(value: unknown): string {
 }
 
 /**
+ * Human-readable label for an employee role value.
+ */
+export function formatRoleLabel(role: string): string {
+  const normalized = role.trim().toLowerCase()
+  if (normalized === 'it_ops') return 'IT Ops'
+  if (normalized === 'admin') return 'Admin'
+  return 'Employee'
+}
+
+/**
+ * Tailwind classes for a role badge pill.
+ */
+export function roleBadgeClass(_role: string): string {
+  return 'bg-orange-500 text-white'
+}
+
+/**
  * Formats ISO-8601 / Postgres timestamptz strings for the UI (user's locale, medium date + short time).
  */
 export function formatDateTime(value: unknown): string {

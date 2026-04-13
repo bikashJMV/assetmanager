@@ -39,6 +39,11 @@ class Settings:
     # Optional shared secret for backend API access when server is public.
     BACKEND_API_KEY: str = field(default_factory=lambda: os.getenv("BACKEND_API_KEY", os.getenv("VITE_BACKEND_API_KEY", "")))
 
+    # Server-only secret for POST /internal/bootstrap-role (promote employee by email). Empty = route disabled (503).
+    ROLE_BOOTSTRAP_SECRET: str = field(
+        default_factory=lambda: os.getenv("ROLE_BOOTSTRAP_SECRET", "").strip(),
+    )
+
     # ENVIRONMENT: local | production
     ENV: str = field(default_factory=lambda: os.getenv("ENV", os.getenv("VITE_ENV", "local")))
 
@@ -75,9 +80,13 @@ class Settings:
     EMAIL_SERVICE_URL: str = field(
         default_factory=lambda: os.getenv("EMAIL_SERVICE_URL", "").rstrip("/")
     )
-    # EMAIL_SERVICE_API_KEY: X-API-Key header value accepted by the email service.
-    EMAIL_SERVICE_API_KEY: str = field(
-        default_factory=lambda: os.getenv("EMAIL_SERVICE_API_KEY", "")
+    # BACKEND_API_KEY_EMAIL_NOTIFICATION: X-API-Key header value accepted by the email service.
+    # EMAIL_SERVICE_API_KEY remains as a temporary fallback during rollout.
+    BACKEND_API_KEY_EMAIL_NOTIFICATION: str = field(
+        default_factory=lambda: os.getenv(
+            "BACKEND_API_KEY_EMAIL_NOTIFICATION",
+            os.getenv("EMAIL_SERVICE_API_KEY", ""),
+        )
     )
     # NOTIFICATIONS_ENABLED: Set to "true" to dispatch real emails. anything else → silent no-op.
     NOTIFICATIONS_ENABLED: bool = field(
@@ -96,6 +105,14 @@ class Settings:
 
         if self.ENV.strip().lower() == "production" and not self.BACKEND_API_KEY.strip():
             print("WARNING: BACKEND_API_KEY is empty in production. Public API access is not restricted.")
+
+        legacy_email_api_key = os.getenv("EMAIL_SERVICE_API_KEY", "").strip()
+        preferred_email_api_key = os.getenv("BACKEND_API_KEY_EMAIL_NOTIFICATION", "").strip()
+        if legacy_email_api_key and not preferred_email_api_key:
+            print(
+                "WARNING: EMAIL_SERVICE_API_KEY is deprecated. "
+                "Use BACKEND_API_KEY_EMAIL_NOTIFICATION instead."
+            )
 
 # Global settings instance
 settings = Settings()

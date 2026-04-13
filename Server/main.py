@@ -11,7 +11,7 @@ from core.middleware import EnvelopeMiddleware, RequestIdMiddleware
 from core.settings import settings
 from core.errors import custom_http_exception_handler, generic_exception_handler
 from core.deps import get_db
-from routers import assets, logs, health, assignments, employees, analysis
+from routers import assets, logs, health, assignments, employees, analysis, bootstrap
 
 def create_app() -> FastAPI:
     app = FastAPI(
@@ -30,6 +30,7 @@ def create_app() -> FastAPI:
         allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
+        expose_headers=["Content-Disposition", "X-Exported-Asset-Count"],
     )
 
     # Exception Handlers
@@ -40,6 +41,7 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
     protected_dependencies = [Depends(require_backend_api_key)]
     app.include_router(assets.router, dependencies=protected_dependencies)
+    app.include_router(assets.browser_router)
     app.include_router(logs.router, dependencies=protected_dependencies)
     # Assignments / employees: authenticated via Supabase JWT (require_manage_platform_access
     # on routes). Requiring BACKEND_API_KEY here breaks browser flows — the client sends
@@ -48,7 +50,9 @@ def create_app() -> FastAPI:
     app.include_router(employees.router)
     # Role-based auth inside the router; do not require BACKEND_API_KEY for browser usage.
     app.include_router(analysis.router)
-    
+    # Break-glass role promotion: X-Bootstrap-Secret + ROLE_BOOTSTRAP_SECRET only (no BACKEND_API_KEY).
+    app.include_router(bootstrap.router)
+
     # Root-level scan endpoint kept for direct QR navigation compatibility.
     @app.get("/scan/{asset_ref}", tags=["Assets"], response_model=assets.AssetOut)
     def scan_asset_root(

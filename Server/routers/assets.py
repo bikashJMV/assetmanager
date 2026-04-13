@@ -3,17 +3,20 @@ import uuid
 from datetime import date
 from typing import Any, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from core.auth import require_manage_platform_access
 from core.deps import get_db
 from core.errors import handle_supabase_error
-from schemas.asset import AssetCreate, AssetOut, AssetUpdate
+from schemas.asset import AssetCreate, AssetOut, AssetQrLabelsExportRequest, AssetUpdate
+from services.qr_label_pdf_service import qr_label_pdf_service
 from services.qr_service import qr_service
 
 router = APIRouter(prefix="/assets", tags=["Assets"])
+browser_router = APIRouter(prefix="/assets", tags=["Assets"])
 
 VALID_ASSET_STATUSES = {"in_stock", "assigned", "in_repair", "retired", "lost", "disposed"}
+MAX_QR_LABEL_EXPORT_TAGS = 5000
 
 
 def sanitize_search(query: str) -> str:
@@ -186,6 +189,48 @@ def next_asset_tag(db) -> str:
     raise HTTPException(status_code=500, detail="Unable to generate next asset tag")
 
 
+def normalize_asset_tag_list(asset_tags: list[str]) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+
+    for raw_tag in asset_tags:
+        tag = str(raw_tag or "").strip()
+        if not tag or tag in seen:
+            continue
+        normalized.append(tag)
+        seen.add(tag)
+
+    if not normalized:
+        raise HTTPException(status_code=400, detail="At least one asset_tag is required.")
+    if len(normalized) > MAX_QR_LABEL_EXPORT_TAGS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too many asset tags requested ({len(normalized)}). Maximum is {MAX_QR_LABEL_EXPORT_TAGS}.",
+        )
+    return normalized
+
+
+def get_existing_asset_tags_in_order(db, requested_tags: list[str]) -> list[str]:
+    existing: set[str] = set()
+    batch_size = 250
+
+    for start in range(0, len(requested_tags), batch_size):
+        batch = requested_tags[start:start + batch_size]
+        response = (
+            db.table("assets")
+            .select("asset_tag")
+            .eq("is_deleted", False)
+            .in_("asset_tag", batch)
+            .execute()
+        )
+        for row in response.data or []:
+            asset_tag = str(row.get("asset_tag") or "").strip()
+            if asset_tag:
+                existing.add(asset_tag)
+
+    return [asset_tag for asset_tag in requested_tags if asset_tag in existing]
+
+
 @router.get("", response_model=List[AssetOut])
 def get_assets(
     search: Optional[str] = Query(None, description="Search term for assets"),
@@ -244,6 +289,10 @@ def create_asset(asset: AssetCreate, db=Depends(get_db), _=Depends(require_manag
         if (asset.asset_tag or "").strip():
             raise HTTPException(status_code=400, detail="asset_tag is system-generated and cannot be provided by clients")
 
+        serial_number = (asset.serial_number or "").strip()
+        if not serial_number:
+            raise HTTPException(status_code=400, detail="serial_number is required")
+
         desired_asset_tag = next_asset_tag(db)
         qr_code = qr_service.generate_asset_qr(desired_asset_tag)
 
@@ -253,7 +302,7 @@ def create_asset(asset: AssetCreate, db=Depends(get_db), _=Depends(require_manag
             "p_category_name": titleize_slug(category_slug),
             "p_manufacturer_name": (asset.manufacturer_name or "").strip() or None,
             "p_model": (asset.model or "").strip() or None,
-            "p_serial_number": (asset.serial_number or "").strip() or None,
+            "p_serial_number": serial_number,
             "p_location_code": normalize_location_code(asset.location_code) if asset.location_code else None,
             "p_location_name": (asset.location_name or "").strip() or None,
             "p_status": parse_asset_status(asset.status),
@@ -326,7 +375,10 @@ def update_asset(asset_ref: str, asset: AssetUpdate, db=Depends(get_db), _=Depen
             patch["model"] = str(update_data["model"]).strip() or None
 
         if "serial_number" in update_data:
-            patch["serial_number"] = str(update_data["serial_number"]).strip() or None
+            sn = str(update_data["serial_number"]).strip()
+            if not sn:
+                raise HTTPException(status_code=400, detail="serial_number cannot be empty")
+            patch["serial_number"] = sn
 
         if "location_code" in update_data or "location_name" in update_data:
             patch["location_id"] = resolve_location_id(
@@ -360,6 +412,31 @@ def update_asset(asset_ref: str, asset: AssetUpdate, db=Depends(get_db), _=Depen
 
         latest_qr = get_latest_asset_qr(db, str(existing["id"]))
         return normalize_asset_row(refreshed, latest_qr)
+    except HTTPException:
+        raise
+    except Exception as e:
+        handle_supabase_error(e)
+
+
+@browser_router.post("/qr-labels/export")
+def export_asset_qr_labels(
+    payload: AssetQrLabelsExportRequest,
+    db=Depends(get_db),
+    _=Depends(require_manage_platform_access),
+):
+    try:
+        requested_tags = normalize_asset_tag_list(payload.asset_tags)
+        printable_tags = get_existing_asset_tags_in_order(db, requested_tags)
+        if not printable_tags:
+            raise HTTPException(status_code=404, detail="No printable assets found for the requested asset tags.")
+
+        pdf_bytes = qr_label_pdf_service.build_pdf(printable_tags)
+        headers = {
+            "Content-Disposition": f'inline; filename="{qr_label_pdf_service.file_name}"',
+            "Cache-Control": "no-store",
+            "X-Exported-Asset-Count": str(len(printable_tags)),
+        }
+        return Response(content=pdf_bytes, media_type="application/pdf", headers=headers)
     except HTTPException:
         raise
     except Exception as e:

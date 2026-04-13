@@ -51,12 +51,12 @@ class EmailMicroserviceAdapter(NotificationAdapter):
         url = f"{settings.EMAIL_SERVICE_URL}{self.ENDPOINT}"
         payload = {
             "event_name": event_name,
-            "recipient_email": recipient_email,
+            "primary_recipient": recipient_email,
             "data": data,
         }
         headers = {
             "Content-Type": "application/json",
-            "X-API-Key": settings.EMAIL_SERVICE_API_KEY,
+            "X-API-Key": settings.BACKEND_API_KEY_EMAIL_NOTIFICATION,
         }
         try:
             async with httpx.AsyncClient(timeout=self.TIMEOUT_SECONDS) as client:
@@ -109,12 +109,16 @@ class NoOpNotificationAdapter(NotificationAdapter):
 def get_adapter() -> NotificationAdapter:
     """Return the live adapter when enabled, no-op otherwise."""
     url_ok = bool(settings.EMAIL_SERVICE_URL and settings.EMAIL_SERVICE_URL.strip())
-    key_ok = bool(settings.EMAIL_SERVICE_API_KEY and settings.EMAIL_SERVICE_API_KEY.strip())
+    key_ok = bool(
+        settings.BACKEND_API_KEY_EMAIL_NOTIFICATION
+        and settings.BACKEND_API_KEY_EMAIL_NOTIFICATION.strip()
+    )
     if settings.NOTIFICATIONS_ENABLED and url_ok and key_ok:
         return EmailMicroserviceAdapter()
     if settings.NOTIFICATIONS_ENABLED and (not url_ok or not key_ok):
         logger.warning(
-            "NOTIFICATIONS_ENABLED=true but EMAIL_SERVICE_URL or EMAIL_SERVICE_API_KEY is missing/empty — "
-            "assignment emails are skipped. Set both on the AMS Server .env (not only on the email microservice)."
+            "NOTIFICATIONS_ENABLED=true but EMAIL_SERVICE_URL or BACKEND_API_KEY_EMAIL_NOTIFICATION is "
+            "missing/empty — assignment emails are skipped. Set both on the AMS Server .env "
+            "(EMAIL_SERVICE_API_KEY is still accepted temporarily as a fallback)."
         )
     return NoOpNotificationAdapter()

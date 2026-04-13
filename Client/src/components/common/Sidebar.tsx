@@ -15,8 +15,6 @@ import {
   type SidebarNavSection,
   type SidebarNavVisibility,
 } from './sidebarNav'
-import { getSessionEmployee, hasActiveAdminAccess } from '../../api'
-import { logDevError } from '../../utils/errors'
 import {
   applyDocumentPreferences,
   getInitialDensity,
@@ -74,6 +72,27 @@ function filterGroupChildren(
       return child
     })
     .filter((child): child is SidebarNavGroupChild => child !== null)
+}
+
+/**
+ * For non-privileged (employee) users, rewrite the "employees" sidebar link
+ * to point to their own profile page instead of the admin directory.
+ */
+function applyEmployeeRouteOverride(
+  sections: SidebarNavSection[],
+  canManage: boolean,
+  employeeId: string | null,
+): SidebarNavSection[] {
+  if (canManage || !employeeId) return sections
+  return sections.map((section) => ({
+    ...section,
+    items: section.items.map((item) => {
+      if (item.type === 'link' && item.id === 'employees') {
+        return { ...item, to: `/employee/${employeeId}` }
+      }
+      return item
+    }),
+  }))
 }
 
 function filterSidebarSections(
@@ -743,11 +762,13 @@ export default function Sidebar({
   collapsed,
   onSetCollapsed,
   topOffset = 0,
+  sessionEmployee = null,
 }: {
   isAuthenticated: boolean
   collapsed: boolean
   onSetCollapsed: (value: boolean) => void
   topOffset?: number
+  sessionEmployee?: { id: string; role: string; is_active: boolean } | null
 }) {
   const { pathname, search } = useLocation()
   const [mobileOpen, setMobileOpen] = useState(false)
@@ -755,13 +776,22 @@ export default function Sidebar({
   const [density, setDensity] = useState<DensityMode>(getInitialDensity)
   const [font, setFont] = useState<FontMode>(getInitialFont)
   const [textScale, setTextScale] = useState<TextScale>(getInitialTextScale)
-  const [isAdmin, setIsAdmin] = useState(false)
+
+  // Derive admin/employee state directly from the already-resolved prop —
+  // no async fetch needed; AppRoutes waits for profileLoading before rendering.
+  const isAdmin = Boolean(sessionEmployee?.is_active && sessionEmployee.role !== 'employee')
+  const sessionEmployeeId = sessionEmployee?.id ?? null
+
   const query = useMemo(() => new URLSearchParams(search), [search])
 
   const canManage = isAuthenticated && isAdmin
   const visibleSections = useMemo(
-    () => filterSidebarSections(isAuthenticated, canManage),
-    [isAuthenticated, canManage],
+    () => applyEmployeeRouteOverride(
+      filterSidebarSections(isAuthenticated, canManage),
+      canManage,
+      sessionEmployeeId,
+    ),
+    [isAuthenticated, canManage, sessionEmployeeId],
   )
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() =>
     getDefaultOpenGroups(sidebarSections),
@@ -798,34 +828,6 @@ export default function Sidebar({
     localStorage.setItem('ams-text-scale', String(textScale))
   }, [theme, density, font, textScale])
 
-  useEffect(() => {
-    if (!isAuthenticated) {
-      setIsAdmin(false)
-      return
-    }
-
-    let mounted = true
-
-    void (async () => {
-      try {
-        const [allowed, profile] = await Promise.all([
-          hasActiveAdminAccess(),
-          getSessionEmployee(),
-        ])
-        const profileAdmin = Boolean(profile?.is_active && profile?.role !== 'employee')
-        if (!mounted) return
-        setIsAdmin(allowed || profileAdmin)
-      } catch (err) {
-        logDevError('sidebar.session_profile', err)
-        if (!mounted) return
-        setIsAdmin(false)
-      }
-    })()
-
-    return () => {
-      mounted = false
-    }
-  }, [isAuthenticated])
 
   const closeMobileNav = () => {
     setMobileOpen(false)

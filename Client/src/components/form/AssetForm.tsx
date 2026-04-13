@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   createAsset,
   getCustomFieldDefinitions,
@@ -39,23 +39,10 @@ type FormState = {
   notes: string
 }
 
+type ExtraPair = { id: string; key: string; value: string }
+
 const inventoryStatuses = ['in_stock', 'assigned', 'in_repair', 'retired', 'lost', 'disposed']
 const lifecycleEditStatuses = ['in_stock', 'in_repair', 'retired', 'lost', 'disposed']
-
-/** Seed category slug is `networking`; accept `network` if used elsewhere. */
-function isNetworkingAssetCategory(slug: string): boolean {
-  const s = slug.trim().toLowerCase()
-  return s === 'networking' || s === 'network'
-}
-
-/** Seed category slug is `sim`. */
-function isSimAssetCategory(slug: string): boolean {
-  return slug.trim().toLowerCase() === 'sim'
-}
-
-function hasNonEmptyAnswer(value: string | undefined): boolean {
-  return Boolean(value?.trim())
-}
 
 function getCategoryLabelFromSlug(slug: string): string {
   return slug
@@ -90,6 +77,7 @@ export default function AssetForm({
   const originalStatus = prefill.status || 'in_stock'
   const isPanel = variant === 'panel'
   const lockCategory = Boolean(categoryLocked && !isEditing)
+
   const [form, setForm] = useState<FormState>({
     ...defaultForm,
     asset_tag: prefill.asset_tag || '',
@@ -105,17 +93,17 @@ export default function AssetForm({
   })
 
   const [customDefs, setCustomDefs] = useState<CustomFieldDefinition[]>([])
-  const [customValues, setCustomValues] = useState<Record<string, string>>(() => {
-    const existing = (prefill.custom_fields ?? {}) as Record<string, unknown>
-    return Object.fromEntries(
-      Object.entries(existing).map(([key, value]) => [key, value == null ? '' : String(value)])
-    )
-  })
+  const [customValues, setCustomValues] = useState<Record<string, string>>({})
+  const [extraPairs, setExtraPairs] = useState<ExtraPair[]>([])
   const [categories, setCategories] = useState<CategoryRecord[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const { showToast } = useToast()
 
+  // Tracks the last loaded category so we know whether this is initial load or a user-driven change.
+  const prevCategoryRef = useRef<string | null>(null)
+
+  // Load categories once
   useEffect(() => {
     if (lockCategory) return
     let mounted = true
@@ -135,6 +123,10 @@ export default function AssetForm({
     }
   }, [lockCategory])
 
+  // Load custom field definitions whenever category changes.
+  // On the very first load (prevCategoryRef === null) we seed template values from prefill.custom_fields
+  // and split out any unknown keys into extraPairs.
+  // On a user-driven category switch we reset template values to empty but keep extraPairs.
   useEffect(() => {
     if (!form.category_slug) return
     let mounted = true
@@ -143,6 +135,35 @@ export default function AssetForm({
         const defs = await getCustomFieldDefinitions(form.category_slug)
         if (!mounted) return
         setCustomDefs(defs)
+
+        const templateKeys = new Set(defs.map((d) => d.field_key))
+        const isFirstLoad = prevCategoryRef.current === null
+        prevCategoryRef.current = form.category_slug
+
+        if (isFirstLoad) {
+          // Seed from prefill — split into template values + extra pairs
+          const existing = (prefill.custom_fields ?? {}) as Record<string, unknown>
+          const templateInit: Record<string, string> = {}
+          const extraInit: ExtraPair[] = []
+          for (const d of defs) {
+            const v = existing[d.field_key]
+            templateInit[d.field_key] = v == null ? '' : String(v)
+          }
+          for (const [k, v] of Object.entries(existing)) {
+            if (!templateKeys.has(k)) {
+              extraInit.push({ id: crypto.randomUUID(), key: k, value: v == null ? '' : String(v) })
+            }
+          }
+          setCustomValues(templateInit)
+          setExtraPairs(extraInit)
+        } else {
+          // User switched category — reset template fields to empty, keep extra pairs unchanged
+          const templateInit: Record<string, string> = {}
+          for (const d of defs) {
+            templateInit[d.field_key] = ''
+          }
+          setCustomValues(templateInit)
+        }
       } catch (err) {
         if (!mounted) return
         logDevError('assetForm.customFields', err)
@@ -152,117 +173,104 @@ export default function AssetForm({
     return () => {
       mounted = false
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.category_slug])
 
   const locationSuggestions = useMemo(() => getCatalogLocationLabels(), [])
+
   const categoryOptions = useMemo<FilterSelectOption[]>(() => {
-    const options = categories.map((category) => ({
-      value: category.slug,
-      label: category.name,
-    }))
-
+    const options = categories.map((c) => ({ value: c.slug, label: c.name }))
     if (!form.category_slug.trim()) return options
-    if (options.some((option) => option.value === form.category_slug)) return options
-
+    if (options.some((o) => o.value === form.category_slug)) return options
     return [
-      {
-        value: form.category_slug,
-        label: getCategoryLabelFromSlug(form.category_slug) || form.category_slug,
-      },
+      { value: form.category_slug, label: getCategoryLabelFromSlug(form.category_slug) || form.category_slug },
       ...options,
     ]
   }, [categories, form.category_slug])
+
   const inventoryStatusOptions = useMemo<FilterSelectOption[]>(() => {
     const statuses = isEditing
       ? Array.from(new Set([originalStatus, ...lifecycleEditStatuses]))
       : inventoryStatuses
-    return statuses.map((status) => ({
-      value: status,
-      label: formatEnumLabel(status),
-    }))
+    return statuses.map((s) => ({ value: s, label: formatEnumLabel(s) }))
   }, [isEditing, originalStatus])
-  const hideNetworkingLifecycleFields = isNetworkingAssetCategory(form.category_slug)
-  const hideSimModelAndCategoryFields = isSimAssetCategory(form.category_slug)
+
+  const addExtraPair = () =>
+    setExtraPairs((prev) => [...prev, { id: crypto.randomUUID(), key: '', value: '' }])
+
+  const updateExtraPair = (id: string, patch: Partial<ExtraPair>) =>
+    setExtraPairs((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)))
+
+  const removeExtraPair = (id: string) =>
+    setExtraPairs((prev) => prev.filter((p) => p.id !== id))
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
 
     if (!form.category_slug.trim()) {
-      setError('Category is required')
+      setError('Category is required.')
+      return
+    }
+    if (!form.serial_number.trim()) {
+      setError('Serial number is required.')
       return
     }
 
-    if (!hasNonEmptyAnswer(form.manufacturer_name)) {
-      setError('Manufacturer is required. Enter N/A if not applicable.')
-      return
-    }
-    if (!hideSimModelAndCategoryFields && !hasNonEmptyAnswer(form.model)) {
-      setError('Model is required. Enter N/A if not applicable.')
-      return
-    }
-    if (!hasNonEmptyAnswer(form.location_name)) {
-      setError('Location name is required. Enter N/A if unknown.')
-      return
-    }
-    if (!hideNetworkingLifecycleFields) {
-      if (!hasNonEmptyAnswer(form.serial_number)) {
-        setError('Serial number is required. Enter N/A if not available.')
+    // Validate extra pairs: no empty keys with values, no duplicates, no collision with template keys
+    const templateKeySet = new Set(customDefs.map((d) => d.field_key))
+    const seenExtra = new Set<string>()
+    for (const p of extraPairs) {
+      const k = p.key.trim()
+      const v = p.value.trim()
+      if (!k && !v) continue
+      if (!k) {
+        setError('Each "Additional Details" entry needs a label. Remove empty rows or fill in the label.')
         return
       }
-      if (!hasNonEmptyAnswer(form.purchase_date)) {
-        setError('Purchase date is required. Pick your best estimate if the exact date is unknown.')
+      if (templateKeySet.has(k)) {
+        setError(`"${k}" is already a template field. Use a different label for the additional detail.`)
         return
       }
-      if (!hasNonEmptyAnswer(form.warranty_expiry)) {
-        setError('Warranty expiry is required. Pick your best estimate if the exact date is unknown.')
+      if (seenExtra.has(k)) {
+        setError(`Duplicate label "${k}" in Additional Details. Each label must be unique.`)
         return
       }
-    }
-
-    if (!hideSimModelAndCategoryFields) {
-      const emptyCatField = customDefs.find((field) => !hasNonEmptyAnswer(customValues[field.field_key]))
-      if (emptyCatField) {
-        setError(
-          `${emptyCatField.label} is required. For text fields you may enter N/A if the value is unknown.`,
-        )
-        return
-      }
+      seenExtra.add(k)
     }
 
     setLoading(true)
-
     try {
-      const typeByKey = new Map(customDefs.map((field) => [field.field_key, field.data_type] as const))
-      const preparedCustomFields = Object.fromEntries(
+      const typeByKey = new Map(customDefs.map((d) => [d.field_key, d.data_type] as const))
+      const preparedTemplateFields = Object.fromEntries(
         Object.entries(customValues)
           .map(([key, raw]) => [key, coerceValue(raw, typeByKey.get(key) || 'text')] as const)
-          .filter(([, value]) => value !== null && value !== '')
+          .filter(([, v]) => v !== null && v !== ''),
       )
-
-      const customFieldsForPayload: Record<string, unknown> = hideSimModelAndCategoryFields
-        ? {}
-        : preparedCustomFields
+      const preparedExtraFields = Object.fromEntries(
+        extraPairs
+          .filter((p) => p.key.trim() && p.value.trim())
+          .map((p) => [p.key.trim(), p.value.trim()]),
+      )
+      const custom_fields: Record<string, unknown> = { ...preparedTemplateFields, ...preparedExtraFields }
 
       const payload: AssetWriteInput = {
         asset_tag: isEditing ? form.asset_tag.trim() || undefined : undefined,
         category_slug: form.category_slug,
         manufacturer_name: form.manufacturer_name.trim() || undefined,
-        model: hideSimModelAndCategoryFields ? '' : form.model.trim() || undefined,
-        serial_number: hideNetworkingLifecycleFields
-          ? ''
-          : form.serial_number.trim() || undefined,
+        model: form.model.trim() || undefined,
+        serial_number: form.serial_number.trim(),
         location_name: form.location_name.trim() || undefined,
-        purchase_date: hideNetworkingLifecycleFields ? '' : form.purchase_date || undefined,
-        warranty_expiry: hideNetworkingLifecycleFields ? '' : form.warranty_expiry || undefined,
+        purchase_date: form.purchase_date || undefined,
+        warranty_expiry: form.warranty_expiry || undefined,
         status: form.status || undefined,
-        custom_fields: customFieldsForPayload,
+        custom_fields,
         metadata: form.notes.trim() ? { notes: form.notes.trim() } : undefined,
       }
 
       let result: unknown
       if (isEditing && prefill.asset_tag) {
-        const metadataPayload: Partial<AssetWriteInput> = {
+        result = await updateAsset(prefill.asset_tag, {
           asset_tag: payload.asset_tag,
           category_slug: payload.category_slug,
           manufacturer_name: payload.manufacturer_name,
@@ -273,8 +281,7 @@ export default function AssetForm({
           warranty_expiry: payload.warranty_expiry,
           custom_fields: payload.custom_fields,
           metadata: payload.metadata,
-        }
-        result = await updateAsset(prefill.asset_tag, metadataPayload)
+        })
 
         if (form.status !== originalStatus) {
           try {
@@ -305,6 +312,7 @@ export default function AssetForm({
       if (!isEditing) {
         setForm(defaultForm)
         setCustomValues({})
+        setExtraPairs([])
       }
     } catch (err) {
       logDevError('assetForm.submit', err)
@@ -315,7 +323,7 @@ export default function AssetForm({
   }
 
   const content = (
-    <div className={`bg-app border border-base  w-full ${isPanel ? '' : 'max-w-7xl'}`}>
+    <div className={`bg-app border border-base w-full ${isPanel ? '' : 'max-w-7xl'}`}>
       <div className="flex items-center justify-between px-3 sm:px-4 py-2.5 border-b border-base bg-surface rounded-t-2xl">
         <h2 className="font-semibold text-primary text-sm sm:text-base">
           {isEditing
@@ -324,11 +332,14 @@ export default function AssetForm({
               ? `Add new asset — ${lockedCategoryLabel}`
               : 'Add New Asset'}
         </h2>
-        <button type="button" onClick={onClose} className="text-muted hover:text-primary text-xl leading-none">x</button>
+        <button type="button" onClick={onClose} className="text-muted hover:text-primary text-xl leading-none">
+          ×
+        </button>
       </div>
 
       <form onSubmit={handleSubmit} className="px-3 sm:px-4 py-3 sm:py-4 space-y-3">
-        <section className=" p-2.5 sm:p-3 space-y-4">
+        <section className="p-2.5 sm:p-3 space-y-4">
+          {/* ── Core Details ── */}
           <div>
             <p className="text-xs uppercase tracking-[0.14em] text-muted mb-2">Core Details</p>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -336,25 +347,21 @@ export default function AssetForm({
                 label="Asset Tag"
                 value={isEditing ? form.asset_tag : ''}
                 placeholder={isEditing ? 'AST-00001' : 'Auto-generated on save'}
-                onChange={(value) => setForm((current) => ({ ...current, asset_tag: value }))}
-                disabled={true}
+                onChange={(v) => setForm((c) => ({ ...c, asset_tag: v }))}
+                disabled
               />
 
               <div>
                 <label htmlFor="asset-form-category" className="block text-muted text-xs mb-0.5">
                   Category{' '}
-                  <span className="text-accent" aria-hidden="true">
-                    *
-                  </span>
+                  <span className="text-accent" aria-hidden="true">*</span>
                 </label>
                 {lockCategory ? (
                   <div
                     id="asset-form-category"
                     className="w-full bg-surface-2 border border-base rounded-lg px-3 py-2 text-primary text-sm"
                   >
-                    {lockedCategoryLabel ||
-                      getCategoryLabelFromSlug(form.category_slug) ||
-                      form.category_slug}
+                    {lockedCategoryLabel || getCategoryLabelFromSlug(form.category_slug) || form.category_slug}
                   </div>
                 ) : (
                   <FilterSelect
@@ -362,7 +369,7 @@ export default function AssetForm({
                     ariaLabel="Select asset category"
                     value={form.category_slug}
                     options={categoryOptions}
-                    onChange={(value) => setForm((current) => ({ ...current, category_slug: value }))}
+                    onChange={(v) => setForm((c) => ({ ...c, category_slug: v }))}
                     hideLabel
                     dense
                     triggerId="asset-form-category"
@@ -371,34 +378,37 @@ export default function AssetForm({
               </div>
 
               <Field
-                label="Manufacturer"
+                label="Serial Number"
                 requiredMark
-                value={form.manufacturer_name}
-                placeholder="e.g. Dell, Lenovo, Apple — or N/A"
-                onChange={(value) => setForm((current) => ({ ...current, manufacturer_name: value }))}
+                value={form.serial_number}
+                placeholder="e.g. SN-ABC12345678"
+                onChange={(v) => setForm((c) => ({ ...c, serial_number: v }))}
               />
-              {!hideSimModelAndCategoryFields && (
-                <Field
-                  label="Model"
-                  requiredMark
-                  value={form.model}
-                  placeholder="e.g. Latitude 5540 — or N/A"
-                  onChange={(value) => setForm((current) => ({ ...current, model: value }))}
-                />
-              )}
+
+              <Field
+                label="Manufacturer"
+                value={form.manufacturer_name}
+                placeholder="e.g. Dell, Lenovo, Apple"
+                onChange={(v) => setForm((c) => ({ ...c, manufacturer_name: v }))}
+              />
+
+              <Field
+                label="Model"
+                value={form.model}
+                placeholder="e.g. Latitude 5540"
+                onChange={(v) => setForm((c) => ({ ...c, model: v }))}
+              />
+
               <div className="md:col-span-2">
                 <label htmlFor="asset-form-location-name" className="block text-muted text-xs mb-0.5">
-                  Location name{' '}
-                  <span className="text-accent" aria-hidden="true">
-                    *
-                  </span>
+                  Location name
                 </label>
                 <input
                   id="asset-form-location-name"
                   list="asset-location-suggestions"
                   value={form.location_name}
-                  onChange={(e) => setForm((current) => ({ ...current, location_name: e.target.value }))}
-                  placeholder="Address or N/A"
+                  onChange={(e) => setForm((c) => ({ ...c, location_name: e.target.value }))}
+                  placeholder="Address or office location"
                   autoComplete="off"
                   className="w-full bg-app border border-base rounded-lg px-3 py-2 text-primary text-sm outline-none focus:border-[color:var(--accent)] focus:ring-2 focus:ring-[color:var(--accent-soft)] transition"
                 />
@@ -407,98 +417,122 @@ export default function AssetForm({
                     <option key={label} value={label} />
                   ))}
                 </datalist>
+              </div>
+
+              <Field
+                label="Purchase Date"
+                type="date"
+                value={form.purchase_date}
+                placeholder="YYYY-MM-DD"
+                onChange={(v) => setForm((c) => ({ ...c, purchase_date: v }))}
+              />
+              <Field
+                label="Warranty Expiry"
+                type="date"
+                value={form.warranty_expiry}
+                placeholder="YYYY-MM-DD"
+                onChange={(v) => setForm((c) => ({ ...c, warranty_expiry: v }))}
+              />
+
+              <div>
+                <label htmlFor="asset-form-status" className="block text-muted text-xs mb-0.5">
+                  Inventory Status{' '}
+                  <span className="text-accent" aria-hidden="true">*</span>
+                </label>
+                <FilterSelect
+                  label="Inventory Status"
+                  ariaLabel="Select inventory status"
+                  value={form.status}
+                  options={inventoryStatusOptions}
+                  onChange={(v) => setForm((c) => ({ ...c, status: v }))}
+                  hideLabel
+                  dense
+                  triggerId="asset-form-status"
+                />
                 <p className="text-[11px] text-muted mt-0.5 leading-snug">
-                  Pick a suggestion or type any address; use N/A if location is not assigned yet.
+                  Status changes in edit mode are logged in asset history.
                 </p>
               </div>
-              {(!hideNetworkingLifecycleFields || isEditing) && (
-                <>
-                  {!hideNetworkingLifecycleFields && (
-                    <>
-                      <Field
-                        label="Purchase Date"
-                        requiredMark
-                        type="date"
-                        value={form.purchase_date}
-                        placeholder="YYYY-MM-DD"
-                        onChange={(value) => setForm((current) => ({ ...current, purchase_date: value }))}
-                      />
-                      <Field
-                        label="Warranty Expiry"
-                        requiredMark
-                        type="date"
-                        value={form.warranty_expiry}
-                        placeholder="YYYY-MM-DD"
-                        onChange={(value) => setForm((current) => ({ ...current, warranty_expiry: value }))}
-                      />
-
-                      <Field
-                        label="Serial Number"
-                        requiredMark
-                        value={form.serial_number}
-                        placeholder="e.g. SN-ABC12345678 — or N/A"
-                        onChange={(value) => setForm((current) => ({ ...current, serial_number: value }))}
-                      />
-                    </>
-                  )}
-                  <div>
-                    <label htmlFor="asset-form-status" className="block text-muted text-xs mb-0.5">
-                      Inventory Status{' '}
-                      <span className="text-accent" aria-hidden="true">
-                        *
-                      </span>
-                    </label>
-                    <FilterSelect
-                      label="Inventory Status"
-                      ariaLabel="Select inventory status"
-                      value={form.status}
-                      options={inventoryStatusOptions}
-                      onChange={(value) => setForm((current) => ({ ...current, status: value }))}
-                      hideLabel
-                      dense
-                      triggerId="asset-form-status"
-                    />
-                    <p className="text-[11px] text-muted mt-0.5 leading-snug">
-                      Inventory only — not employee ERP status. Status changes in edit mode are saved through the lifecycle workflow and logged in history.
-                    </p>
-                  </div>
-                </>
-              )}
             </div>
           </div>
 
-          {!hideSimModelAndCategoryFields && (
+          {/* ── Category template fields ── */}
+          {customDefs.length > 0 && (
             <div className="border-t border-base pt-3">
               <p className="text-xs uppercase tracking-[0.14em] text-muted mb-2">
-                Category fields ({form.category_slug})
+                {getCategoryLabelFromSlug(form.category_slug)} fields
               </p>
-              {customDefs.length === 0 ? (
-                <p className="text-sm text-muted">No extra fields for this category.</p>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
-                  {customDefs.map((field) => (
-                    <DynamicField
-                      key={field.id}
-                      field={field}
-                      value={customValues[field.field_key] || ''}
-                      onChange={(value) =>
-                        setCustomValues((current) => ({
-                          ...current,
-                          [field.field_key]: value,
-                        }))
-                      }
-                    />
-                  ))}
-                </div>
-              )}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                {customDefs.map((field) => (
+                  <DynamicField
+                    key={field.id}
+                    field={field}
+                    value={customValues[field.field_key] || ''}
+                    onChange={(v) =>
+                      setCustomValues((c) => ({ ...c, [field.field_key]: v }))
+                    }
+                  />
+                ))}
+              </div>
             </div>
           )}
 
+          {/* ── Additional Details (free-form key-value) ── */}
+          <div className="border-t border-base pt-3">
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <p className="text-xs uppercase tracking-[0.14em] text-muted">Additional Details</p>
+              <button
+                type="button"
+                onClick={addExtraPair}
+                className="text-accent text-sm font-semibold hover:underline"
+                aria-label="Add additional detail"
+              >
+                + Add
+              </button>
+            </div>
+            {extraPairs.length === 0 ? (
+              <p className="text-sm text-subtle italic">
+                No extra details yet. Click "+ Add" to attach custom key-value information.
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {extraPairs.map((pair) => (
+                  <div
+                    key={pair.id}
+                    className="flex flex-col sm:flex-row gap-2 items-stretch sm:items-center"
+                  >
+                    <input
+                      value={pair.key}
+                      onChange={(e) => updateExtraPair(pair.id, { key: e.target.value })}
+                      placeholder="Label — e.g. wifi_address"
+                      className="flex-1 min-w-0 bg-app border border-base rounded-lg px-3 py-2 text-primary placeholder:text-subtle text-sm outline-none focus:border-[color:var(--accent)] focus:ring-2 focus:ring-[color:var(--accent-soft)] transition"
+                    />
+                    <input
+                      value={pair.value}
+                      onChange={(e) => updateExtraPair(pair.id, { value: e.target.value })}
+                      placeholder="Value — e.g. 192.168.1.50"
+                      className="flex-1 min-w-0 bg-app border border-base rounded-lg px-3 py-2 text-primary placeholder:text-subtle text-sm outline-none focus:border-[color:var(--accent)] focus:ring-2 focus:ring-[color:var(--accent-soft)] transition"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => removeExtraPair(pair.id)}
+                      className="shrink-0 text-xs text-muted hover:text-accent px-2 py-1.5"
+                      aria-label="Remove row"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* ── Notes ── */}
           <div className="border-t border-base pt-3">
             <label className="block text-muted text-xs mb-0.5">Notes (optional)</label>
             <textarea
               value={form.notes}
-              onChange={(e) => setForm((current) => ({ ...current, notes: e.target.value }))}
+              onChange={(e) => setForm((c) => ({ ...c, notes: e.target.value }))}
               rows={2}
               className="w-full bg-app border border-base rounded-lg px-3 py-2 text-primary text-sm outline-none focus:border-[color:var(--accent)] focus:ring-2 focus:ring-[color:var(--accent-soft)] transition resize-none"
               placeholder="Operational notes, procurement references…"
@@ -509,10 +543,9 @@ export default function AssetForm({
         {error && <p className="text-accent text-sm">{error}</p>}
 
         <p className="text-[11px] text-muted leading-relaxed border-t border-base pt-2.5 mt-1">
-          <span className="text-accent font-semibold">*</span> All starred fields are required before you can save (Notes is optional).
-          For text inputs, if you do not have a real value, enter <span className="font-mono text-primary">N/A</span>.
-          Date fields need a calendar value—use your best estimate when the exact date is unknown. Category-specific
-          fields below “Category fields” follow the same rule (N/A is allowed where the field is plain text).
+          <span className="text-accent font-semibold">*</span> Asset tag is auto-generated. Category and serial number
+          are the only required fields; everything else is optional.
+          All other fields including template and additional details are optional.
         </p>
 
         <div className="flex flex-col sm:flex-row gap-2 pt-1">
@@ -552,12 +585,10 @@ function coerceValue(value: string, dataType: CustomFieldDefinition['data_type']
     const parsed = Number(trimmed)
     return Number.isFinite(parsed) ? parsed : trimmed
   }
-
   if (dataType === 'boolean') {
     if (trimmed.toLowerCase() === 'true') return true
     if (trimmed.toLowerCase() === 'false') return false
   }
-
   if (dataType === 'json') {
     try {
       return JSON.parse(trimmed)
@@ -565,7 +596,6 @@ function coerceValue(value: string, dataType: CustomFieldDefinition['data_type']
       return trimmed
     }
   }
-
   return trimmed
 }
 
@@ -593,9 +623,7 @@ function Field({
         {requiredMark ? (
           <>
             {' '}
-            <span className="text-accent" aria-hidden="true">
-              *
-            </span>
+            <span className="text-accent" aria-hidden="true">*</span>
           </>
         ) : null}
       </label>
@@ -613,14 +641,10 @@ function Field({
 
 function dynamicFieldPlaceholder(field: CustomFieldDefinition): string {
   switch (field.data_type) {
-    case 'number':
-      return 'e.g. 8'
-    case 'date':
-      return 'YYYY-MM-DD'
-    case 'json':
-      return 'e.g. {"key": "value"}'
-    default:
-      return `Enter ${field.label} — or N/A`
+    case 'number': return 'e.g. 8'
+    case 'date': return 'YYYY-MM-DD'
+    case 'json': return 'e.g. {"key": "value"}'
+    default: return `Enter ${field.label}`
   }
 }
 
@@ -638,13 +662,7 @@ function DynamicField({
 
   return (
     <div>
-      <label className="block text-muted text-xs mb-0.5">
-        {field.label}
-        <span className="text-accent" aria-hidden="true">
-          {' '}
-          *
-        </span>
-      </label>
+      <label className="block text-muted text-xs mb-0.5">{field.label}</label>
 
       {field.data_type === 'boolean' ? (
         <select aria-label={field.label} value={value} onChange={(e) => onChange(e.target.value)} className={commonClass}>

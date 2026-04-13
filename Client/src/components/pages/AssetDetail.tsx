@@ -8,6 +8,7 @@ import {
   hasActiveAdminAccess,
   returnAsset,
   softDeleteAssetById,
+  getSessionEmployee,
   type AssetAssignmentRecord,
   type AssetDetailRecord,
   type EmployeeRecord,
@@ -33,7 +34,7 @@ import EmployeeAssignLookup from '../common/EmployeeAssignLookup'
 //   else if(status.toLowerCase()==='lost'){
 //     return 'Lost/Can\'t Locate'
 //   }
-  
+
 //   else if(status.toLowerCase()==='retired'){
 //     return 'Retired/Decommissioned'
 //   }
@@ -43,7 +44,7 @@ import EmployeeAssignLookup from '../common/EmployeeAssignLookup'
 //   else if(status.toLowerCase()==='disposed'){
 //     return 'Disposed'
 //   }
-  
+
 // }
 
 const ASSIGNABLE_STATUSES = new Set(['in_stock', 'assigned'])
@@ -85,13 +86,25 @@ export default function AssetDetail() {
     setError('')
     setErrorDebug(undefined)
     try {
-      const [data, allowed] = await Promise.all([
+      const [data, allowed, sessionEmployee] = await Promise.all([
         getAssetDetail(id),
         hasActiveAdminAccess().catch((err) => {
           logDevError('assetDetail.access', err)
           return false
         }),
+        getSessionEmployee().catch(() => null),
       ])
+
+      if (!allowed) {
+        const isOwnAsset = Boolean(
+          sessionEmployee?.id && data.asset.current_employee_id === sessionEmployee.id
+        )
+        if (!isOwnAsset && data.asset.asset_tag) {
+          navigate(`/assets/scan/${encodeURIComponent(data.asset.asset_tag)}`, { replace: true })
+          return
+        }
+      }
+
       setDetail(data)
       setCanManage(allowed)
     } catch (err) {
@@ -101,7 +114,7 @@ export default function AssetDetail() {
     } finally {
       setLoading(false)
     }
-  }, [id])
+  }, [id, navigate])
 
   useEffect(() => {
     void refresh()
@@ -141,8 +154,8 @@ export default function AssetDetail() {
     () => detail?.assignments.find((entry) => entry.returned_at === null) || null,
     [detail]
   )
-  const currentHolderCode = openAssignment?.employee?.employee_code.trim().toUpperCase() ?? ''
-  const selectedAssigneeCode = selectedAssignee?.employee_code.trim().toUpperCase() ?? ''
+  const currentHolderCode = openAssignment?.employee?.employee_id.trim().toUpperCase() ?? ''
+  const selectedAssigneeCode = selectedAssignee?.employee_id.trim().toUpperCase() ?? ''
   const isAssignableStatus = ASSIGNABLE_STATUSES.has(detail?.asset.status ?? '')
   const visibleLifecycleEvents = useMemo(
     () =>
@@ -162,7 +175,7 @@ export default function AssetDetail() {
       setError(`Cannot assign — this asset is currently marked as "${formatEnumLabel(detail.asset.status)}". Please update its inventory status before assigning.`)
       return
     }
-    if (!selectedAssignee?.employee_code.trim()) {
+    if (!selectedAssignee?.employee_id.trim()) {
       setError('Select an employee from the suggestions before assigning this asset')
       return
     }
@@ -186,14 +199,14 @@ export default function AssetDetail() {
 
   const handleAssign = async () => {
     if (!detail?.asset.asset_tag) return
-    if (!selectedAssignee?.employee_code.trim()) return
+    if (!selectedAssignee?.employee_id.trim()) return
     setActionLoading(true)
     setError('')
     setErrorDebug(undefined)
     try {
       const result = await assignAsset({
         asset_tag: detail.asset.asset_tag,
-        employee_code: selectedAssignee.employee_code.trim(),
+        employee_id: selectedAssignee.employee_id.trim(),
         notes: assignNotes.trim() || undefined,
       })
       const msg =
@@ -271,10 +284,13 @@ export default function AssetDetail() {
     setErrorDebug(undefined)
     try {
       await softDeleteAssetById(detail.asset.id)
+      setDeleteDialogOpen(false)
+      showToast({ message: 'Asset moved to Recycle Bin.', variant: 'success' })
       navigate('/recycle-bin')
     } catch (err) {
       logDevError('assetDetail.soft_delete', err)
-      setError(getUserFacingMessage(err, 'Unable to delete this asset right now.'))
+      setDeleteDialogOpen(false)
+      showToast({ message: getUserFacingMessage(err, 'Unable to delete this asset right now.'), variant: 'error' })
       setErrorDebug(getErrorDebugDetail(err))
     } finally {
       setActionLoading(false)
@@ -325,18 +341,22 @@ export default function AssetDetail() {
         <div className="flex flex-wrap items-center gap-2">
           <h1 className="sr-only">{formatDisplay(asset.asset_tag)}</h1>
           <div className="flex items-center gap-2 ml-auto">
-            <HeaderActionButton
-              icon="edit"
-              label="Edit Asset"
-              onClick={() => setShowEdit(true)}
-              disabled={actionLoading || !canManage}
-            />
-            <HeaderActionButton
-              icon="trash"
-              label="Delete Asset"
-              onClick={() => setDeleteDialogOpen(true)}
-              disabled={actionLoading || !canManage}
-            />
+            {canManage ? (
+              <HeaderActionButton
+                icon="edit"
+                label="Edit Asset"
+                onClick={() => setShowEdit(true)}
+                disabled={actionLoading}
+              />
+            ) : null}
+            {canManage ? (
+              <HeaderActionButton
+                icon="trash"
+                label="Delete Asset"
+                onClick={() => setDeleteDialogOpen(true)}
+                disabled={actionLoading}
+              />
+            ) : null}
             <HeaderActionButton
               icon="refresh-cw"
               label="Refresh"
@@ -357,13 +377,13 @@ export default function AssetDetail() {
         <div className="grid grid-cols-1 lg:grid-cols-[1.7fr_0.8fr] gap-3 items-start">
           <section className="rounded-xl border border-base bg-gradient-to-r from-[color:var(--surface-2)] via-[color:var(--bg)] to-[color:var(--surface-3)] px-3 py-3 sm:px-4 sm:py-4 flex flex-col gap-2.5">
             <p className="text-xs text-subtle leading-relaxed">
-              Snapshot: status, holder ERP, and how this asset is labeled.
+              Snapshot: status, holder employment, and how this asset is labeled.
             </p>
             <div className="flex flex-wrap items-center gap-2">
               <InventoryStatusBadge status={asset.status} size="md" />
               {asset.current_employee_id ? (
-                <span className={`px-3 text-xs font-semibold rounded-full ${asset.current_employee_erp_active ? 'bg-surface border border-base text-muted' : 'bg-surface border border-base text-accent'}`}>
-                  Holder ERP: {asset.current_employee_erp_active ? 'Active' : 'Inactive'}
+                <span className={`px-3 text-xs font-semibold rounded-full ${asset.current_employee_is_active ? 'bg-surface border border-base text-muted' : 'bg-surface border border-base text-accent'}`}>
+                  Holder: {asset.current_employee_is_active ? 'Active' : 'Inactive'}
                 </span>
               ) : null}
             </div>
@@ -405,7 +425,7 @@ export default function AssetDetail() {
                 />
               ) : null}
             </div>
-            
+
           </section>
         </div>
 
@@ -429,56 +449,56 @@ export default function AssetDetail() {
         </Section>
 
         {canManage ? (
-        <section className="bg-surface border border-base rounded-xl p-4 sm:p-5">
-          <h2 className="text-sm font-semibold uppercase tracking-[0.14em] text-subtle mb-2">Assign or return</h2>
-          <p className="text-xs  mb-3 text-black font-bold  leading-relaxed">
-            {canManage
-              ? 'Move custody by assigning to an employee code, or close the open assignment to return the asset to stock. Assignments are exclusive—one active holder at a time.'
-              : 'Read-only: you can view this asset but cannot change custody. Admin or IT Ops access is required to assign or return.'}
-          </p>
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
-            <EmployeeAssignLookup
-              id="asset-detail-assignee"
-              label="Employee"
-              value={assignQuery}
-              onChange={setAssignQuery}
-              selectedEmployee={selectedAssignee}
-              onSelectedEmployeeChange={setSelectedAssignee}
-              placeholder="Search by user name or employee code"
-              hideLabel
-              disabled={actionLoading}
-            />
-            <input
-              value={assignNotes}
-              onChange={(e) => setAssignNotes(e.target.value)}
-              placeholder="Optional notes"
-              disabled={actionLoading}
-              className="w-full bg-surface-2 border border-base rounded-lg px-3 py-2.5 text-sm"
-            />
-            <div className="flex gap-2">
-              <button
-                onClick={openAssignDialog}
+          <section className="bg-surface border border-base rounded-xl p-4 sm:p-5">
+            <h2 className="text-sm font-semibold uppercase tracking-[0.14em] text-subtle mb-2">Assign or return</h2>
+            <p className="text-xs  mb-3 text-black font-bold  leading-relaxed">
+              {canManage
+                ? 'Move custody by assigning to an employee code, or close the open assignment to return the asset to stock. Assignments are exclusive—one active holder at a time.'
+                : 'Read-only: you can view this asset but cannot change custody. Admin or IT Ops access is required to assign or return.'}
+            </p>
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+              <EmployeeAssignLookup
+                id="asset-detail-assignee"
+                label="Employee"
+                value={assignQuery}
+                onChange={setAssignQuery}
+                selectedEmployee={selectedAssignee}
+                onSelectedEmployeeChange={setSelectedAssignee}
+                placeholder="Search by user name or employee code"
+                hideLabel
                 disabled={actionLoading}
-                className="flex-1 bg-accent text-white font-semibold px-3 py-2.5 rounded-lg text-sm disabled:opacity-60"
-                type="button"
-              >
-                Assign
-              </button>
-              <button
-                onClick={openReturnDialog}
-                disabled={actionLoading || !openAssignment}
-                className="flex-1 border border-base text-muted px-3 py-2.5 rounded-lg text-sm hover:bg-surface-2 disabled:opacity-60"
-                type="button"
-              >
-                Return
-              </button>
+              />
+              <input
+                value={assignNotes}
+                onChange={(e) => setAssignNotes(e.target.value)}
+                placeholder="Optional notes"
+                disabled={actionLoading}
+                className="w-full bg-surface-2 border border-base rounded-lg px-3 py-2.5 text-sm"
+              />
+              <div className="flex gap-2">
+                <button
+                  onClick={openAssignDialog}
+                  disabled={actionLoading}
+                  className="flex-1 bg-accent text-white font-semibold px-3 py-2.5 rounded-lg text-sm disabled:opacity-60"
+                  type="button"
+                >
+                  Assign
+                </button>
+                <button
+                  onClick={openReturnDialog}
+                  disabled={actionLoading || !openAssignment}
+                  className="flex-1 border border-base text-muted px-3 py-2.5 rounded-lg text-sm hover:bg-surface-2 disabled:opacity-60"
+                  type="button"
+                >
+                  Return
+                </button>
+              </div>
             </div>
-          </div>
-          <p className="text-[11px]  text-black font-bold  mt-2">
-            Reassigning to a different code ends the previous holder’s assignment automatically and opens a new row in history.
-          </p>
-          {error ? <p className="text-accent text-sm mt-2">{error}</p> : null}
-        </section>
+            <p className="text-[11px]  text-black font-bold  mt-2">
+              Reassigning to a different code ends the previous holder’s assignment automatically and opens a new row in history.
+            </p>
+            {error ? <p className="text-accent text-sm mt-2">{error}</p> : null}
+          </section>
         ) : null}
 
         <Section
@@ -487,7 +507,7 @@ export default function AssetDetail() {
         >
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <Info label="Current Holder" value={formatDisplay(asset.current_employee_name)} />
-            <Info label="Current Holder Code" value={formatDisplay(asset.current_employee_code)} />
+            <Info label="Current Holder ID" value={formatDisplay(asset.current_employee_code)} />
             <Info label="Assigned At" value={formatDateTime(asset.assigned_at)} />
             <Info label="Open Assignment" value={openAssignment ? 'Yes' : 'No'} />
           </div>
@@ -544,35 +564,35 @@ export default function AssetDetail() {
           </Section>
         )}
 
-        <Section
-          title="Assignment History"
-          description="All assigns/returns in order with holder ERP status."
-        >
-          <div className="overflow-x-auto rounded-lg border border-base">
-            <table className="w-full min-w-[720px] text-sm">
-              <thead className="bg-surface-2 text-muted uppercase text-xs">
-                <tr>
-                  <th className="px-3 py-2 text-left">Employee</th>
-                  <th className="px-3 py-2 text-left">Code</th>
-                  <th className="px-3 py-2 text-left">ERP</th>
-                  <th className="px-3 py-2 text-left">Assigned At</th>
-                  <th className="px-3 py-2 text-left">Returned At</th>
-                  <th className="px-3 py-2 text-left">Source</th>
-                </tr>
-              </thead>
-              <tbody>
-                {detail.assignments.map((entry) => (
-                  <AssignmentRow key={entry.id} entry={entry} />
-                ))}
-                {detail.assignments.length === 0 && (
+        {canManage && (
+          <Section
+            title="Assignment History"
+            description="All assigns/returns in order with holder ERP status."
+          >
+            <div className="overflow-x-auto rounded-lg border border-base">
+              <table className="w-full min-w-[720px] text-sm">
+                <thead className="bg-surface-2 text-muted uppercase text-xs">
                   <tr>
-                    <td colSpan={6} className="px-3 py-8 text-center text-subtle">No assignment history</td>
+                    <th className="px-3 py-2 text-left">Employee</th>
+                    <th className="px-3 py-2 text-left">Employee ID</th>
+                    <th className="px-3 py-2 text-left">Assigned At</th>
+                    <th className="px-3 py-2 text-left">Returned At</th>
                   </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </Section>
+                </thead>
+                <tbody>
+                  {detail.assignments.map((entry) => (
+                    <AssignmentRow key={entry.id} entry={entry} />
+                  ))}
+                  {detail.assignments.length === 0 && (
+                    <tr>
+                      <td colSpan={6} className="px-3 py-8 text-center text-subtle">No assignment history</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </Section>
+        )}
 
         {canManage ? (
           <Section
@@ -588,7 +608,7 @@ export default function AssetDetail() {
         ) : null}
       </div>
 
-      {showEdit && (
+      {canManage && showEdit && (
         <AssetForm
           prefill={{
             asset_tag: asset.asset_tag || undefined,
@@ -624,7 +644,7 @@ export default function AssetDetail() {
       <ConfirmDialog
         open={returnDialogOpen}
         title="Return Asset"
-        message={`Mark ${detail.asset.asset_tag || 'this asset'} as returned${openAssignment?.employee?.name ? ` from ${openAssignment.employee.name}` : ''}${openAssignment?.employee?.employee_code ? ` (${openAssignment.employee.employee_code})` : ''}?`}
+        message={`Mark ${detail.asset.asset_tag || 'this asset'} as returned${openAssignment?.employee?.name ? ` from ${openAssignment.employee.name}` : ''}${openAssignment?.employee?.employee_id ? ` (${openAssignment.employee.employee_id})` : ''}?`}
         confirmLabel="Confirm Return"
         loading={actionLoading}
         showDismissIcon
@@ -641,7 +661,6 @@ export default function AssetDetail() {
         loading={actionLoading}
         onClose={() => setDeleteDialogOpen(false)}
         onConfirm={() => {
-          setDeleteDialogOpen(false)
           void handleSoftDelete()
         }}
       />
@@ -710,14 +729,14 @@ function formatAuditActorDisplay(
   if (!actor) return '-'
 
   const name = actor.name?.trim()
-  const employeeCode = actor.employee_code?.trim()
+  const employeeId = actor.employee_id?.trim()
 
-  if (name && employeeCode) {
-    return `${name} - ${employeeCode}`
+  if (name && employeeId) {
+    return `${name} - ${employeeId}`
   }
 
   if (name) return name
-  if (employeeCode) return employeeCode
+  if (employeeId) return employeeId
 
   return formatAuthUserRef(actor.auth_user_id)
 }
@@ -726,30 +745,22 @@ function formatEmployeeAssignSummary(employee: EmployeeRecord | null): string {
   if (!employee) return ''
 
   const name = employee.name.trim()
-  const employeeCode = employee.employee_code.trim()
+  const employeeId = employee.employee_id.trim()
 
-  if (name && employeeCode) {
-    return `${name} (${employeeCode})`
+  if (name && employeeId) {
+    return `${name} (${employeeId})`
   }
 
-  return name || employeeCode
+  return name || employeeId
 }
 
 function AssignmentRow({ entry }: { entry: AssetAssignmentRecord }) {
   return (
     <tr className="border-t border-base">
       <td className="px-3 py-2 text-primary">{formatDisplay(entry.employee?.name)}</td>
-      <td className="px-3 py-2 text-primary">{formatDisplay(entry.employee?.employee_code)}</td>
-      <td className="px-3 py-2 text-primary">
-        {entry.employee ? (
-          <span className={`text-xs px-2 py-0.5 rounded ${entry.employee.erp_active ? 'bg-accent text-white' : 'bg-surface border border-base text-muted'}`}>
-            {entry.employee.erp_active ? 'Active' : 'Inactive'}
-          </span>
-        ) : '-'}
-      </td>
+      <td className="px-3 py-2 text-primary">{formatDisplay(entry.employee?.employee_id)}</td>
       <td className="px-3 py-2 text-primary">{formatDateTime(entry.assigned_at)}</td>
-      <td className="px-3 py-2 text-primary">{entry.returned_at ? formatDateTime(entry.returned_at) : 'OPEN'}</td>
-      <td className="px-3 py-2 text-primary">{formatEnumLabel(entry.source)}</td>
+      <td className="px-3 py-2 text-primary">{entry.returned_at ? formatDateTime(entry.returned_at) : <span className="text-amber-500 font-medium">Not yet returned</span>}</td>
     </tr>
   )
 }

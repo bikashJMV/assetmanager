@@ -26,9 +26,35 @@ Apply the files in this exact order:
 20. `20_fn_set_asset_lifecycle_status.sql`
 21. `21_assign_lifecycle_status_guard.sql`
 22. `22_public_scan_holder_details.sql`
+23. `23_restructure_employees.sql`
+24. `24_asset_mandatory_fields.sql`
+25. `25_restore_rbac_columns.sql`
+26. `26_session_lookup_rpc.sql`
+27. `27_employee_permanent_delete_rpc.sql`
+28. `28_delete_asset_permanent_rpc.sql`
+29. `29_employee_directory_view.sql`
+30. `30_fn_bulk_insert_employees.sql`
+31. `31_fn_bulk_insert_employees_setof.sql`
+32. `32_fn_get_session_employee_no_autoprovision.sql`
+33. `33_scoped_views_employee_role.sql`
+34. `34_fix_fn_list_warranty_notifications.sql`
+35. `35_fn_public_scan_add_category.sql`
+36. `36_seed_category_changes.sql`
+37. `37_fn_bulk_insert_assets.sql`
+38. `38_fix_fn_asset_event_actor_snapshot.sql`
+39. `39_fix_employee_code_column_refs.sql`
+40. `40_fix_assets_rls_employee_scope.sql`
+41. `41_fix_v_asset_inventory_employee_id.sql`
+42. `42_fix_v_asset_inventory_current_employee_id.sql`
+43. `43_fix_assets_rls_remove_circular_dependency.sql`
+44. `43_fix_fn_return_asset_employee_id.sql`
+45. `44_fix_fn_soft_delete_asset.sql`
+46. `45_recycle_bin_grants_v_employee_directory.sql`
 
 ## Important invariants
 
+- As of migration 24, `asset_tag`, `serial_number`, and `category_id` are mandatory for all assets. All other fields are optional.
+- The `networking` category/template has been removed from the schema, seed data, and all client/server logic.
 - Canonical role is `employees.role`.
 - `it_ops` is the highest role.
 - `employees.is_active` and `employees.erp_active` serve different purposes.
@@ -38,6 +64,8 @@ Apply the files in this exact order:
 - Lifecycle status changes (in_stock, in_repair, retired, lost, disposed) must use `fn_set_asset_lifecycle_status` — it auto-closes open assignments and records proper audit events.
 - Public QR scan uses `fn_public_scan_asset` and must stay tightly scoped to the documented anonymous payload.
 - Soft delete and recycle-bin behavior are part of the schema contract.
+- `v_employee_directory` lists employees who do **not** have an **open** Recycle Bin row (`recycle_bin_entries` with `entity_type = 'employee'` and `restored_at is null`). With `security_invoker = true` (migration 33), callers must be able to `SELECT` from `recycle_bin_entries` for that exclusion to work; migration **45** grants that.
+- After **45**, soft-deleted employees disappear from the directory view and from client flows that read it (e.g. `getEmployeeById`).
 
 ## Notes
 
@@ -52,6 +80,8 @@ Apply the files in this exact order:
 - assigned assets: `asset_name`, `holder_name`, `holder_employee_code`, `holder_department`
 - unassigned assets: `asset_name`, `status`, `asset_tag`
 - `22_public_scan_holder_details.sql` keeps `qr_scanned` lifecycle logging and the same RPC signature.
+- `33_scoped_views_employee_role.sql` sets `security_invoker = true` on `v_employee_directory` (and `v_asset_inventory`) so employee-scoped RLS applies; pair it with **45** so the Recycle Bin subquery is visible to authenticated users.
+- `45_recycle_bin_grants_v_employee_directory.sql` grants `SELECT` on `public.recycle_bin_entries` to `authenticated` and `service_role`, and recreates `v_employee_directory`. Apply on any database that was missing those grants or soft-deleted rows still appeared in the employee list.
 
 ## Re-run guidance
 

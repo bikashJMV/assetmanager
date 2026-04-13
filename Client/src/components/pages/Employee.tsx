@@ -32,7 +32,7 @@ import {
   upsertEmployee,
 } from '../../api'
 import { getErrorDebugDetail, getUserFacingMessage, logDevError } from '../../utils/errors'
-import { formatDisplay } from '../../utils/formatDisplay'
+import { formatDisplay, formatRoleLabel } from '../../utils/formatDisplay'
 import employeeInfoHint from '../../data/employeeInfoHint.json'
 import { getStoredPageSize, setStoredPageSize } from '../../utils/paginationPrefs'
 
@@ -47,17 +47,15 @@ const EMPLOYEE_PAGE_INFO_HINT = employeeInfoHint as EmployeePageInfoHint
 const SEARCH_DEBOUNCE_MS = 300
 const DEFAULT_PAGE_SIZE = 10
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100]
+
+/** Per-employee "Download QR" (bulk asset QRs). Set `true` to show again. */
+const SHOW_EMPLOYEE_ROW_QR_DOWNLOAD = false
 const FILTER_STATUS_ALL = 'all' as const
 const ROLE_ALL = 'all' as const
 const EMPLOYEE_STATUS_OPTIONS: FilterSelectOption[] = [
   { value: 'all', label: 'All employees' },
   { value: 'active', label: 'Active employee', dotClassName: 'bg-emerald-500' },
   { value: 'inactive', label: 'Inactive employee', dotClassName: 'bg-red-500' },
-]
-const ERP_STATUS_OPTIONS: FilterSelectOption[] = [
-  { value: 'all', label: 'Any ERP Access' },
-  { value: 'active', label: 'Only ERP Active', dotClassName: 'bg-emerald-500' },
-  { value: 'inactive', label: 'Only ERP Inactive', dotClassName: 'bg-red-500' },
 ]
 const ROLE_OPTIONS: FilterSelectOption[] = [
   { value: 'all', label: 'All roles' },
@@ -69,7 +67,6 @@ const ROLE_OPTIONS: FilterSelectOption[] = [
 type EmployeeFiltersInput = {
   search: string
   employeeStatus: 'all' | 'active' | 'inactive'
-  erpStatus: 'all' | 'active' | 'inactive'
   department: string
   role: string
 }
@@ -86,18 +83,11 @@ function getInitialEmployeeViewMode(): EmployeeViewMode {
 function getActiveAdvancedFilterCount(input: EmployeeFiltersInput): number {
   let count = 0
   if (input.employeeStatus !== FILTER_STATUS_ALL) count += 1
-  if (input.erpStatus !== FILTER_STATUS_ALL) count += 1
   if (input.department.trim()) count += 1
   if (input.role.trim() && input.role !== ROLE_ALL) count += 1
   return count
 }
 
-function formatRoleLabel(role: string): string {
-  const normalized = role.trim().toLowerCase()
-  if (normalized === 'it_ops') return 'IT Ops'
-  if (normalized === 'admin') return 'Admin'
-  return 'Employee'
-}
 
 function roleChangeConfirmLabel(role: EmployeeRole): string {
   if (role === 'admin') return 'Set Admin'
@@ -112,10 +102,10 @@ function getRoleChangeDialogLabel(employee: EmployeeRecord, nextRole: EmployeeRo
 
 function getRoleChangeDialogMessage(employee: EmployeeRecord, nextRole: EmployeeRole): string {
   if (employee.role === 'it_ops' && nextRole === 'employee') {
-    return `Remove IT Ops access from ${employee.name}? They will return to the employee role. Employee code: ${employee.employee_code}.`
+    return `Remove IT Ops access from ${employee.name}? They will return to the employee role. Employee ID: ${employee.employee_id}.`
   }
 
-  return `Are you sure you want to set ${employee.name} as ${formatRoleLabel(nextRole)}? Employee code: ${employee.employee_code}.`
+  return `Are you sure you want to set ${employee.name} as ${formatRoleLabel(nextRole)}? Employee ID: ${employee.employee_id}.`
 }
 
 function employeeStatusBadgeClass(isActive: boolean): string {
@@ -128,22 +118,12 @@ function employeeStatusDotClass(isActive: boolean): string {
   return isActive ? 'bg-emerald-500' : 'bg-red-500'
 }
 
-function erpStatusBadgeClass(isActive: boolean): string {
-  return isActive
-    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-    : 'bg-red-50 text-red-700 border border-red-200'
-}
-
-function erpStatusDotClass(isActive: boolean): string {
-  return isActive ? 'bg-emerald-500' : 'bg-red-500'
-}
-
 function getAssignedAssetDisplay(count: number | undefined): string {
   return (count ?? 0) > 0 ? String(count) : 'N/A'
 }
 
 function toApiFilters(input: EmployeeFiltersInput): EmployeeListFilters {
-  const filters: EmployeeListFilters = { is_active: 'all', erp_active: 'all' }
+  const filters: EmployeeListFilters = { is_active: 'all' }
 
   if (input.search.trim()) {
     filters.search = input.search.trim()
@@ -153,12 +133,6 @@ function toApiFilters(input: EmployeeFiltersInput): EmployeeListFilters {
     filters.is_active = true
   } else if (input.employeeStatus === 'inactive') {
     filters.is_active = false
-  }
-
-  if (input.erpStatus === 'active') {
-    filters.erp_active = true
-  } else if (input.erpStatus === 'inactive') {
-    filters.erp_active = false
   }
 
   if (input.department.trim()) {
@@ -184,15 +158,13 @@ export default function Employee() {
   const [departments, setDepartments] = useState<string[]>([])
   const [filtersInput, setFiltersInput] = useState<EmployeeFiltersInput>({
     search: '',
-    employeeStatus: 'all',
-    erpStatus: 'all',
+    employeeStatus: 'active',
     department: '',
     role: ROLE_ALL,
   })
   const [draftFiltersInput, setDraftFiltersInput] = useState<EmployeeFiltersInput>({
     search: '',
-    employeeStatus: 'all',
-    erpStatus: 'all',
+    employeeStatus: 'active',
     department: '',
     role: ROLE_ALL,
   })
@@ -222,12 +194,12 @@ export default function Employee() {
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const filtersRef = useRef<EmployeeListFilters>(toApiFilters({
     search: '',
-    employeeStatus: 'all',
-    erpStatus: 'all',
+    employeeStatus: 'active',
     department: '',
     role: ROLE_ALL,
   }))
   const canManageEmployees = accessResolved && isAdmin
+  const canManageAdminRole = isAdmin || isItOps
   const activeAdvancedFilterCount = getActiveAdvancedFilterCount(filtersInput)
   const headerActions = canManageEmployees
     ? [
@@ -347,7 +319,7 @@ export default function Employee() {
   }
 
   const handleFilterChange = (
-    partial: Partial<Pick<EmployeeFiltersInput, 'employeeStatus' | 'erpStatus' | 'department' | 'role'>>
+    partial: Partial<Pick<EmployeeFiltersInput, 'employeeStatus' | 'department' | 'role'>>,
   ) => {
     if (debounceRef.current) clearTimeout(debounceRef.current)
 
@@ -371,7 +343,7 @@ export default function Employee() {
   }
 
   const handleDraftFilterChange = (
-    partial: Partial<Pick<EmployeeFiltersInput, 'employeeStatus' | 'erpStatus' | 'department' | 'role'>>
+    partial: Partial<Pick<EmployeeFiltersInput, 'employeeStatus' | 'department' | 'role'>>,
   ) => {
     setDraftFiltersInput((current) => ({ ...current, ...partial }))
   }
@@ -379,7 +351,6 @@ export default function Employee() {
   const handleApplyDraftFilters = () => {
     handleFilterChange({
       employeeStatus: draftFiltersInput.employeeStatus,
-      erpStatus: draftFiltersInput.erpStatus,
       department: draftFiltersInput.department,
       role: draftFiltersInput.role,
     })
@@ -390,33 +361,13 @@ export default function Employee() {
     setDraftFiltersInput((current) => ({
       ...current,
       employeeStatus: FILTER_STATUS_ALL,
-      erpStatus: FILTER_STATUS_ALL,
       department: '',
       role: ROLE_ALL,
     }))
   }
 
-  const handleResetAdvancedFilters = () => {
-    if (debounceRef.current) clearTimeout(debounceRef.current)
-
-    setFiltersInput((current) => {
-      const nextInput = {
-        ...current,
-        employeeStatus: FILTER_STATUS_ALL,
-        erpStatus: FILTER_STATUS_ALL,
-        department: '',
-        role: ROLE_ALL,
-      }
-      const nextFilters = toApiFilters(nextInput)
-      filtersRef.current = nextFilters
-      void fetchEmployees(nextFilters, { page: 1, pageSize })
-      return nextInput
-    })
-  }
-
   const hasDraftAdvancedChanges =
     draftFiltersInput.employeeStatus !== filtersInput.employeeStatus ||
-    draftFiltersInput.erpStatus !== filtersInput.erpStatus ||
     draftFiltersInput.department !== filtersInput.department ||
     draftFiltersInput.role !== filtersInput.role
   const draftAdvancedFilterCount = getActiveAdvancedFilterCount(draftFiltersInput)
@@ -564,6 +515,7 @@ export default function Employee() {
   }
 
   const handleDownloadEmployeeQrs = async (employee: EmployeeRecord) => {
+    if (!SHOW_EMPLOYEE_ROW_QR_DOWNLOAD) return
     setBulkQrEmployeeId(employee.id)
     setError('')
     setErrorDebug(undefined)
@@ -639,7 +591,7 @@ export default function Employee() {
               aria-label="Search employees"
               value={filtersInput.search}
               onChange={(e) => handleSearchChange(e.target.value)}
-              placeholder="Search by code, name, email..."
+              placeholder="Search by ID, name, email..."
               className="w-full bg-surface border border-base text-primary placeholder:text-subtle rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[color:var(--accent)] transition"
             />
           </div>
@@ -725,78 +677,6 @@ export default function Employee() {
           </div>
         </div>
 
-        {false && filtersOpen && (
-          <section className="rounded-xl border border-base bg-surface-2 px-3 py-2.5 sm:px-4">
-            <div className="flex min-w-0 flex-nowrap items-center gap-2 sm:gap-3 overflow-x-auto">
-              <select
-                aria-label="Filter by employment status (employees.is_active)"
-                title="Employment / account active flag — not the same as ERP access (erp_active)"
-                value={filtersInput.employeeStatus}
-                onChange={(e) =>
-                  handleFilterChange({
-                    employeeStatus: (e.target.value || FILTER_STATUS_ALL) as EmployeeFiltersInput['employeeStatus'],
-                  })
-                }
-                className="min-w-[10rem] flex-1 bg-surface border border-base text-primary text-sm rounded-lg px-2.5 py-2"
-              >
-                <option value="all" className="bg-surface-2 text-primary">All employees</option>
-                <option value="active" className="bg-surface-2 text-primary">Active employee</option>
-                <option value="inactive" className="bg-surface-2 text-primary">Inactive employee</option>
-              </select>
-
-              <select
-                aria-label="Filter by ERP entitlement (employees.erp_active)"
-                title="Uses employees.erp_active — AMS/ERP access flag, separate from employment active"
-                value={filtersInput.erpStatus}
-                onChange={(e) =>
-                  handleFilterChange({
-                    erpStatus: (e.target.value || FILTER_STATUS_ALL) as EmployeeFiltersInput['erpStatus'],
-                  })
-                }
-                className="min-w-[8.5rem] flex-1 bg-surface border border-base text-primary text-sm rounded-lg px-2.5 py-2"
-              >
-                <option value="all" className="bg-surface-2 text-primary">Any ERP access</option>
-                <option value="active" className="bg-surface-2 text-primary">ERP access on</option>
-                <option value="inactive" className="bg-surface-2 text-primary">ERP access off</option>
-              </select>
-
-              <select
-                aria-label="Filter by department"
-                value={filtersInput.department}
-                onChange={(e) => handleFilterChange({ department: e.target.value })}
-                className="min-w-[9rem] flex-1 bg-surface border border-base text-primary text-sm rounded-lg px-2.5 py-2"
-              >
-                <option value="" className="bg-surface-2 text-primary">All Departments</option>
-                {departments.map((department) => (
-                  <option key={department} value={department} className="bg-surface-2 text-primary">
-                    {department}
-                  </option>
-                ))}
-              </select>
-
-              <select
-                aria-label="Filter by role"
-                value={filtersInput.role}
-                onChange={(e) => handleFilterChange({ role: e.target.value || ROLE_ALL })}
-                className="min-w-[7.5rem] flex-1 bg-surface border border-base text-primary text-sm rounded-lg px-2.5 py-2"
-              >
-                <option value="all" className="bg-surface-2 text-primary">All Roles</option>
-                <option value="admin" className="bg-surface-2 text-primary">Admin</option>
-                <option value="it_ops" className="bg-surface-2 text-primary">IT Ops</option>
-                <option value="employee" className="bg-surface-2 text-primary">Employee</option>
-              </select>
-
-              <button
-                type="button"
-                onClick={handleResetAdvancedFilters}
-                disabled={activeAdvancedFilterCount === 0}
-                className="inline-flex h-9 shrink-0 items-center rounded-lg border border-base bg-surface px-3 text-sm font-medium text-muted transition hover:border-accent-soft hover:bg-[color:var(--accent-soft)]/15 hover:text-accent disabled:opacity-50 disabled:cursor-not-allowed sm:h-10"
-              >
-                Clear
-              </button>
-            </div>
-          </section>
-        )}
       </div>
 
       {accessResolved && !isAdmin && (
@@ -858,11 +738,10 @@ export default function Employee() {
                   <th className="px-4 py-3">Name</th>
                   <th className="px-4 py-3">Assigned Total</th>
                   <th className="px-4 py-3">Email</th>
-                  <th className="px-4 py-3">Employee Code</th>
+                  <th className="px-4 py-3">Employee ID</th>
                   <th className="px-4 py-3">Department</th>
                   <th className="px-4 py-3">Role</th>
                   <th className="px-4 py-3">Employee</th>
-                  <th className="px-4 py-3">ERP Status</th>
                 </tr>
               </thead>
               <tbody>
@@ -889,6 +768,7 @@ export default function Employee() {
                           isAdmin={isAdmin}
                           isItOps={isItOps}
                           sessionEmployeeId={sessionEmployeeId}
+                          showQrDownload={SHOW_EMPLOYEE_ROW_QR_DOWNLOAD}
                           bulkQrEmployeeId={bulkQrEmployeeId}
                           display="menu"
                           menuOpen={actionMenuEmployeeId === employee.id}
@@ -921,28 +801,22 @@ export default function Employee() {
                       </span>
                     </td>
                     <td className="px-4 py-3 text-muted">{formatDisplay(employee.email)}</td>
-                    <td className="px-4 py-3 text-primary">{employee.employee_code}</td>
-                    <td className="px-4 py-3 text-primary">{formatDisplay(employee.department)}</td>
-                    <td className="px-4 py-3 text-primary">{formatRoleLabel(employee.role)}</td>
+                    <td className="px-4 py-3 text-muted">{formatDisplay(employee.employee_id)}</td>
+                    <td className="px-4 py-3 text-muted">{formatDisplay(employee.department)}</td>
+                    <td className="px-4 py-3 text-muted">{formatRoleLabel(employee.role)}</td>
                     <td className="px-4 py-3">
-                      <span className={`inline-flex items-center gap-2 text-xs px-2 py-1 rounded ${employeeStatusBadgeClass(employee.is_active)}`}>
-                        <span className={`h-2.5 w-2.5 rounded-full ${employeeStatusDotClass(employee.is_active)}`} aria-hidden="true" />
+                      <span
+                        className={`inline-flex items-center gap-2 text-xs px-2 py-1 rounded ${employeeStatusBadgeClass(employee.is_active)}`}
+                      >
+                        <span
+                          className={`h-2.5 w-2.5 rounded-full ${employeeStatusDotClass(employee.is_active)}`}
+                          aria-hidden="true"
+                        />
                         <span>{employee.is_active ? 'Active' : 'Inactive'}</span>
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className={`inline-flex items-center gap-2 text-xs px-2 py-1 rounded ${erpStatusBadgeClass(employee.erp_active)}`}>
-                        <span className={`h-2.5 w-2.5 rounded-full ${erpStatusDotClass(employee.erp_active)}`} aria-hidden="true" />
-                        <span>{employee.erp_active ? 'Active' : 'Inactive'}</span>
                       </span>
                     </td>
                   </tr>
                 ))}
-                {!loading && employees.length === 0 && (
-                  <tr>
-                    <td colSpan={canManageEmployees ? 10 : 9} className="text-center py-8 text-subtle">No employees found</td>
-                  </tr>
-                )}
               </tbody>
             </table>
           </div>
@@ -975,15 +849,11 @@ export default function Employee() {
                       <span className={`h-2.5 w-2.5 rounded-full ${employeeStatusDotClass(employee.is_active)}`} aria-hidden="true" />
                       <span>{employee.is_active ? 'Active employee' : 'Not active employee'}</span>
                     </span>
-                    <span className={`inline-flex items-center gap-2 text-xs px-2 py-1 rounded ${erpStatusBadgeClass(employee.erp_active)}`}>
-                      <span className={`h-2.5 w-2.5 rounded-full ${erpStatusDotClass(employee.erp_active)}`} aria-hidden="true" />
-                      <span>{employee.erp_active ? 'ERP Active' : 'ERP Inactive'}</span>
-                    </span>
                   </div>
                 </div>
                 <div className="mt-4 space-y-1 text-sm">
-                  <p className="text-subtle uppercase tracking-[0.14em] text-[11px]">Employee Code</p>
-                  <p className="text-primary">{employee.employee_code}</p>
+                  <p className="text-subtle uppercase tracking-[0.14em] text-[11px]">Employee ID</p>
+                  <p className="text-primary">{employee.employee_id}</p>
                   <p className="text-subtle uppercase tracking-[0.14em] text-[11px] mt-3">Assigned Total</p>
                   <div
                     className="inline-flex items-center gap-2 rounded-lg border border-base bg-surface px-2.5 py-1 text-sm font-semibold text-primary"
@@ -1007,6 +877,7 @@ export default function Employee() {
                       isAdmin={isAdmin}
                       isItOps={isItOps}
                       sessionEmployeeId={sessionEmployeeId}
+                      showQrDownload={SHOW_EMPLOYEE_ROW_QR_DOWNLOAD}
                       bulkQrEmployeeId={bulkQrEmployeeId}
                       onEdit={setEditEmployee}
                       onSetRole={openRoleChange}
@@ -1051,16 +922,16 @@ export default function Employee() {
               departmentOptions={departments}
               prefill={{
                 id: editEmployee.id,
-                employee_code: editEmployee.employee_code,
+                employee_id: editEmployee.employee_id,
                 name: editEmployee.name,
                 email: editEmployee.email,
                 department: editEmployee.department,
                 role: editEmployee.role,
                 is_active: editEmployee.is_active,
-                erp_active: editEmployee.erp_active,
               }}
               onClose={() => setEditEmployee(null)}
               onSubmit={handleUpsertEmployee}
+              canManageAdminRole={canManageAdminRole}
             />
           </div>
         </div>
@@ -1082,7 +953,7 @@ export default function Employee() {
             <FilterSelect
               label="Employee status"
               ariaLabel="Filter by employment status (employees.is_active)"
-              title="Employment or account active flag, separate from ERP access."
+              title="Employment / account active (employees.is_active)."
               value={draftFiltersInput.employeeStatus}
               options={EMPLOYEE_STATUS_OPTIONS}
               onChange={(value) =>
@@ -1091,20 +962,6 @@ export default function Employee() {
                 })
               }
             />
-
-            <FilterSelect
-              label="ERP access"
-              ariaLabel="Filter by ERP entitlement (employees.erp_active)"
-              title="AMS or ERP access flag, separate from employee active status."
-              value={draftFiltersInput.erpStatus}
-              options={ERP_STATUS_OPTIONS}
-              onChange={(value) =>
-                handleDraftFilterChange({
-                  erpStatus: (value || FILTER_STATUS_ALL) as EmployeeFiltersInput['erpStatus'],
-                })
-              }
-            />
-
             <FilterSelect
               label="Department"
               ariaLabel="Filter by department"
@@ -1149,7 +1006,7 @@ export default function Employee() {
         title="Make admin"
         message={
           grantAdminTarget
-            ? `Grant full admin privileges to ${grantAdminTarget.name}? Employee code: ${grantAdminTarget.employee_code}.`
+            ? `Grant full admin privileges to ${grantAdminTarget.name}? Employee ID: ${grantAdminTarget.employee_id}.`
             : ''
         }
         confirmLabel="Make Admin"
@@ -1165,7 +1022,7 @@ export default function Employee() {
         title="Revoke admin"
         message={
           revokeAdminTarget
-            ? `Remove admin privileges from ${revokeAdminTarget.name}? They will return to the employee role. Employee code: ${revokeAdminTarget.employee_code}.`
+            ? `Remove admin privileges from ${revokeAdminTarget.name}? They will return to the employee role. Employee ID: ${revokeAdminTarget.employee_id}.`
             : ''
         }
         confirmLabel="Revoke Admin"
@@ -1181,7 +1038,7 @@ export default function Employee() {
         title="Move Employee to Recycle Bin"
         message={
           deleteTarget
-            ? `Move ${deleteTarget.name} (${deleteTarget.employee_code}) to Recycle Bin?`
+            ? `Move ${deleteTarget.name} (${deleteTarget.employee_id}) to Recycle Bin?`
             : 'Move employee to Recycle Bin?'
         }
         confirmLabel="Delete"
@@ -1199,7 +1056,9 @@ type EmployeeActionsProps = {
   isAdmin: boolean
   isItOps: boolean
   sessionEmployeeId: string | null
-  bulkQrEmployeeId: string | null
+  /** When false, bulk QR menu/button are hidden. */
+  showQrDownload?: boolean
+  bulkQrEmployeeId?: string | null
   align?: 'start' | 'end'
   display?: 'inline' | 'menu'
   menuOpen?: boolean
@@ -1209,7 +1068,7 @@ type EmployeeActionsProps = {
   onSetRole: (employee: EmployeeRecord, role: EmployeeRole) => void
   onGrantAdmin: (employee: EmployeeRecord) => void
   onRevokeAdmin: (employee: EmployeeRecord) => void
-  onDownloadQrs: (employee: EmployeeRecord) => Promise<void>
+  onDownloadQrs?: (employee: EmployeeRecord) => Promise<void>
   onDelete: (employee: EmployeeRecord) => void
 }
 
@@ -1218,7 +1077,8 @@ function EmployeeActions({
   isAdmin,
   isItOps,
   sessionEmployeeId,
-  bulkQrEmployeeId,
+  showQrDownload = false,
+  bulkQrEmployeeId = null,
   align = 'start',
   display = 'inline',
   menuOpen = false,
@@ -1228,7 +1088,7 @@ function EmployeeActions({
   onSetRole,
   onGrantAdmin,
   onRevokeAdmin,
-  onDownloadQrs,
+  onDownloadQrs = async () => {},
   onDelete,
 }: EmployeeActionsProps) {
   const primaryButtonClass = 'bg-accent text-white py-1.5 px-3 rounded-lg hover:bg-accent-hover transition text-xs'
@@ -1245,7 +1105,7 @@ function EmployeeActions({
     showMakeAdmin || showRevokeAdmin || showSetItOps || showRevokeItOps
   const showYouBadge =
     Boolean(sessionEmployeeId) && isSelfRow && !hasRoleManagementControl
-  const qrLoading = bulkQrEmployeeId === employee.id
+  const qrLoading = showQrDownload && bulkQrEmployeeId === employee.id
 
   const actionItems: {
     key: string
@@ -1293,30 +1153,45 @@ function EmployeeActions({
     })
   }
 
-  actionItems.push({
-    key: 'edit',
-    label: 'Edit',
-    icon: 'edit',
-    onSelect: () => onEdit(employee),
-  })
+  // Only allow edit and delete actions for admins or IT Ops
+  if (canManageAdminRole) {
+    actionItems.push({
+      key: 'edit',
+      label: 'Edit',
+      icon: 'edit',
+      onSelect: () => onEdit(employee),
+    })
 
-  actionItems.push({
-    key: 'download-qr',
-    label: qrLoading ? 'Preparing QR...' : 'Download QR',
-    icon: qrLoading ? 'refresh-cw' : 'download',
-    onSelect: () => {
-      void onDownloadQrs(employee)
-    },
-    disabled: qrLoading,
-  })
+    if (showQrDownload) {
+      actionItems.push({
+        key: 'download-qr',
+        label: qrLoading ? 'Preparing QR...' : 'Download QR',
+        icon: qrLoading ? 'refresh-cw' : 'download',
+        onSelect: () => {
+          void onDownloadQrs(employee)
+        },
+        disabled: qrLoading,
+      })
+    }
 
-  actionItems.push({
-    key: 'delete',
-    label: 'Delete',
-    icon: 'trash',
-    onSelect: () => onDelete(employee),
-    disabled: isSelfRow,
-  })
+    actionItems.push({
+      key: 'delete',
+      label: 'Delete',
+      icon: 'trash',
+      onSelect: () => onDelete(employee),
+      disabled: isSelfRow,
+    })
+  } else if (showQrDownload) {
+    actionItems.push({
+      key: 'download-qr',
+      label: qrLoading ? 'Preparing QR...' : 'Download QR',
+      icon: qrLoading ? 'refresh-cw' : 'download',
+      onSelect: () => {
+        void onDownloadQrs(employee)
+      },
+      disabled: qrLoading,
+    })
+  }
 
   if (display === 'menu') {
     return (
@@ -1415,34 +1290,40 @@ function EmployeeActions({
           Revoke IT Ops
         </button>
       ) : null}
-      <IconActionButton
-        icon="edit"
-        label="Edit"
-        onClick={() => onEdit(employee)}
-        variant="base"
-      />
-      <button
-        type="button"
-        onClick={() => {
-          void onDownloadQrs(employee)
-        }}
-        disabled={qrLoading}
-        title={qrLoading ? 'Preparing QR downloads...' : 'Download QR images for all assets assigned to this employee'}
-        aria-label={qrLoading ? 'Preparing QR downloads' : 'Download QR codes for assigned assets'}
-        className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-[color:var(--accent-soft)] bg-surface px-2.5 text-xs font-semibold text-accent transition hover:bg-[color:var(--accent-soft)]/20 disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        <span className={`flex h-4 w-4 shrink-0 items-center justify-center ${qrLoading ? 'refresh-spin' : ''}`}>
-          <AnimatedNavIcon name={qrLoading ? 'refresh-cw' : 'download'} />
-        </span>
-        <span>QR</span>
-      </button>
-      <IconActionButton
-        icon="trash"
-        label="Delete"
-        onClick={() => onDelete(employee)}
-        disabled={isSelfRow}
-        variant="danger"
-      />
+{canManageAdminRole && (
+        <IconActionButton
+          icon="edit"
+          label="Edit"
+          onClick={() => onEdit(employee)}
+          variant="base"
+        />
+      )}
+      {showQrDownload ? (
+        <button
+          type="button"
+          onClick={() => {
+            void onDownloadQrs(employee)
+          }}
+          disabled={qrLoading}
+          title={qrLoading ? 'Preparing QR downloads...' : 'Download QR images for all assets assigned to this employee'}
+          aria-label={qrLoading ? 'Preparing QR downloads' : 'Download QR codes for assigned assets'}
+          className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-[color:var(--accent-soft)] bg-surface px-2.5 text-xs font-semibold text-accent transition hover:bg-[color:var(--accent-soft)]/20 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <span className={`flex h-4 w-4 shrink-0 items-center justify-center ${qrLoading ? 'refresh-spin' : ''}`}>
+            <AnimatedNavIcon name={qrLoading ? 'refresh-cw' : 'download'} />
+          </span>
+          <span>QR</span>
+        </button>
+      ) : null}
+      {canManageAdminRole && (
+        <IconActionButton
+          icon="trash"
+          label="Delete"
+          onClick={() => onDelete(employee)}
+          disabled={isSelfRow}
+          variant="danger"
+        />
+      )}
     </div>
   )
 }

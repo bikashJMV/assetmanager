@@ -23,6 +23,11 @@ const FRIENDLY_REWRITES: FriendlyRewrite[] = [
 ]
 
 const PASSTHROUGH_HINTS = [
+  'pgrst116',
+  'json object requested',
+  'multiple rows returned',
+  'no rows were saved',
+  'fn_bulk_insert',
   'fn_assign_asset',
   'fn_return_asset',
   'fn_set_asset_lifecycle_status',
@@ -80,7 +85,9 @@ export function getUserFacingMessage(error: unknown, fallback: string = DEFAULT_
     return 'Your session has expired. Please sign in again.'
   }
 
-  if (normalized.includes('not found') || normalized.includes('no rows')) {
+  // Do not match on generic "no rows" — it appears in our bulk-import copy ("no rows were saved")
+  // and in PostgREST text; those cases should show the real message (passthrough or final return).
+  if (normalized.includes('not found')) {
     return 'We could not find that record.'
   }
 

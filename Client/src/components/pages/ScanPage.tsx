@@ -13,6 +13,8 @@ type BarcodeDetectorConstructor = new (options: { formats: string[] }) => Barcod
 /** Logged-in scan (`scanAsset`): full passport fields from `v_asset_inventory`. */
 type AuthenticatedScanAsset = {
   asset_tag: string | null
+  is_own_asset: boolean
+  is_privileged: boolean
   category: string | null
   manufacturer: string | null
   model: string | null
@@ -43,13 +45,41 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
       setError('')
       return
     }
-    const resolver = protectedRoute ? scanAsset : getPublicScanAsset
-    resolver(id).then((data) => setAsset(data))
-      .catch((err) => {
-        logDevError('scan.asset', err)
-        setError(getUserFacingMessage(err, 'Asset not found'))
-      })
-  }, [id, protectedRoute])
+
+    let cancelled = false
+
+    void (async () => {
+      try {
+        if (!protectedRoute) {
+          // Public / unauthenticated path
+          const data = await getPublicScanAsset(id)
+          if (!cancelled) setAsset(data)
+          return
+        }
+
+        // Authenticated path: check role + ownership in one round-trip
+        const data = await scanAsset(id)
+        if (cancelled) return
+
+        if (data.is_privileged || data.is_own_asset) {
+          // Admin/IT Ops or employee viewing their own asset → go straight to asset detail
+          void navigate(`/assets/${encodeURIComponent(data.asset_tag ?? id)}`, { replace: true })
+          return
+        }
+
+        // Employee viewing an asset not assigned to them → show limited public-style view
+        const publicData = await getPublicScanAsset(id)
+        if (!cancelled) setAsset(publicData)
+      } catch (err) {
+        if (!cancelled) {
+          logDevError('scan.asset', err)
+          setError(getUserFacingMessage(err, 'Asset not found'))
+        }
+      }
+    })()
+
+    return () => { cancelled = true }
+  }, [id, protectedRoute, navigate])
 
   const handleLookup = (e: React.FormEvent) => {
     e.preventDefault()
@@ -157,7 +187,7 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
       <main className="min-h-screen bg-app text-primary px-4 py-8">
         <div className="max-w-xl mx-auto bg-surface-2 border border-base rounded-xl p-5">
           <p className="text-accent text-xs uppercase tracking-widest mb-1">Scanner</p>
-          <h1 className="text-xl font-bold">Scan or Enter Asset Tag</h1>
+          <h1 className="text-xl font-bold">Scan or Enter Asset Name</h1>
           <p className="text-sm text-subtle mt-2">
             Use your device camera QR scanner, then open the scanned link, or enter the asset tag manually below.
           </p>
@@ -231,77 +261,47 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
     )
   }
 
-  const isFullPassport = protectedRoute && 'custom_fields' in asset
-  const publicAsset = !isFullPassport ? (asset as PublicScanAsset) : null
-  const heading = isFullPassport
-    ? [asset.manufacturer, asset.model]
-        .map((value) => formatDisplay(value))
-        .filter((value) => value !== '-')
-        .join(' ')
-    : publicAsset?.asset_name ?? '-'
+  // Signed-in users (admin/IT Ops and employees viewing their own asset) are always
+  // redirected to /assets/:tag by the resolver effect above. The only time we render
+  // here is for public (unauthenticated) scans OR employees viewing an asset not
+  // assigned to them — both cases use the PublicScanAsset shape.
+  const publicAsset = asset as PublicScanAsset
+  const heading = formatDisplay(publicAsset.category_name) || formatDisplay(publicAsset.asset_tag) || '-'
 
   return (
     <main className="min-h-screen bg-app text-primary px-4 py-8">
       <div className="text-center mb-8">
-        <p className="text-accent text-xs uppercase tracking-widest mb-1">
-          {protectedRoute ? 'Asset Passport' : 'Asset'}
-        </p>
-        <h1 className="text-2xl font-bold">{heading || '-'}</h1>
+        <p className="text-accent text-xs uppercase tracking-widest mb-1">Asset</p>
+        <h1 className="text-2xl font-bold">{heading}</h1>
       </div>
 
-      {isFullPassport ? (
-        <>
-          <div className="flex justify-center mb-8">
-            <div className="inline-flex items-center gap-2">
-              <span className="text-sm text-subtle">Current status:</span>
-              <InventoryStatusBadge status={asset.status} size="md" />
-            </div>
-          </div>
+      <div className="grid grid-cols-1 gap-3 max-w-xl mx-auto">
+        {publicAsset.is_assigned ? (
+          <>
+            <Field label="Asset Tag" value={formatDisplay(publicAsset.asset_tag)} />
+            <Field label="Category" value={formatDisplay(publicAsset.category_name)} />
+            <Field label="User" value={formatDisplay(publicAsset.holder_name)} />
+            <Field label="Employee ID" value={formatDisplay(publicAsset.holder_employee_code)} />
+          </>
+        ) : (
+          <>
+            <Field label="Asset Tag" value={formatDisplay(publicAsset.asset_tag)} />
+            <Field label="Category" value={formatDisplay(publicAsset.category_name)} />
+            <Field
+              label="Inventory Status"
+              value={<InventoryStatusBadge status={publicAsset.status} size="md" />}
+            />
+          </>
+        )}
+      </div>
 
-          <div className="grid grid-cols-1 gap-3 max-w-xl mx-auto">
-            <Field label="Category" value={formatDisplay(asset.category)} />
-            <Field label="Location" value={formatDisplay(asset.location)} />
-            <Field label="Current Holder" value={formatDisplay(asset.holder)} />
-            <Field label="Holder ERP status" value={asset.holder_erp_status} subtle />
-            {Object.entries(asset.custom_fields || {}).map(([key, value]) => (
-              <Field key={key} label={key} value={formatDisplay(value)} />
-            ))}
-          </div>
-        </>
-      ) : publicAsset ? (
-        <div className="grid grid-cols-1 gap-3 max-w-xl mx-auto">
-          {publicAsset.is_assigned ? (
-            <>
-              <Field label="Asset Name" value={formatDisplay(publicAsset.asset_name)} />
-              <Field label="Current Asset Holder Name" value={formatDisplay(publicAsset.holder_name)} />
-              <Field label="Employee ID" value={formatDisplay(publicAsset.holder_employee_code)} />
-              <Field label="Department" value={formatDisplay(publicAsset.holder_department)} />
-            </>
-          ) : (
-            <>
-              <Field label="Asset Name" value={formatDisplay(publicAsset.asset_name)} />
-              <Field
-                label="Inventory Status"
-                value={<InventoryStatusBadge status={publicAsset.status} size="md" />}
-              />
-              <Field label="Asset Tag" value={formatDisplay(publicAsset.asset_tag)} />
-            </>
-          )}
-        </div>
-      ) : null}
-
-      {isFullPassport && asset.holder_erp_status.toLowerCase().includes('inactive') ? (
-        <p className="text-center text-subtle text-xs mt-6">
-          Holder ERP inactive flag is an admin audit signal.
-        </p>
-      ) : null}
-
-      {!protectedRoute && asset.asset_tag ? (
+      {/* "See more" only for truly unauthenticated visitors (public QR scan route) */}
+      {!protectedRoute && publicAsset.asset_tag ? (
         <div className="flex justify-center mt-8">
           <button
             type="button"
             onClick={() => {
-              const next = `/assets/${asset.asset_tag}`
+              const next = `/assets/${publicAsset.asset_tag}`
               navigate(`/login?next=${encodeURIComponent(next)}`)
             }}
             className="bg-accent text-white font-semibold px-6 py-2.5 rounded-lg hover:bg-accent-hover transition text-sm shadow-accent"

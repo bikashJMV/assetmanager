@@ -1,12 +1,19 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react'
 import * as XLSX from 'xlsx'
 import {
-  getActiveEmployeeCodesInUse,
-  getSoftDeletedEmployeeCodes,
-  insertEmployeeNew,
+  bulkInsertEmployeesNew,
+  getActiveEmployeeIdsInUse,
+  getEmailsAlreadyInUse,
+  getSoftDeletedEmployeeIds,
 } from '../../api'
 import { getUserFacingMessage, logDevError } from '../../utils/errors'
-import { EMPLOYEE_IMPORT_TEMPLATE_HREF, parseEmployeeImportMatrix } from '../../utils/employeeBulkImport'
+import {
+  EMPLOYEE_IMPORT_TEMPLATE_HREF,
+  humanizeBulkImportSaveError,
+  parseEmployeeImportMatrix,
+} from '../../utils/employeeBulkImport'
+import { useModalScrollLock } from '../../hooks/useModalScrollLock'
+import { ModalPortal } from '../common/ModalPortal'
 import { useToast } from '../common/ToastProvider'
 import AnimatedNavIcon from '../common/AnimatedNavIcon'
 
@@ -16,12 +23,13 @@ const ACCEPT =
 type Props = {
   open: boolean
   onClose: () => void
-  /** Called after a successful import (any rows saved). */
+  /** Called after a fully successful import (all rows saved); not called when save stops on first error. */
   onSuccess: () => void
 }
 
 export default function EmployeeBulkImportModal({ open, onClose, onSuccess }: Props) {
   const { showToast } = useToast()
+  useModalScrollLock(open)
   const mountedRef = useRef(true)
   useEffect(() => {
     mountedRef.current = true
@@ -31,15 +39,24 @@ export default function EmployeeBulkImportModal({ open, onClose, onSuccess }: Pr
   }, [])
 
   const inputRef = useRef<HTMLInputElement | null>(null)
+  const applyIssuesRef = useRef<HTMLDivElement | null>(null)
   const [fileLabel, setFileLabel] = useState('')
   const [parseErrors, setParseErrors] = useState<string[]>([])
+  const [parseWarnings, setParseWarnings] = useState<string[]>([])
   const [applyErrors, setApplyErrors] = useState<string[]>([])
   const [busy, setBusy] = useState(false)
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null)
 
+  useEffect(() => {
+    if (parseErrors.length + applyErrors.length > 0 && applyIssuesRef.current) {
+      applyIssuesRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+    }
+  }, [parseErrors.length, applyErrors.length])
+
   const resetState = useCallback(() => {
     setFileLabel('')
     setParseErrors([])
+    setParseWarnings([])
     setApplyErrors([])
     setProgress(null)
     if (inputRef.current) inputRef.current.value = ''
@@ -54,6 +71,7 @@ export default function EmployeeBulkImportModal({ open, onClose, onSuccess }: Pr
   const runImport = useCallback(
     async (file: File) => {
       setParseErrors([])
+      setParseWarnings([])
       setApplyErrors([])
       setBusy(true)
       setProgress(null)
@@ -91,10 +109,19 @@ export default function EmployeeBulkImportModal({ open, onClose, onSuccess }: Pr
           return
         }
 
-        const codes = parsed.rows.map((r) => r.input.employee_code)
-        let deletedCodes: Set<string>
+        setParseWarnings(parsed.warnings)
+        if (parsed.warnings.length > 0) {
+          showToast({
+            variant: 'warning',
+            title: 'Email column header',
+            message: parsed.warnings[0] ?? 'Fix the email column name to import addresses.',
+          })
+        }
+
+        const ids = parsed.rows.map((r) => r.input.employee_id)
+        let deletedIds: Set<string>
         try {
-          deletedCodes = await getSoftDeletedEmployeeCodes(codes)
+          deletedIds = await getSoftDeletedEmployeeIds(ids)
         } catch (err) {
           logDevError('employeeBulkImport.deletedCheck', err)
           showToast({
@@ -105,19 +132,19 @@ export default function EmployeeBulkImportModal({ open, onClose, onSuccess }: Pr
           return
         }
 
-        const blocked = parsed.rows.filter((r) => deletedCodes.has(r.input.employee_code))
+        const blocked = parsed.rows.filter((r) => deletedIds.has(r.input.employee_id))
         if (blocked.length > 0) {
           setParseErrors(
             blocked.map(
               (r) =>
-                `Row ${r.rowNumber}: employee "${r.input.employee_code}" is in the Recycle Bin — restore before importing.`,
+                `Row ${r.rowNumber}: employee "${r.input.employee_id}" is in the Recycle Bin — restore before importing.`,
             ),
           )
           showToast({
             variant: 'error',
             title: 'Import cancelled',
             message:
-              'One or more employee codes are in the Recycle Bin. Restore those records before importing.',
+              'One or more employee IDs are in the Recycle Bin. Restore those records before importing.',
           })
           setBusy(false)
           return
@@ -125,7 +152,7 @@ export default function EmployeeBulkImportModal({ open, onClose, onSuccess }: Pr
 
         let inUse: Set<string>
         try {
-          inUse = await getActiveEmployeeCodesInUse(codes)
+          inUse = await getActiveEmployeeIdsInUse(ids)
         } catch (err) {
           logDevError('employeeBulkImport.existingCheck', err)
           showToast({
@@ -136,68 +163,92 @@ export default function EmployeeBulkImportModal({ open, onClose, onSuccess }: Pr
           return
         }
 
-        const duplicateRows = parsed.rows.filter((r) => inUse.has(r.input.employee_code))
+        const duplicateRows = parsed.rows.filter((r) => inUse.has(r.input.employee_id))
         if (duplicateRows.length > 0) {
           setParseErrors(
             duplicateRows.map(
               (r) =>
-                `Row ${r.rowNumber}: employee code "${r.input.employee_code}" already exists in the system.`,
+                `Row ${r.rowNumber}: employee ID "${r.input.employee_id}" already exists in the system.`,
             ),
           )
           showToast({
             variant: 'error',
             title: 'Import cancelled',
             message:
-              'Duplicate employee data: one or more employee codes already exist. No rows were imported.',
+              'Duplicate employee data: one or more employee IDs already exist. No rows were imported.',
           })
           setBusy(false)
           return
         }
 
-        const applyErrs: string[] = []
-        let ok = 0
-        const total = parsed.rows.length
-        setProgress({ done: 0, total })
-
-        for (let i = 0; i < parsed.rows.length; i += 1) {
-          const { rowNumber, input } = parsed.rows[i]!
-          try {
-            await insertEmployeeNew(input)
-            ok += 1
-          } catch (err) {
-            logDevError('employeeBulkImport.row', err)
-            const line = `Row ${rowNumber} (${input.employee_code}): ${getUserFacingMessage(err, 'Save failed.')}`
-            applyErrs.push(line)
-            if (ok > 0) {
-              applyErrs.push(
-                `Import stopped after ${ok} of ${total} rows saved. Earlier rows may remain; fix the issue and re-import only missing codes if needed.`,
-              )
-            }
-            break
-          }
-          setProgress({ done: i + 1, total })
-        }
-
-        if (applyErrs.length) {
-          if (mountedRef.current) setApplyErrors(applyErrs)
+        const distinctEmails = [
+          ...new Set(
+            parsed.rows
+              .map((r) => r.input.email?.trim())
+              .filter((e): e is string => Boolean(e)),
+          ),
+        ]
+        let emailsInDb: Set<string>
+        try {
+          emailsInDb = await getEmailsAlreadyInUse(distinctEmails)
+        } catch (err) {
+          logDevError('employeeBulkImport.emailCheck', err)
           showToast({
             variant: 'error',
-            title: ok > 0 ? 'Import stopped' : 'Import failed',
-            message:
-              ok > 0
-                ? `Only ${ok} of ${total} employees were saved before an error. Review the messages below.`
-                : 'No employees were imported. Review the messages below.',
+            message: getUserFacingMessage(err, 'Unable to verify existing emails.'),
           })
-          if (ok > 0) onSuccess()
-        } else {
-          showToast({
-            variant: 'success',
-            message: `Imported ${ok} new employee${ok === 1 ? '' : 's'}.`,
-          })
-          resetState()
-          onSuccess()
-          onClose()
+          setBusy(false)
+          return
         }
+
+        const emailClashRows = parsed.rows.filter((r) => {
+          const e = r.input.email?.trim()
+          return Boolean(e && emailsInDb.has(e.toLowerCase()))
+        })
+        if (emailClashRows.length > 0) {
+          setParseErrors(
+            emailClashRows.map(
+              (r) =>
+                `Row ${r.rowNumber}: email "${r.input.email}" already exists in the system (another employee).`,
+            ),
+          )
+          showToast({
+            variant: 'error',
+            title: 'Import cancelled',
+            message:
+              'One or more emails are already used by other employees. Fix the rows below or update those records instead.',
+          })
+          setBusy(false)
+          return
+        }
+
+        const total = parsed.rows.length
+
+        try {
+          await bulkInsertEmployeesNew(parsed.rows.map((r) => r.input))
+        } catch (err) {
+          logDevError('employeeBulkImport.bulk', err)
+          const lines = humanizeBulkImportSaveError(err)
+          if (mountedRef.current) {
+            setApplyErrors([
+              ...lines,
+              'The import runs as a single database transaction: if anything fails, no rows are saved.',
+            ])
+          }
+          showToast({
+            variant: 'error',
+            title: 'Import failed',
+            message: `${lines[0] ?? 'Bulk import failed.'} No employees were saved.`,
+          })
+          return
+        }
+        showToast({
+          variant: 'success',
+          message: `Imported ${total} new employee${total === 1 ? '' : 's'}.`,
+        })
+        resetState()
+        onSuccess()
+        onClose()
       } catch (err) {
         logDevError('employeeBulkImport.file', err)
         if (mountedRef.current) {
@@ -237,16 +288,18 @@ export default function EmployeeBulkImportModal({ open, onClose, onSuccess }: Pr
   if (!open) return null
 
   const issueLines = [...parseErrors, ...applyErrors]
+  const showFileLine = Boolean(fileLabel) && !busy && !parseErrors.length
   const pct =
     progress && progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0
 
   return (
-    <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/55 px-4 py-6 backdrop-blur-sm">
+    <ModalPortal>
+    <div className="fixed inset-0 z-[120] flex items-center justify-center overscroll-none bg-black/55 px-3 py-4 backdrop-blur-sm sm:px-4 sm:py-6">
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="employee-bulk-import-title"
-        className="relative flex max-h-[min(92vh,640px)] w-full max-w-lg flex-col rounded-2xl border border-base bg-app p-5 shadow-[0_20px_60px_rgba(0,0,0,0.22)] ring-1 ring-black/5 dark:ring-white/10 sm:p-6"
+        className="relative flex max-h-[min(92dvh,640px)] w-full max-w-lg flex-col rounded-2xl border border-base bg-app p-4 shadow-[0_20px_60px_rgba(0,0,0,0.22)] ring-1 ring-black/5 dark:ring-white/10 sm:p-6"
       >
         <button
           type="button"
@@ -297,10 +350,27 @@ export default function EmployeeBulkImportModal({ open, onClose, onSuccess }: Pr
             <span>{busy ? 'Importing…' : 'Import from file'}</span>
           </button>
 
-          {fileLabel && !busy && !parseErrors.length && !applyErrors.length ? (
+          {showFileLine ? (
             <p className="mt-3 text-sm text-muted">
               Selected: <span className="font-medium text-primary">{fileLabel}</span>
             </p>
+          ) : null}
+
+          {parseWarnings.length > 0 && !parseErrors.length ? (
+            <div
+              className="mt-5 max-h-40 overflow-y-auto rounded-xl border border-amber-500/40 bg-amber-500/[0.08] py-3 pl-4 pr-3 dark:border-amber-400/35 dark:bg-amber-400/[0.1]"
+              role="status"
+              aria-live="polite"
+            >
+              <p className="text-sm font-semibold text-primary">Header notice</p>
+              <ul className="mt-2 list-disc space-y-2 pl-5 text-sm leading-snug text-muted marker:text-amber-700 dark:marker:text-amber-400">
+                {parseWarnings.map((line) => (
+                  <li key={line} className="break-words pl-0.5">
+                    {line}
+                  </li>
+                ))}
+              </ul>
+            </div>
           ) : null}
 
           {progress ? (
@@ -325,6 +395,7 @@ export default function EmployeeBulkImportModal({ open, onClose, onSuccess }: Pr
 
           {issueLines.length > 0 && (
             <div
+              ref={issueLines.length > 0 ? applyIssuesRef : undefined}
               className="mt-5 max-h-52 overflow-y-auto rounded-xl border border-red-500/35 bg-red-500/[0.06] py-3 pl-4 pr-3 dark:border-red-400/35 dark:bg-red-400/[0.08]"
               role="region"
               aria-label="Import issues"
@@ -334,7 +405,7 @@ export default function EmployeeBulkImportModal({ open, onClose, onSuccess }: Pr
                   ? 'Validation and save issues'
                   : parseErrors.length > 0
                     ? 'Import was not applied — fix these in your file'
-                    : 'Import did not complete'}
+                    : 'Import failed — no rows were saved'}
               </p>
               <ul className="mt-2.5 list-disc space-y-2 pl-5 text-sm leading-snug text-muted marker:text-red-600 dark:marker:text-red-400">
                 {issueLines.slice(0, 80).map((line) => (
@@ -364,5 +435,6 @@ export default function EmployeeBulkImportModal({ open, onClose, onSuccess }: Pr
         </div>
       </div>
     </div>
+    </ModalPortal>
   )
 }

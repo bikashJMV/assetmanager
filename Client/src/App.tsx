@@ -1,17 +1,10 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
-import type { Session } from '@supabase/supabase-js'
+import type { AuthChangeEvent, Session } from '@supabase/supabase-js'
 import Sidebar from './components/common/Sidebar'
-import {
-  getSession,
-  onAuthStateChange,
-  resetPostSignInIntroBootstrapClaim,
-  signInWithGoogle,
-  signOut,
-  takePendingPostSignInIntro,
-} from './api'
+import { getSession, onAuthStateChange, signInWithGoogle, signOut } from './api'
 import { startTelemetryBuffer, trackTelemetryEvent } from './telemetry'
-import { getSessionEmployee, type SessionEmployee } from './api'
+import { getSessionEmployee, listWarrantyNotifications, type SessionEmployee, type WarrantyNotification } from './api'
 import {
   applyDocumentPreferences,
   applyStoredPreferences,
@@ -21,6 +14,7 @@ import {
   getInitialTheme,
 } from './utils/theme'
 import { getUserFacingMessage, logDevError } from './utils/errors'
+import { formatRoleLabel, roleBadgeClass } from './utils/formatDisplay'
 import AnimatedNavIcon from './components/common/AnimatedNavIcon'
 import Breadcrumbs from './components/common/Breadcrumbs'
 import ScrollTopButton from './components/common/ScrollTopButton'
@@ -61,12 +55,10 @@ function AppRoutes() {
   const scrollContainerRef = useRef<HTMLDivElement | null>(null)
   const [session, setSession] = useState<Session | null>(null)
   const [sessionEmployee, setSessionEmployee] = useState<SessionEmployee | null>(null)
+  const [profileLoading, setProfileLoading] = useState(true)
   const [authLoading, setAuthLoading] = useState(true)
   const [authError, setAuthError] = useState('')
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
-  /** OAuth returns to `/` (not `/login`), so router state is missing — flip this on `SIGNED_IN` only. */
-  const [showIntroAfterSignIn, setShowIntroAfterSignIn] = useState(false)
-
   useEffect(() => {
     applyStoredPreferences()
     startTelemetryBuffer()
@@ -102,7 +94,11 @@ function AppRoutes() {
         const next = await getSession()
         if (!mounted) return
         setSession(next)
-        const employee = await getSessionEmployee(next?.user)
+        if (!next?.user) {
+          setSessionEmployee(null)
+          return
+        }
+        const employee = await getSessionEmployee(next.user)
         if (!mounted) return
         setSessionEmployee(employee)
       } catch (err) {
@@ -110,29 +106,37 @@ function AppRoutes() {
         logDevError('app.session', err)
         setAuthError(getUserFacingMessage(err, 'Unable to validate your session right now.'))
       } finally {
-        if (mounted) setAuthLoading(false)
+        if (mounted) {
+          setAuthLoading(false)
+          setProfileLoading(false)
+        }
       }
     })()
 
     const unsubscribe = onAuthStateChange((nextSession, event) => {
       setSession(nextSession)
-      setAuthLoading(false)
-      if (nextSession && (event === 'SIGNED_IN' || event === 'INITIAL_SESSION')) {
-        if (takePendingPostSignInIntro()) {
-          setShowIntroAfterSignIn(true)
-        }
+      if (!nextSession?.user) {
+        setSessionEmployee(null)
+        setProfileLoading(false)
+        return
       }
-      if (event === 'SIGNED_OUT') {
-        resetPostSignInIntroBootstrapClaim()
-        setShowIntroAfterSignIn(false)
-      }
+      // TOKEN_REFRESHED / USER_UPDATED / INITIAL_SESSION: refresh profile without unmounting the app.
+      // Otherwise RequireAuth shows a full-screen loader and wipes modal + page state (e.g. tab focus).
+      const silentProfileRefresh: AuthChangeEvent[] = ['TOKEN_REFRESHED', 'USER_UPDATED', 'INITIAL_SESSION']
+      const blockUiForProfile = !silentProfileRefresh.includes(event)
+
+      if (blockUiForProfile) setProfileLoading(true)
       void (async () => {
         try {
-          const emp = await getSessionEmployee(nextSession?.user)
+          const emp = await getSessionEmployee(nextSession.user)
+          if (!mounted) return
           setSessionEmployee(emp)
         } catch (err) {
           logDevError('app.sessionEmployee', err)
+          if (!mounted) return
           setSessionEmployee(null)
+        } finally {
+          if (mounted && blockUiForProfile) setProfileLoading(false)
         }
       })()
     })
@@ -197,10 +201,12 @@ function AppRoutes() {
             collapsed={sidebarCollapsed}
             onSetCollapsed={setSidebarCollapsed}
             topOffset={showTopBar ? 64 : 0}
+            sessionEmployee={sessionEmployee}
           />
         )}
         <div
           ref={scrollContainerRef}
+          data-app-scroll-root
           className="min-h-0 min-w-0 w-full flex-1 overflow-x-hidden overflow-y-auto"
           onClick={() => {
             if (showSidebar && !sidebarCollapsed) {
@@ -215,29 +221,25 @@ function AppRoutes() {
               <Route
                 path="/"
                 element={(
-                  <Home
-                    isAuthenticated={Boolean(session)}
-                    userId={session?.user.id ?? null}
-                    wantPostSignInIntro={showIntroAfterSignIn}
-                    onPostSignInIntroConsumed={() => {
-                      resetPostSignInIntroBootstrapClaim()
-                      setShowIntroAfterSignIn(false)
-                    }}
-                  />
+                  authLoading || (session && profileLoading) ? (
+                    <AuthLoadingScreen />
+                  ) : session && !sessionEmployee ? (
+                    <NoEmployeeAccessHandler />
+                  ) : (
+                    <Home isAuthenticated={Boolean(session)} />
+                  )
                 )}
               />
               <Route
                 path="/dashboard/home"
                 element={(
-                  <Home
-                    isAuthenticated={Boolean(session)}
-                    userId={session?.user.id ?? null}
-                    wantPostSignInIntro={showIntroAfterSignIn}
-                    onPostSignInIntroConsumed={() => {
-                      resetPostSignInIntroBootstrapClaim()
-                      setShowIntroAfterSignIn(false)
-                    }}
-                  />
+                  authLoading || (session && profileLoading) ? (
+                    <AuthLoadingScreen />
+                  ) : session && !sessionEmployee ? (
+                    <NoEmployeeAccessHandler />
+                  ) : (
+                    <Home isAuthenticated={Boolean(session)} />
+                  )
                 )}
               />
               <Route path="/scan/:id" element={<ScanPage />} />
@@ -245,42 +247,63 @@ function AppRoutes() {
               <Route
                 path="/login"
                 element={
-                  authLoading
+                  authLoading || (session && profileLoading)
                     ? <AuthLoadingScreen />
-                    : (session ? (
-                      <Navigate to={loginReturnPath} replace state={{ showPostSignInIntro: true }} />
-                    ) : (
-                      <SignInScreen error={authError} />
-                    ))
+                    : session && !sessionEmployee
+                      ? <NoEmployeeAccessHandler />
+                      : session
+                        ? <Navigate to={loginReturnPath} replace />
+                        : <SignInScreen error={authError} />
                 }
               />
 
-              <Route element={<RequireAuth session={session} authLoading={authLoading} />}>
+              <Route
+                element={(
+                  <RequireAuth
+                    session={session}
+                    authLoading={authLoading}
+                    profileLoading={profileLoading}
+                    sessionEmployee={sessionEmployee}
+                  />
+                )}
+              >
+                {/* Accessible to all authenticated employees */}
                 <Route path="/assets/scan" element={<ScanPage protectedRoute />} />
                 <Route path="/assets/scan/:id" element={<ScanPage protectedRoute />} />
                 <Route path="/assets" element={<AllAssets />} />
-                <Route path="/assets/new" element={<NewAsset />} />
                 <Route path="/assets/:id" element={<AssetDetail />} />
-                <Route path="/404" element={<PageNotFound />} />
-                <Route path="/employee" element={<Employee />} />
-                <Route path="/employee/new" element={<NewEmployee />} />
-                <Route path="/employee/:id" element={<EmployeeDetail />} />
-                <Route path="/analysis" element={<Analysis />} />
                 <Route path="/notifications" element={<Notifications />} />
-                <Route path="/recycle-bin" element={<RecycleBin />} />
+                <Route path="/404" element={<PageNotFound />} />
+                {/* Employee profile — accessible to all; EmployeeDetail self-guards cross-profile access */}
+                <Route path="/employee/:id" element={<EmployeeDetail />} />
+
+                {/* Admin / IT Ops only — employees redirected to /assets */}
+                <Route element={<RequirePrivileged sessionEmployee={sessionEmployee} />}>
+                  <Route path="/assets/new" element={<NewAsset />} />
+                  <Route path="/employee" element={<Employee />} />
+                  <Route path="/employee/new" element={<NewEmployee />} />
+                  <Route path="/analysis" element={<Analysis />} />
+                  <Route path="/recycle-bin" element={<RecycleBin />} />
+                </Route>
               </Route>
 
               <Route
                 path="*"
                 element={
-                  <Navigate
-                    to={
-                      session
-                        ? '/404'
-                        : `/login?next=${encodeURIComponent(`${location.pathname}${location.search}${location.hash}`)}`
-                    }
-                    replace
-                  />
+                  authLoading || (session && profileLoading) ? (
+                    <AuthLoadingScreen />
+                  ) : session && !sessionEmployee ? (
+                    <NoEmployeeAccessHandler />
+                  ) : (
+                    <Navigate
+                      to={
+                        session
+                          ? '/404'
+                          : `/login?next=${encodeURIComponent(`${location.pathname}${location.search}${location.hash}`)}`
+                      }
+                      replace
+                    />
+                  )
                 }
               />
             </Routes>
@@ -291,6 +314,14 @@ function AppRoutes() {
       <ScrollTopButton scrollContainerRef={scrollContainerRef} />
     </div>
   )
+}
+
+function NotifSeverityDot({ severity }: { severity: string }) {
+  const cls =
+    severity === 'expired'
+      ? 'bg-red-500'
+      : 'bg-amber-400'
+  return <span className={`mt-0.5 h-2 w-2 shrink-0 rounded-full ${cls}`} aria-hidden="true" />
 }
 
 function TopBar({
@@ -308,6 +339,8 @@ function TopBar({
 }) {
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [notifOpen, setNotifOpen] = useState(false)
+  const [notifItems, setNotifItems] = useState<WarrantyNotification[]>([])
+  const [notifLoading, setNotifLoading] = useState(false)
   const userMenuRef = useRef<HTMLDivElement | null>(null)
   const notifRef = useRef<HTMLDivElement | null>(null)
 
@@ -324,6 +357,25 @@ function TopBar({
     document.addEventListener('mousedown', onDocumentClick)
     return () => document.removeEventListener('mousedown', onDocumentClick)
   }, [])
+
+  useEffect(() => {
+    if (!notifOpen) return
+    let cancelled = false
+    setNotifLoading(true)
+    listWarrantyNotifications(30)
+      .then((rows) => { if (!cancelled) setNotifItems(rows) })
+      .catch(() => { if (!cancelled) setNotifItems([]) })
+      .finally(() => { if (!cancelled) setNotifLoading(false) })
+    return () => { cancelled = true }
+  }, [notifOpen])
+
+  // Profile link respects role: employees go to their own profile, admin/IT Ops to directory.
+  const isPrivileged = Boolean(sessionEmployee?.is_active && sessionEmployee.role !== 'employee')
+  const profileLink = isPrivileged
+    ? '/employee'
+    : sessionEmployee?.id
+      ? `/employee/${sessionEmployee.id}`
+      : null
 
   return (
     <header className="sticky top-0 z-20 border-b border-base bg-surface-2/95 backdrop-blur supports-[backdrop-filter]:bg-surface-2/80">
@@ -349,53 +401,67 @@ function TopBar({
         </div>
 
         <div className="flex items-center gap-2">
+          {sessionEmployee && (
+            <span
+              className={`hidden sm:inline text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full select-none ${roleBadgeClass(sessionEmployee.role)}`}
+              title={`Role: ${formatRoleLabel(sessionEmployee.role)}`}
+            >
+              {formatRoleLabel(sessionEmployee.role)}
+            </span>
+          )}
           <div className="relative" ref={userMenuRef}>
             <button
               type="button"
-            onClick={() => {
-              setUserMenuOpen((v) => !v)
-              setNotifOpen(false)
-            }}
-            className={`icon-btn ${userMenuOpen ? 'icon-btn-active' : ''}`}
-            aria-label="User menu"
-            title="User menu"
-          >
-            <AnimatedNavIcon name="user-circle" className="h-7 w-7" />
-          </button>
-          {userMenuOpen && (
-            <div className="absolute right-[-3rem] mt-3 w-52 rounded-xl border border-base bg-app shadow-2xl p-3 space-y-2">
-              <div className="space-y-1">
-                <div className="flex items-center gap-2">
-                  <AnimatedNavIcon name="users" />
-                  <button
-                    type="button"
-                    className="text-left text-sm font-semibold text-primary truncate hover:text-accent hover:underline hover:decoration-accent hover:decoration-1 hover:decoration-solid"
-                    onClick={() => {
-                      setUserMenuOpen(false)
-                      navigate('/employee')
-                    }}
-                  >
-                    {sessionEmployee?.name || 'Not signed in'}
-                  </button>
+              onClick={() => {
+                setUserMenuOpen((v) => !v)
+                setNotifOpen(false)
+              }}
+              className={`icon-btn ${userMenuOpen ? 'icon-btn-active' : ''}`}
+              aria-label="User menu"
+              title="User menu"
+            >
+              <AnimatedNavIcon name="user-circle" className="h-7 w-7" />
+            </button>
+            {userMenuOpen && (
+              <div className="absolute right-[-3rem] mt-3 w-56 rounded-xl border border-base bg-app shadow-2xl p-3 space-y-2">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <AnimatedNavIcon name="users" />
+                    {profileLink ? (
+                      <button
+                        type="button"
+                        className="text-left text-sm font-semibold text-primary truncate hover:text-accent hover:underline hover:decoration-accent hover:decoration-1 hover:decoration-solid"
+                        onClick={() => {
+                          setUserMenuOpen(false)
+                          navigate(profileLink)
+                        }}
+                      >
+                        {sessionEmployee?.name || 'Not signed in'}
+                      </button>
+                    ) : (
+                      <span className="text-sm font-semibold text-primary truncate">
+                        {sessionEmployee?.name || 'Not signed in'}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 text-xs text-subtle truncate">
+                    <AnimatedNavIcon name="boxes" />
+                    <span>{sessionEmployee?.department || 'Department: N/A'}</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-xs text-muted uppercase tracking-wide">
+                    <AnimatedNavIcon name="settings" />
+                    <span>Role: {sessionEmployee?.role ? formatRoleLabel(sessionEmployee.role) : 'N/A'}</span>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2 text-xs text-subtle truncate">
-                  <AnimatedNavIcon name="boxes" />
-                  <span>{sessionEmployee?.department || 'Department: N/A'}</span>
-                </div>
-                <div className="flex items-center gap-2 text-xs text-muted uppercase tracking-wide">
-                  <AnimatedNavIcon name="settings" />
-                  <span>Role:{sessionEmployee?.role ? sessionEmployee.role : 'N/A'}</span>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setUserMenuOpen(false)
+                <button
+                  type="button"
+                  onClick={() => {
+                    setUserMenuOpen(false)
                     void onSignOut()
                   }}
                   className="w-full rounded-lg bg-accent text-white text-sm font-semibold py-1 hover:bg-accent-hover transition"
                 >
-                 {sessionEmployee?.name ? 'Sign Out' : 'Sign In'}
+                  {sessionEmployee?.name ? 'Sign Out' : 'Sign In'}
                 </button>
               </div>
             )}
@@ -404,30 +470,66 @@ function TopBar({
           <div className="relative" ref={notifRef}>
             <button
               type="button"
-            onClick={() => {
-              setNotifOpen((v) => !v)
-              setUserMenuOpen(false)
-            }}
-            className={`icon-btn ${notifOpen ? 'icon-btn-active' : ''}`}
-            aria-label="Notifications"
-            title="Notifications"
-          >
-            <AnimatedNavIcon name="bell" className="h-7 w-7" />
-          </button>
+              onClick={() => {
+                setNotifOpen((v) => !v)
+                setUserMenuOpen(false)
+              }}
+              className={`icon-btn ${notifOpen ? 'icon-btn-active' : ''}`}
+              aria-label="Notifications"
+              title="Notifications"
+            >
+              <AnimatedNavIcon name="bell" className="h-7 w-7" />
+            </button>
             {notifOpen && (
-              <div className="absolute right-0 mt-3 w-52 rounded-xl border border-base bg-app shadow-2xl p-2 space-y-3">
-                <p className="text-sm font-semibold text-primary">Notifications</p>
-                <p className="text-sm text-muted">No new notifications.</p>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setNotifOpen(false)
-                    navigate('/notifications')
-                  }}
-                  className="w-full rounded-lg bg-accent text-white text-sm font-semibold py-1 hover:bg-accent-hover transition"
-                >
-                  View all
-                </button>
+              <div className="absolute right-0 mt-3 w-80 sm:w-96 rounded-xl border border-base bg-app shadow-2xl overflow-hidden flex flex-col">
+                <div className="flex items-center justify-between px-4 py-3 border-b border-base">
+                  <p className="text-sm font-semibold text-primary">Warranty Alerts</p>
+                  {notifLoading && (
+                    <span className="text-xs text-muted animate-pulse">Loading…</span>
+                  )}
+                </div>
+                <div className="max-h-72 overflow-y-auto divide-y divide-[color:var(--border)]">
+                  {!notifLoading && notifItems.length === 0 && (
+                    <p className="px-4 py-5 text-center text-sm text-muted">No new notifications.</p>
+                  )}
+                  {notifItems.map((item) => (
+                    <button
+                      key={item.notification_id}
+                      type="button"
+                      className="flex w-full items-start gap-3 px-4 py-3 text-left transition hover:bg-[color:var(--accent-soft)]/10"
+                      onClick={() => {
+                        setNotifOpen(false)
+                        navigate(`/assets/${item.asset_tag ?? item.asset_id}`)
+                      }}
+                    >
+                      <NotifSeverityDot severity={item.severity} />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium text-primary">
+                          {item.category_name ?? 'Asset'}
+                          {item.asset_tag ? <span className="ml-1.5 font-normal text-subtle">· {item.asset_tag}</span> : null}
+                        </p>
+                        <p className="mt-0.5 text-xs text-muted">{item.message}</p>
+                        {item.current_employee_name && (
+                          <p className="mt-0.5 text-xs text-subtle truncate">
+                            Assigned: {item.current_employee_name}
+                          </p>
+                        )}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+                <div className="border-t border-base px-4 py-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNotifOpen(false)
+                      navigate('/notifications')
+                    }}
+                    className="w-full rounded-lg bg-accent text-white text-sm font-semibold py-1.5 hover:bg-accent-hover transition"
+                  >
+                    View all notifications
+                  </button>
+                </div>
               </div>
             )}
           </div>
@@ -437,10 +539,40 @@ function TopBar({
   )
 }
 
-function RequireAuth({ session, authLoading }: { session: Session | null; authLoading: boolean }) {
+function NoEmployeeAccessHandler() {
+  const navigate = useNavigate()
+  useEffect(() => {
+    void signOut()
+      .then(() => navigate('/login?reason=no-employee', { replace: true }))
+      .catch((err) => {
+        logDevError('app.noEmployeeSignOut', err)
+        navigate('/login?reason=no-employee', { replace: true })
+      })
+  }, [navigate])
+  return (
+    <main className="min-h-screen bg-app text-primary flex items-center justify-center px-4">
+      <div className="text-center space-y-2 max-w-md">
+        <p className="text-primary font-medium">Not registered in the employee directory</p>
+        <p className="text-sm text-muted">Signing you out…</p>
+      </div>
+    </main>
+  )
+}
+
+function RequireAuth({
+  session,
+  authLoading,
+  profileLoading,
+  sessionEmployee,
+}: {
+  session: Session | null
+  authLoading: boolean
+  profileLoading: boolean
+  sessionEmployee: SessionEmployee | null
+}) {
   const location = useLocation()
 
-  if (authLoading) {
+  if (authLoading || profileLoading) {
     return <AuthLoadingScreen />
   }
 
@@ -449,6 +581,22 @@ function RequireAuth({ session, authLoading }: { session: Session | null; authLo
     return <Navigate to={`/login?next=${encodeURIComponent(next)}`} replace />
   }
 
+  if (!sessionEmployee) {
+    return <NoEmployeeAccessHandler />
+  }
+
+  return <Outlet />
+}
+
+/**
+ * Nested guard (inside RequireAuth) that allows only admin and IT Ops.
+ * Employees land on /assets (their assigned-asset view) instead.
+ */
+function RequirePrivileged({ sessionEmployee }: { sessionEmployee: SessionEmployee | null }) {
+  const isPrivileged = sessionEmployee?.is_active && sessionEmployee.role !== 'employee'
+  if (!isPrivileged) {
+    return <Navigate to="/assets" replace />
+  }
   return <Outlet />
 }
 
@@ -464,6 +612,11 @@ function SignInScreen({ error }: { error: string }) {
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState('')
   const location = useLocation()
+  const reason = new URLSearchParams(location.search).get('reason')
+  const reasonBanner =
+    reason === 'no-employee'
+      ? 'This account is not in the employee directory. Contact your administrator if you need access.'
+      : ''
 
   const handleSignIn = async () => {
     setLoading(true)
@@ -497,8 +650,8 @@ function SignInScreen({ error }: { error: string }) {
           {loading ? 'Redirecting...' : 'Continue with Google'}
         </button>
 
-        {(error || message) && (
-          <p className="text-accent text-sm mt-3">{message || error}</p>
+        {(message || error || reasonBanner) && (
+          <p className="text-accent text-sm mt-3">{message || error || reasonBanner}</p>
         )}
       </div>
     </main>

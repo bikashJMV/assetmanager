@@ -17,7 +17,8 @@ export default function OtherAssetForm({ onClose, onSuccess, variant = 'panel' }
   const isPanel = variant === 'panel'
   const [categoryName, setCategoryName] = useState('')
   const [assetTitle, setAssetTitle] = useState('')
-  const [rows, setRows] = useState<KvRow[]>([emptyRow(), emptyRow()])
+  const [serialNumber, setSerialNumber] = useState('')
+  const [rows, setRows] = useState<KvRow[]>([])
   const [existingSlugs, setExistingSlugs] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState('')
@@ -53,7 +54,7 @@ export default function OtherAssetForm({ onClose, onSuccess, variant = 'panel' }
   }
 
   const removeRow = (index: number) => {
-    setRows((current) => (current.length <= 1 ? current : current.filter((_, i) => i !== index)))
+    setRows((current) => current.filter((_, i) => i !== index))
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -79,6 +80,11 @@ export default function OtherAssetForm({ onClose, onSuccess, variant = 'panel' }
       return
     }
 
+    if (!serialNumber.trim()) {
+      setError('Serial number is required.')
+      return
+    }
+
     const customFields: Record<string, string> = {}
     for (const row of rows) {
       const k = row.key.trim()
@@ -101,6 +107,7 @@ export default function OtherAssetForm({ onClose, onSuccess, variant = 'panel' }
         category_slug: slug,
         category_name: nameTrim,
         model: assetTitle.trim() || undefined,
+        serial_number: serialNumber.trim(),
         status: 'in_stock',
         custom_fields: customFields,
       })
@@ -150,6 +157,11 @@ export default function OtherAssetForm({ onClose, onSuccess, variant = 'panel' }
 
           <div className="border-t border-base pt-3">
             <p className="text-xs uppercase tracking-[0.14em] text-muted mb-2">Asset</p>
+            <p className="text-[11px] text-subtle mb-3 rounded-lg border border-base bg-surface-2/80 px-2.5 py-2">
+              <span className="font-medium text-primary">Asset tag</span> is generated automatically when you save (same
+              as other categories). <span className="font-medium text-primary">Serial number</span> and{' '}
+              <span className="font-medium text-primary">category name</span> are required.
+            </p>
             <label htmlFor="other-asset-title" className="block text-muted text-xs mb-0.5">
               Asset name / heading
             </label>
@@ -161,47 +173,67 @@ export default function OtherAssetForm({ onClose, onSuccess, variant = 'panel' }
               className="w-full bg-app border border-base rounded-lg px-3 py-2 text-primary text-sm outline-none focus:border-[color:var(--accent)] focus:ring-2 focus:ring-[color:var(--accent-soft)] transition"
             />
             <p className="text-[11px] text-subtle mt-0.5">Stored as model / display label for this asset.</p>
+            <label htmlFor="other-serial-number" className="block text-muted text-xs mb-0.5 mt-3">
+              Serial number <span className="text-accent" aria-hidden="true">*</span>
+            </label>
+            <input
+              id="other-serial-number"
+              value={serialNumber}
+              onChange={(e) => setSerialNumber(e.target.value)}
+              placeholder="e.g. SN-ABC12345678"
+              autoComplete="off"
+              className="w-full bg-app border border-base rounded-lg px-3 py-2 text-primary text-sm outline-none focus:border-[color:var(--accent)] focus:ring-2 focus:ring-[color:var(--accent-soft)] transition"
+              required
+              aria-required="true"
+            />
           </div>
 
           <div className="border-t border-base pt-3">
             <div className="flex items-center justify-between gap-2 mb-2">
-              <p className="text-xs uppercase tracking-[0.14em] text-muted">Specs (key / value)</p>
+              <p className="text-xs uppercase tracking-[0.14em] text-muted">Additional Details</p>
               <button
                 type="button"
                 onClick={addRow}
                 className="text-accent text-sm font-semibold hover:underline"
-                aria-label="Add key value row"
+                aria-label="Add additional detail"
               >
-                + Add field
+                + Add
               </button>
             </div>
-            <div className="space-y-2">
-              {rows.map((row, index) => (
-                <div key={index} className="flex flex-col sm:flex-row gap-2 items-stretch sm:items-center">
-                  <input
-                    value={row.key}
-                    onChange={(e) => updateRow(index, { key: e.target.value })}
-                    placeholder="Key — e.g. material"
-                    className="flex-1 min-w-0 bg-app border border-base rounded-lg px-3 py-2 text-primary text-sm outline-none focus:border-[color:var(--accent)] focus:ring-2 focus:ring-[color:var(--accent-soft)] transition"
-                  />
-                  <input
-                    value={row.value}
-                    onChange={(e) => updateRow(index, { value: e.target.value })}
-                    placeholder="Value — e.g. Powder-coated steel"
-                    className="flex-1 min-w-0 bg-app border border-base rounded-lg px-3 py-2 text-primary text-sm outline-none focus:border-[color:var(--accent)] focus:ring-2 focus:ring-[color:var(--accent-soft)] transition"
-                  />
-                  {rows.length > 1 ? (
-                    <button
-                      type="button"
-                      onClick={() => removeRow(index)}
-                      className="shrink-0 text-xs text-muted hover:text-accent px-2 py-1.5"
-                    >
-                      Remove
-                    </button>
-                  ) : null}
-                </div>
-              ))}
-            </div>
+            {rows.length === 0 ? (
+              <p className="text-sm text-subtle italic">
+                No extra details yet. Click "+ Add" to attach custom key-value information.
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {rows.map((row, index) => (
+                  <div key={index} className="flex flex-col sm:flex-row gap-2 items-stretch sm:items-center">
+                    <input
+                      value={row.key}
+                      onChange={(e) => updateRow(index, { key: e.target.value })}
+                      placeholder="Label — e.g. material"
+                      className="flex-1 min-w-0 bg-app border border-base rounded-lg px-3 py-2 text-primary placeholder:text-subtle text-sm outline-none focus:border-[color:var(--accent)] focus:ring-2 focus:ring-[color:var(--accent-soft)] transition"
+                    />
+                    <input
+                      value={row.value}
+                      onChange={(e) => updateRow(index, { value: e.target.value })}
+                      placeholder="Value — e.g. Powder-coated steel"
+                      className="flex-1 min-w-0 bg-app border border-base rounded-lg px-3 py-2 text-primary placeholder:text-subtle text-sm outline-none focus:border-[color:var(--accent)] focus:ring-2 focus:ring-[color:var(--accent-soft)] transition"
+                    />
+                    {rows.length > 1 ? (
+                      <button
+                        type="button"
+                        onClick={() => removeRow(index)}
+                        className="shrink-0 text-xs text-muted hover:text-accent px-2 py-1.5"
+                        aria-label="Remove row"
+                      >
+                        Remove
+                      </button>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 

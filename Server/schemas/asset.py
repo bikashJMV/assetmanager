@@ -35,7 +35,7 @@ class AssetCreate(BaseModel):
     category_slug: str
     manufacturer_name: Optional[str] = None
     model: Optional[str] = None
-    serial_number: Optional[str] = None
+    serial_number: str  # Now required
     location_code: Optional[str] = None
     location_name: Optional[str] = None
     status: Optional[str] = None
@@ -57,6 +57,10 @@ class AssetUpdate(BaseModel):
     warranty_expiry: Optional[date] = None
     custom_fields: Optional[dict[str, Any]] = None
     metadata: Optional[dict[str, Any]] = None
+
+
+class AssetQrLabelsExportRequest(BaseModel):
+    asset_tags: list[str] = Field(default_factory=list)
 
 
 class AssetOut(AssetBase):

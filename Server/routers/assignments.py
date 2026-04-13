@@ -11,7 +11,7 @@ router = APIRouter(prefix="/assignments", tags=["Assignments"])
 
 def _get_open_assignment_holder(db, asset_tag: str) -> dict | None:
     """
-    Return {employee_code, name, email, asset_model, serial_number} for the
+    Return {employee_id, name, email, asset_model, serial_number} for the
     currently open (unreturned) assignment of this asset, or None if unassigned.
 
     Called BEFORE fn_assign_asset so we can capture the previous holder for
@@ -38,7 +38,7 @@ def _get_open_assignment_holder(db, asset_tag: str) -> dict | None:
         resp = (
             db.table("asset_assignments")
             .select(
-                "id, employee:employees(employee_code, name, email),"
+                "id, employee:employees(employee_id, name, email),"
                 " asset:assets(model, serial_number)"
             )
             .eq("asset_id", asset_id)
@@ -57,7 +57,7 @@ def _get_open_assignment_holder(db, asset_tag: str) -> dict | None:
         if isinstance(asset_meta, list):
             asset_meta = asset_meta[0] if asset_meta else {}
         return {
-            "employee_code": emp.get("employee_code", ""),
+            "employee_id": emp.get("employee_id", ""),
             "name": emp.get("name", ""),
             "email": emp.get("email") or "",
             "asset_model": asset_meta.get("model") or "",
@@ -87,13 +87,13 @@ def _get_asset_meta(db, asset_tag: str) -> dict:
         return {"asset_model": "", "serial_number": ""}
 
 
-def _get_employee_email(db, employee_code: str) -> dict:
-    """Return {name, email} for an employee_code."""
+def _get_employee_email(db, employee_id: str) -> dict:
+    """Return {name, email} for an employee_id."""
     try:
         resp = (
             db.table("employees")
             .select("name, email")
-            .eq("employee_code", employee_code.upper().strip())
+            .eq("employee_id", employee_id.upper().strip())
             .limit(1)
             .execute()
         )
@@ -133,7 +133,7 @@ def assign_asset(
             "fn_assign_asset",
             {
                 "p_asset_tag": payload.asset_tag,
-                "p_employee_code": payload.employee_code,
+                "p_employee_id": payload.employee_id,
                 "p_assigned_at": payload.assigned_at.isoformat() if payload.assigned_at else None,
                 "p_source": payload.source,
                 "p_notes": payload.notes,
@@ -146,14 +146,14 @@ def assign_asset(
             raise HTTPException(status_code=400, detail=message)
 
         # ── 3. Fetch new-holder contact details ───────────────────────────────
-        new_holder = _get_employee_email(db, payload.employee_code)
+        new_holder = _get_employee_email(db, payload.employee_id)
         asset_meta = _get_asset_meta(db, payload.asset_tag)
 
         # ── 4. Schedule notification(s) as background tasks ──────────────────
         is_reassign = (
             previous_holder is not None
-            and previous_holder.get("employee_code", "").upper()
-            != payload.employee_code.upper().strip()
+            and previous_holder.get("employee_id", "").upper()
+            != payload.employee_id.upper().strip()
         )
 
         if is_reassign and previous_holder:

@@ -5,7 +5,7 @@ import XLSX from 'xlsx'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
-const headers = ['asset_tag', 'inventory_status', 'employee_code', 'comment']
+const headers = ['Asset Tag', 'Inventory Status', 'Employee ID', 'Comment']
 
 const examples = [
   ['AST-01102', 'Returned', '', 'Took return from xyz'],
@@ -27,14 +27,14 @@ const readme = [
   ['Use the Import sheet. Row 1 = headers; add your data from row 2 onward.'],
   [''],
   ['Columns:'],
-  ['  asset_tag          — required, must match an existing non-deleted asset'],
-  ['  inventory_status   — required: Assigned, Returned, In Stock, In Repair, Retired, Lost, Disposed'],
-  ['  employee_code      — required only for "Assigned"; use employee code (EMP01034) or email (user@company.com)'],
-  ['  comment            — optional free-text note'],
+  ['  Asset Tag          — required, must match an existing non-deleted asset'],
+  ['  Inventory Status   — required: Assigned, Returned, In Stock, In Repair, Retired, Lost, Disposed'],
+  ['  Employee ID        — required only for "Assigned"; use employee ID (EMP01034) or email (user@company.com)'],
+  ['  Comment            — optional free-text note'],
   [''],
   ['Rules:'],
   ['  - Each asset_tag can appear only once per file.'],
-  ['  - "Assigned" requires employee_code/email; all other statuses must leave it blank.'],
+  ['  - "Assigned" requires Employee ID or email; all other statuses must leave it blank.'],
   ['  - The entire import stops on the first error (fail-fast).'],
   ['  - Max 500 data rows per file.'],
   [''],

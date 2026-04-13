@@ -86,7 +86,6 @@ CATEGORY_SYNONYMS: dict[str, list[str]] = {
     "sim": ["sim", "sim card", "data sim"],
     "pen-drive": ["pen drive", "pendrive", "pen-drive", "usb drive", "usb"],
     "monitor": ["monitor", "display", "lcd", "led"],
-    "networking": ["networking", "router", "switch", "access point", "firewall"],
 }
 
 COMPONENT_FIELDS: list[dict[str, Any]] = [

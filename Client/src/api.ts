@@ -23,30 +23,65 @@ function bffHeaders(): Record<string, string> {
   return headers
 }
 
+function extractDownloadFileName(contentDisposition: string | null, fallback: string): string {
+  if (!contentDisposition) return fallback
+
+  const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i)
+  if (utf8Match?.[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1])
+    } catch {
+      return utf8Match[1]
+    }
+  }
+
+  const basicMatch = contentDisposition.match(/filename="?([^"]+)"?/i)
+  return basicMatch?.[1]?.trim() || fallback
+}
+
+async function readBffErrorMessage(resp: Response, fallback: string): Promise<string> {
+  try {
+    const payload = await resp.json()
+    const data =
+      payload && typeof payload === 'object' && 'data' in payload
+        ? (payload as { data?: unknown }).data
+        : payload
+
+    if (data && typeof data === 'object') {
+      const message = (data as { message?: unknown; detail?: unknown }).message ?? (data as { detail?: unknown }).detail
+      if (typeof message === 'string' && message.trim()) return message.trim()
+    }
+
+    if (payload && typeof payload === 'object') {
+      const message = (payload as { message?: unknown; detail?: unknown }).message ?? (payload as { detail?: unknown }).detail
+      if (typeof message === 'string' && message.trim()) return message.trim()
+    }
+  } catch {
+    // Fall back to the provided message when the response is not JSON.
+  }
+
+  return fallback
+}
+
 export type SessionEmployee = {
   id: string
-  employee_code: string
+  employee_id: string
   name: string
   email: string | null
   department: string | null
   role: EmployeeRole
   /** Employee / account active (employment). */
   is_active: boolean
-  /** ERP / platform entitlement; independent of `is_active`. */
-  erp_active: boolean
-  metadata: Record<string, unknown>
 }
 
 export type EmployeeRecord = {
   id: string
-  employee_code: string
+  employee_id: string
   name: string
   email: string | null
   department: string | null
   role: EmployeeRole
   is_active: boolean
-  erp_active: boolean
-  metadata: Record<string, unknown>
 }
 
 export type EmployeeAssetCountMap = Record<string, number>
@@ -69,14 +104,13 @@ export type RecycleBinEntry = {
   payload: Record<string, unknown>
   deleted_at: string
   deleted_by_employee_id: string
-  deleted_by_employee_code: string | null
+  deleted_by_employee_id_code: string | null
   deleted_by_employee_name: string | null
 }
 
 export type EmployeeListFilters = {
   search?: string
   is_active?: boolean | 'all'
-  erp_active?: boolean | 'all'
   department?: string
   role?: string
 }
@@ -135,8 +169,6 @@ export type AssetInventoryRecord = {
   current_employee_email: string | null
   /** Holder employee account active (`employees.is_active`). */
   current_employee_is_active: boolean | null
-  /** Holder ERP entitlement (`employees.erp_active`). */
-  current_employee_erp_active: boolean | null
   current_employee_department: string | null
   created_at: string
   updated_at: string
@@ -154,10 +186,11 @@ export type AssetAssignmentRecord = {
   notes: string | null
   employee: {
     id: string
-    employee_code: string
+    employee_id: string
     name: string
     is_active: boolean
-    erp_active: boolean
+    department: string | null
+    role: string | null
   } | null
 }
 
@@ -194,7 +227,8 @@ export type AssetEventActorSnapshot = {
 export type AssetAuditActorDisplay = {
   auth_user_id: string | null
   name: string | null
-  employee_code: string | null
+  /** Business employee id (`employees.employee_id`), not UUID. */
+  employee_id: string | null
 }
 
 export type AssetFieldChangeEntry = {
@@ -232,7 +266,8 @@ export type OverviewAnalysisMetric = {
 export type OverviewAnalysisEmployeeLoad = {
   employee_id: string
   employee_name: string
-  employee_code: string | null
+  /** Text employee id from inventory view (`current_employee_code` alias). */
+  display_employee_id: string | null
   department: string | null
   assigned_assets: number
 }
@@ -288,7 +323,7 @@ export type AssetPageResult = {
 
 export type AssignAssetPayload = {
   asset_tag: string
-  employee_code: string
+  employee_id: string
   assigned_at?: string
   notes?: string
 }
@@ -306,7 +341,8 @@ export type AssetWriteInput = {
   category_name?: string
   manufacturer_name?: string
   model?: string
-  serial_number?: string
+  /** Required for create; optional on partial update via `Partial<AssetWriteInput>`. */
+  serial_number: string
   location_code?: string
   location_name?: string
   purchase_date?: string
@@ -441,41 +477,29 @@ function normalizeEmployeeRoleInput(value: string | null | undefined): EmployeeR
 }
 
 function normalizeEmployeeRow(row: Record<string, unknown>): EmployeeRecord {
-  const metadata = (row.metadata ?? {}) as Record<string, unknown>
-  const departmentValue: unknown = row.department ?? row.departments ?? null
-  const departmentName = Array.isArray(departmentValue)
-    ? (typeof departmentValue[0] === 'object' &&
-        departmentValue[0] !== null &&
-        'name' in departmentValue[0] &&
-        typeof (departmentValue[0] as { name: unknown }).name === 'string'
-      ? (departmentValue[0] as { name: string }).name
-      : null)
-    : departmentValue !== null &&
-        typeof departmentValue === 'object' &&
-        'name' in departmentValue &&
-        typeof (departmentValue as { name: unknown }).name === 'string'
-      ? (departmentValue as { name: string }).name
-      : null
-
   return {
     id: String(row.id ?? ''),
-    employee_code: String(row.employee_code ?? ''),
+    employee_id: String(row.employee_id ?? ''),
     name: String(row.name ?? ''),
     email: typeof row.email === 'string' ? row.email : null,
-    department: departmentName,
-    role: normalizeRole(metadata, row.resolved_role ?? row.role),
+    department: typeof row.department === 'string' ? row.department : null,
+    role: normalizeRole({}, row.role),
     is_active: Boolean(row.is_active),
-    // When `erp_active` is absent (pre-migration row shape), mirror employment flag like DB backfill.
-    erp_active: row.erp_active === undefined ? Boolean(row.is_active) : Boolean(row.erp_active),
-    metadata,
   }
+}
+
+function formatPostgrestClientError(error: unknown, fallback: string): string {
+  if (!error || typeof error !== 'object') return fallback
+  const e = error as { message?: string; details?: string; hint?: string }
+  const parts = [e.message, e.details, e.hint]
+    .map((s) => (typeof s === 'string' ? s.trim() : ''))
+    .filter(Boolean)
+  return parts.length > 0 ? parts.join(' — ') : fallback
 }
 
 function ensureNoSupabaseError(error: unknown, fallback: string): asserts error is null {
   if (error) {
-    const message = typeof error === 'object' && error && 'message' in error
-      ? String((error as { message?: string }).message)
-      : fallback
+    const message = formatPostgrestClientError(error, fallback)
     throw new Error(message || fallback)
   }
 }
@@ -514,18 +538,6 @@ function isMissingTableError(error: unknown, tableName: string): boolean {
   )
 }
 
-function isMissingColumnError(error: unknown, tableName: string, columnName: string): boolean {
-  if (!error || typeof error !== 'object') return false
-  const code = typeof (error as { code?: unknown }).code === 'string'
-    ? String((error as { code?: unknown }).code)
-    : ''
-  const message = typeof (error as { message?: unknown }).message === 'string'
-    ? String((error as { message?: unknown }).message).toLowerCase()
-    : ''
-  const needle = `column ${tableName.toLowerCase()}.${columnName.toLowerCase()}`
-  return code === '42703' || message.includes(needle) || message.includes(`${columnName.toLowerCase()} does not exist`)
-}
-
 const ASSET_DETAIL_LIFECYCLE_LIMIT = 100
 
 function parseActorSnapshot(payload: Record<string, unknown>): AssetEventActorSnapshot | null {
@@ -560,21 +572,21 @@ function buildAssetAuditActorDisplay({
   fallbackEvent,
 }: {
   authUserId?: string | null
-  employee?: { name: string; employee_code: string } | null
+  employee?: { name: string; employee_id: string } | null
   fallbackEvent?: Pick<AssetLifecycleEvent, 'actor_id' | 'actor_name' | 'actor_employee_code'> | null
 }): AssetAuditActorDisplay | null {
   const resolvedAuthUserId = authUserId ?? fallbackEvent?.actor_id ?? null
   const resolvedName = employee?.name ?? fallbackEvent?.actor_name ?? null
-  const resolvedEmployeeCode = employee?.employee_code ?? fallbackEvent?.actor_employee_code ?? null
+  const resolvedEmployeeId = employee?.employee_id ?? fallbackEvent?.actor_employee_code ?? null
 
-  if (!resolvedAuthUserId && !resolvedName && !resolvedEmployeeCode) {
+  if (!resolvedAuthUserId && !resolvedName && !resolvedEmployeeId) {
     return null
   }
 
   return {
     auth_user_id: resolvedAuthUserId,
     name: resolvedName,
-    employee_code: resolvedEmployeeCode,
+    employee_id: resolvedEmployeeId,
   }
 }
 
@@ -594,36 +606,6 @@ export function onAuthStateChange(
   return () => {
     data.subscription.unsubscribe()
   }
-}
-
-/**
- * Set in `signInWithGoogle` before OAuth redirect.
- * Consumed once on next authenticated `INITIAL_SESSION` or `SIGNED_IN` within the TTL.
- */
-export const AMS_PENDING_POST_SIGNIN_INTRO = 'ams-pending-post-signin-intro'
-const AMS_PENDING_POST_SIGNIN_INTRO_TTL_MS = 12 * 60 * 1000
-
-type PendingIntroPayload = { at: number }
-
-function setPendingPostSignInIntro() {
-  try {
-    const payload: PendingIntroPayload = { at: Date.now() }
-    sessionStorage.setItem(AMS_PENDING_POST_SIGNIN_INTRO, JSON.stringify(payload))
-  } catch {
-    // private / storage disabled
-  }
-}
-
-/**
- * In-memory repeat of the last `takePendingPostSignInIntro` result for this JS load.
- * React 18 Strict Mode runs effects twice in dev: the first pass removes sessionStorage,
- * so the second pass must still see the same outcome without re-reading storage.
- * Cleared on sign-out and after the intro animation is dismissed (see App).
- */
-let postSignInIntroBootstrapResult: boolean | undefined
-
-export function resetPostSignInIntroBootstrapClaim() {
-  postSignInIntroBootstrapResult = undefined
 }
 
 const AUTH_DERIVED_CACHE_TTL_MS = 10_000
@@ -656,47 +638,6 @@ function resetAuthDerivedCache() {
   adminAccessCache = null
 }
 
-/**
- * True when Google OAuth just completed: valid pending marker within TTL.
- * Clears the storage key on first successful read; repeat calls reuse the memo until reset.
- */
-export function takePendingPostSignInIntro(): boolean {
-  if (postSignInIntroBootstrapResult !== undefined) {
-    return postSignInIntroBootstrapResult
-  }
-  try {
-    const raw = sessionStorage.getItem(AMS_PENDING_POST_SIGNIN_INTRO)
-    if (raw == null) {
-      postSignInIntroBootstrapResult = false
-      return false
-    }
-    sessionStorage.removeItem(AMS_PENDING_POST_SIGNIN_INTRO)
-    if (raw === '1') {
-      postSignInIntroBootstrapResult = false
-      return false
-    }
-    const parsed = JSON.parse(raw) as PendingIntroPayload
-    if (typeof parsed?.at !== 'number' || Number.isNaN(parsed.at)) {
-      postSignInIntroBootstrapResult = false
-      return false
-    }
-    if (Date.now() - parsed.at > AMS_PENDING_POST_SIGNIN_INTRO_TTL_MS) {
-      postSignInIntroBootstrapResult = false
-      return false
-    }
-    postSignInIntroBootstrapResult = true
-    return true
-  } catch {
-    try {
-      sessionStorage.removeItem(AMS_PENDING_POST_SIGNIN_INTRO)
-    } catch {
-      // ignore
-    }
-    postSignInIntroBootstrapResult = false
-    return false
-  }
-}
-
 export async function signInWithGoogle(nextPath?: string) {
   const normalizedNextPath =
     typeof nextPath === 'string' && nextPath.trim() && nextPath.trim().startsWith('/')
@@ -704,8 +645,6 @@ export async function signInWithGoogle(nextPath?: string) {
       : '/'
 
   const redirectTo = `${window.location.origin}${normalizedNextPath}`
-
-  setPendingPostSignInIntro()
 
   const { error } = await supabase.auth.signInWithOAuth({
     provider: 'google',
@@ -717,24 +656,12 @@ export async function signInWithGoogle(nextPath?: string) {
     },
   })
   if (error) {
-    try {
-      sessionStorage.removeItem(AMS_PENDING_POST_SIGNIN_INTRO)
-    } catch {
-      // ignore
-    }
-    resetPostSignInIntroBootstrapClaim()
     ensureNoSupabaseError(error, 'Unable to start Google sign-in')
   }
 }
 
 export async function signOut() {
   resetAuthDerivedCache()
-  resetPostSignInIntroBootstrapClaim()
-  try {
-    sessionStorage.removeItem(AMS_PENDING_POST_SIGNIN_INTRO)
-  } catch {
-    // ignore
-  }
   const { error } = await supabase.auth.signOut()
   ensureNoSupabaseError(error, 'Unable to sign out')
 }
@@ -866,52 +793,25 @@ async function assertActiveItOpsAccess() {
 }
 
 async function loadSessionEmployeeForUser(activeUser: User): Promise<SessionEmployee | null> {
-  const columns = 'id,employee_code,name,email,is_active,erp_active,role,metadata,department:departments(name)'
-  let data: Record<string, unknown> | null = null
+  // Security definer RPC: auth_user_id lookup, email fallback, auto-link auth_user_id — bypasses RLS.
+  // No auto-provision (migration 32): unknown accounts resolve to null.
+  const displayName = activeUser.user_metadata?.full_name || activeUser.user_metadata?.name || null
+  const { data, error } = await supabase.rpc('fn_get_session_employee', {
+    p_auth_uid: activeUser.id,
+    p_email: activeUser.email?.trim() || null,
+    p_display_name: displayName,
+  })
 
-  // Primary lookup by auth_user_id is more reliable than email matching.
-  let byAuthId = await supabase
-    .from('employees')
-    .select(columns)
-    .eq('auth_user_id', activeUser.id)
-    .eq('is_deleted', false)
-    .limit(1)
-    .maybeSingle()
-  if (isMissingColumnError(byAuthId.error, 'employees', 'is_deleted')) {
-    byAuthId = await supabase
-      .from('employees')
-      .select(columns)
-      .eq('auth_user_id', activeUser.id)
-      .limit(1)
-      .maybeSingle()
-  }
-  ensureNoSupabaseError(byAuthId.error, 'Unable to load employee profile')
-  data = byAuthId.data
-
-  // Fallback: case-insensitive email lookup for legacy rows missing auth_user_id link.
-  if (!data && activeUser.email?.trim()) {
-    let byEmail = await supabase
-      .from('employees')
-      .select(columns)
-      .ilike('email', activeUser.email.trim())
-      .eq('is_deleted', false)
-      .limit(1)
-      .maybeSingle()
-    if (isMissingColumnError(byEmail.error, 'employees', 'is_deleted')) {
-      byEmail = await supabase
-        .from('employees')
-        .select(columns)
-        .ilike('email', activeUser.email.trim())
-        .limit(1)
-        .maybeSingle()
-    }
-    ensureNoSupabaseError(byEmail.error, 'Unable to load employee profile')
-    data = byEmail.data
+  if (error) {
+    return null
   }
 
-  if (!data) return null
+  if (!data || typeof data !== 'object') {
+    return null
+  }
 
-  const normalized = normalizeEmployeeRow(data)
+  const row = data as Record<string, unknown>
+  const normalized = normalizeEmployeeRow(row)
   return {
     ...normalized,
     department: normalized.department,
@@ -960,79 +860,44 @@ export async function getSessionEmployee(user?: User | null): Promise<SessionEmp
   }
 }
 
-async function resolveDepartmentIdByName(name: string): Promise<string | null> {
-  const cleaned = name.trim()
-  if (!cleaned) return null
-
-  const { data, error } = await supabase
-    .from('departments')
-    .select('id')
-    .eq('name', cleaned)
-    .limit(1)
-    .maybeSingle()
-
-  ensureNoSupabaseError(error, 'Unable to resolve department filter')
-  return data?.id ?? null
-}
-
 export async function listDepartments(): Promise<string[]> {
-  const { data, error } = await supabase
-    .from('departments')
-    .select('name')
-    .eq('is_active', true)
-    .order('name', { ascending: true })
-
+  const { data, error } = await supabase.from('employees').select('department')
   ensureNoSupabaseError(error, 'Unable to load departments')
-
-  const names = (data ?? [])
-    .map((row) => (typeof row?.name === 'string' ? row.name.trim() : ''))
-    .filter(Boolean)
-
-  return Array.from(new Set(names))
+  const names = [...new Set(
+    (data ?? [])
+      .map((row) => (typeof row.department === 'string' ? row.department.trim() : ''))
+      .filter(Boolean),
+  )]
+  names.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+  return names
 }
 
-const EMPLOYEE_LIST_SELECT_WITH_ERP =
-  'id,employee_code,name,email,is_active,erp_active,role,metadata,department:departments(name)'
-const EMPLOYEE_LIST_SELECT_WITHOUT_ERP =
-  'id,employee_code,name,email,is_active,role,metadata,department:departments(name)'
+const EMPLOYEE_LIST_SELECT = 'id,employee_id,name,email,is_active,role,department'
 
 async function runEmployeeListQuery(
   filters: EmployeeListFilters,
   options: {
-    includeErpColumn: boolean
-    includeDeletedGuard: boolean
     countExact?: boolean
     offset?: number
     limit?: number
-  },
+  } = {},
 ) {
-  const selectCols = options.includeErpColumn ? EMPLOYEE_LIST_SELECT_WITH_ERP : EMPLOYEE_LIST_SELECT_WITHOUT_ERP
   let q = supabase
-    .from('employees')
-    .select(selectCols, options.countExact ? { count: 'exact' } : undefined)
+    .from('v_employee_directory')
+    .select(EMPLOYEE_LIST_SELECT, options.countExact ? { count: 'exact' } : undefined)
     .order('name', { ascending: true })
-
-  if (options.includeDeletedGuard) {
-    q = q.eq('is_deleted', false)
-  }
 
   if (filters.search?.trim()) {
     const s = filters.search.trim()
-    q = q.or(`name.ilike.%${s}%,email.ilike.%${s}%,employee_code.ilike.%${s}%`)
+    q = q.or(`name.ilike.%${s}%,email.ilike.%${s}%,employee_id.ilike.%${s}%`)
   }
 
   if (filters.is_active !== undefined && filters.is_active !== 'all') {
     q = q.eq('is_active', filters.is_active)
   }
 
-  if (options.includeErpColumn && filters.erp_active !== undefined && filters.erp_active !== 'all') {
-    q = q.eq('erp_active', filters.erp_active)
-  }
-
   if (filters.department?.trim()) {
-    const departmentId = await resolveDepartmentIdByName(filters.department)
-    if (!departmentId) return { data: [], error: null, count: 0 }
-    q = q.eq('department_id', departmentId)
+    q = q.ilike('department', filters.department.trim())
   }
 
   if (filters.role?.trim()) {
@@ -1049,32 +914,10 @@ async function runEmployeeListQuery(
 }
 
 export async function listEmployees(filters: EmployeeListFilters = {}): Promise<EmployeeRecord[]> {
-  let { data, error } = await runEmployeeListQuery(filters, { includeErpColumn: true, includeDeletedGuard: true })
-
-  if (error && isMissingColumnError(error, 'employees', 'erp_active')) {
-    const retry = await runEmployeeListQuery(filters, { includeErpColumn: false, includeDeletedGuard: true })
-    data = retry.data
-    error = retry.error
-  }
-
-  if (error && isMissingColumnError(error, 'employees', 'is_deleted')) {
-    const fallback = await runEmployeeListQuery(filters, { includeErpColumn: true, includeDeletedGuard: false })
-    data = fallback.data
-    error = fallback.error
-    if (error && isMissingColumnError(error, 'employees', 'erp_active')) {
-      const retry = await runEmployeeListQuery(filters, { includeErpColumn: false, includeDeletedGuard: false })
-      data = retry.data
-      error = retry.error
-    }
-  }
-
+  const { data, error } = await runEmployeeListQuery(filters, {})
   ensureNoSupabaseError(error, 'Unable to load employees')
 
   let rows = (data ?? []).map((r) => normalizeEmployeeRow(r as unknown as Record<string, unknown>))
-
-  if (filters.erp_active !== undefined && filters.erp_active !== 'all') {
-    rows = rows.filter((row) => row.erp_active === filters.erp_active)
-  }
 
   if (filters.role?.trim()) {
     const targetRole = filters.role.trim().toLowerCase()
@@ -1094,75 +937,19 @@ export async function listEmployeesPage(
     limit: Math.max(1, options.limit ?? 50),
   }
 
-  let {
+  const {
     data,
     error,
     count,
-  }: {
+  } = (await runEmployeeListQuery(filters, queryOptions)) as {
     data: unknown[] | null
     error: unknown
     count: number | null
-  } = await runEmployeeListQuery(filters, {
-    includeErpColumn: true,
-    includeDeletedGuard: true,
-    ...queryOptions,
-  }) as {
-    data: unknown[] | null
-    error: unknown
-    count: number | null
-  }
-
-  if (error && isMissingColumnError(error, 'employees', 'erp_active')) {
-    const retry = await runEmployeeListQuery(filters, {
-      includeErpColumn: false,
-      includeDeletedGuard: true,
-      ...queryOptions,
-    }) as {
-      data: unknown[] | null
-      error: unknown
-      count: number | null
-    }
-    data = retry.data
-    error = retry.error
-    count = retry.count ?? count
-  }
-
-  if (error && isMissingColumnError(error, 'employees', 'is_deleted')) {
-    const fallback = await runEmployeeListQuery(filters, {
-      includeErpColumn: true,
-      includeDeletedGuard: false,
-      ...queryOptions,
-    }) as {
-      data: unknown[] | null
-      error: unknown
-      count: number | null
-    }
-    data = fallback.data
-    error = fallback.error
-    count = fallback.count ?? count
-    if (error && isMissingColumnError(error, 'employees', 'erp_active')) {
-      const retry = await runEmployeeListQuery(filters, {
-        includeErpColumn: false,
-        includeDeletedGuard: false,
-        ...queryOptions,
-      }) as {
-        data: unknown[] | null
-        error: unknown
-        count: number | null
-      }
-      data = retry.data
-      error = retry.error
-      count = retry.count ?? count
-    }
   }
 
   ensureNoSupabaseError(error, 'Unable to load employees')
 
   let rows = (data ?? []).map((r) => normalizeEmployeeRow(r as unknown as Record<string, unknown>))
-
-  if (filters.erp_active !== undefined && filters.erp_active !== 'all') {
-    rows = rows.filter((row) => row.erp_active === filters.erp_active)
-  }
 
   if (filters.role?.trim()) {
     const targetRole = filters.role.trim().toLowerCase()
@@ -1181,53 +968,24 @@ export async function getEmployeeById(employeeId: string): Promise<EmployeeRecor
     throw new Error('Employee not found')
   }
 
-  const selectWithErp =
-    'id,employee_code,name,email,is_active,erp_active,role,metadata,department:departments(name)'
-  const selectWithoutErp =
-    'id,employee_code,name,email,is_active,role,metadata,department:departments(name)'
+  const selectCols = 'id,employee_id,name,email,is_active,role,department'
 
-  let response = await supabase
-    .from('employees')
-    .select(selectWithErp)
+  // Use directory view (not raw `employees`) so rows with an open Recycle Bin entry are
+  // invisible here, matching the All Employees list and /employee/:id expectations.
+  const response = await supabase
+    .from('v_employee_directory')
+    .select(selectCols)
     .eq('id', trimmedId)
-    .eq('is_deleted', false)
     .limit(1)
     .maybeSingle()
 
-  if (isMissingColumnError(response.error, 'employees', 'erp_active')) {
-    response = await supabase
-      .from('employees')
-      .select(selectWithoutErp)
-      .eq('id', trimmedId)
-      .eq('is_deleted', false)
-      .limit(1)
-      .maybeSingle()
-  }
-
-  if (isMissingColumnError(response.error, 'employees', 'is_deleted')) {
-    response = await supabase
-      .from('employees')
-      .select(selectWithErp)
-      .eq('id', trimmedId)
-      .limit(1)
-      .maybeSingle()
-
-    if (isMissingColumnError(response.error, 'employees', 'erp_active')) {
-      response = await supabase
-        .from('employees')
-        .select(selectWithoutErp)
-        .eq('id', trimmedId)
-        .limit(1)
-        .maybeSingle()
-    }
-  }
-
   ensureNoSupabaseError(response.error, 'Unable to load employee')
+
   if (!response.data) {
     throw new Error('Employee not found')
   }
 
-  return normalizeEmployeeRow(response.data as Record<string, unknown>)
+  return normalizeEmployeeRow(response.data as unknown as Record<string, unknown>)
 }
 
 export async function getAssignedAssetCountsForEmployees(employeeIds: string[]): Promise<EmployeeAssetCountMap> {
@@ -1271,88 +1029,50 @@ export async function searchAssignableEmployees(
     },
   )
 
-  return rows.filter((row) => row.employee_code.trim().length > 0)
-}
-
-async function getOrCreateDepartmentId(name: string | null | undefined): Promise<string | null> {
-  if (!name || !name.trim()) return null
-
-  const trimmed = name.trim()
-  const upsert = await supabase
-    .from('departments')
-    .upsert({ name: trimmed }, { onConflict: 'name' })
-  ensureNoSupabaseError(upsert.error, 'Unable to upsert department')
-
-  const { data, error } = await supabase
-    .from('departments')
-    .select('id')
-    .eq('name', trimmed)
-    .limit(1)
-    .single()
-
-  ensureNoSupabaseError(error, 'Unable to resolve department')
-  return data.id
+  return rows.filter((row) => row.employee_id.trim().length > 0)
 }
 
 export type EmployeeUpsertInput = {
   id?: string
-  employee_code: string
+  employee_id: string
   name: string
   email?: string | null
   department?: string | null
   role?: EmployeeRole
   is_active: boolean
-  erp_active: boolean
 }
 
 export async function upsertEmployee(input: EmployeeUpsertInput) {
   await assertActiveAdminAccess()
-  const departmentId = await getOrCreateDepartmentId(input.department)
-  const employeeCode = input.employee_code.trim()
-
-  const existingResponse = await supabase
-    .from('employees')
-    .select('metadata')
-    .eq('employee_code', employeeCode)
-    .limit(1)
-    .maybeSingle()
-  ensureNoSupabaseError(existingResponse.error, 'Unable to load existing employee profile')
-
-  const existingMetadata =
-    existingResponse.data?.metadata && typeof existingResponse.data.metadata === 'object'
-      ? (existingResponse.data.metadata as Record<string, unknown>)
-      : {}
+  const employeeId = input.employee_id.trim()
 
   const payload: Record<string, unknown> = {
-    employee_code: employeeCode,
+    employee_id: employeeId,
     name: input.name.trim(),
     email: input.email?.trim() || null,
-    department_id: departmentId,
+    department: input.department,
     is_active: input.is_active,
-    erp_active: input.erp_active,
-    metadata: existingMetadata,
+    role: input.role || 'employee',
   }
 
   if (input.id) payload.id = input.id
 
-  const { error } = await supabase.from('employees').upsert(payload, { onConflict: 'employee_code' })
+  const { error } = await supabase.from('employees').upsert(payload, { onConflict: 'employee_id' })
   ensureNoSupabaseError(error, 'Unable to save employee')
 }
 
-/** Bulk import only: insert a new row; does not update existing `employee_code`. */
+/** Bulk import only: insert a new row; does not update existing `employee_id`. */
 export async function insertEmployeeNew(input: EmployeeUpsertInput) {
   await assertActiveAdminAccess()
-  const departmentId = await getOrCreateDepartmentId(input.department)
-  const employeeCode = input.employee_code.trim()
+  const employeeId = input.employee_id.trim()
 
   const payload: Record<string, unknown> = {
-    employee_code: employeeCode,
+    employee_id: employeeId,
     name: input.name.trim(),
     email: input.email?.trim() || null,
-    department_id: departmentId,
+    department: input.department,
     is_active: input.is_active,
-    erp_active: input.erp_active,
-    metadata: {},
+    role: input.role || 'employee',
   }
 
   const { error } = await supabase.from('employees').insert(payload)
@@ -1361,77 +1081,114 @@ export async function insertEmployeeNew(input: EmployeeUpsertInput) {
       typeof (error as { code?: string }).code === 'string' ? (error as { code: string }).code : ''
     const msg = String((error as { message?: string }).message || '').toLowerCase()
     if (pgCode === '23505' || msg.includes('duplicate') || msg.includes('unique')) {
-      throw new Error('This employee code already exists.')
+      throw new Error('This employee ID already exists.')
     }
     ensureNoSupabaseError(error, 'Unable to save employee')
   }
 }
 
-const EMPLOYEE_CODE_LOOKUP_CHUNK = 150
+const BULK_EMPLOYEE_IMPORT_MAX = 500
 
-/** Active (non-deleted) employee codes among the given list — bulk import must reject the file if any match. */
-export async function getActiveEmployeeCodesInUse(codes: string[]): Promise<Set<string>> {
+/** Single-transaction bulk insert (migration 30). Any failure rolls back all rows. */
+export async function bulkInsertEmployeesNew(inputs: EmployeeUpsertInput[]) {
   await assertActiveAdminAccess()
-  const normalized = [...new Set(codes.map((c) => c.trim()).filter(Boolean))]
+  if (inputs.length === 0) {
+    throw new Error('No employees to import')
+  }
+  if (inputs.length > BULK_EMPLOYEE_IMPORT_MAX) {
+    throw new Error(`Too many rows (max ${BULK_EMPLOYEE_IMPORT_MAX}).`)
+  }
+
+  const p_rows = inputs.map((i) => ({
+    employee_id: i.employee_id.trim(),
+    name: i.name.trim(),
+    email: i.email?.trim() || null,
+    department: i.department?.trim() ?? '',
+    is_active: i.is_active,
+    role: 'employee',
+  }))
+
+  const { data, error } = await supabase.rpc('fn_bulk_insert_employees', { p_rows })
+  if (error) {
+    const pgCode =
+      typeof (error as { code?: string }).code === 'string' ? (error as { code: string }).code : ''
+    const msg = String((error as { message?: string }).message || '').toLowerCase()
+    if (pgCode === '23505' || msg.includes('duplicate') || msg.includes('unique')) {
+      throw new Error(
+        'Duplicate employee ID or email — no rows were saved. Fix the spreadsheet and try again.',
+      )
+    }
+    ensureNoSupabaseError(error, 'Unable to import employees')
+  }
+
+  const rawRow = Array.isArray(data) && data.length > 0 ? data[0] : data
+  const payload =
+    rawRow && typeof rawRow === 'object' && rawRow !== null && 'payload' in rawRow
+      ? (rawRow as { payload: unknown }).payload
+      : rawRow
+  if (!payload || typeof payload !== 'object') {
+    throw new Error('Unexpected response from bulk import')
+  }
+  if ((payload as { ok?: boolean }).ok === false) {
+    throw new Error(String((payload as { message?: unknown }).message || 'Bulk import failed'))
+  }
+}
+
+const EMPLOYEE_ID_LOOKUP_CHUNK = 150
+
+/** Active employee IDs among the given list — bulk import must reject the file if any match. */
+export async function getActiveEmployeeIdsInUse(ids: string[]): Promise<Set<string>> {
+  await assertActiveAdminAccess()
+  const normalized = [...new Set(ids.map((c) => c.trim()).filter(Boolean))]
   if (normalized.length === 0) return new Set()
 
   const out = new Set<string>()
-  for (let i = 0; i < normalized.length; i += EMPLOYEE_CODE_LOOKUP_CHUNK) {
-    const chunk = normalized.slice(i, i + EMPLOYEE_CODE_LOOKUP_CHUNK)
+  for (let i = 0; i < normalized.length; i += EMPLOYEE_ID_LOOKUP_CHUNK) {
+    const chunk = normalized.slice(i, i + EMPLOYEE_ID_LOOKUP_CHUNK)
 
-    const res = await supabase
-      .from('employees')
-      .select('employee_code')
-      .in('employee_code', chunk)
-      .eq('is_deleted', false)
+    const res = await supabase.from('employees').select('employee_id').in('employee_id', chunk)
 
-    if (res.error) {
-      if (isMissingColumnError(res.error, 'employees', 'is_deleted')) {
-        const legacy = await supabase.from('employees').select('employee_code').in('employee_code', chunk)
-        ensureNoSupabaseError(legacy.error, 'Unable to verify existing employees')
-        for (const row of legacy.data ?? []) {
-          const r = row as { employee_code?: string }
-          if (r.employee_code) out.add(r.employee_code)
-        }
-        continue
-      }
-      ensureNoSupabaseError(res.error, 'Unable to verify existing employees')
-    }
+    ensureNoSupabaseError(res.error, 'Unable to check employee IDs')
 
     for (const row of res.data ?? []) {
-      const r = row as { employee_code?: string }
-      if (r.employee_code) out.add(r.employee_code)
+      const r = row as { employee_id?: string }
+      if (r.employee_id) out.add(r.employee_id)
     }
   }
   return out
 }
 
-/** Codes that exist and are soft-deleted (bulk import should reject until restored from Recycle Bin). */
-export async function getSoftDeletedEmployeeCodes(codes: string[]): Promise<Set<string>> {
+/** Emails that already exist on an employee row — bulk import should list every conflicting row in the file. */
+export async function getEmailsAlreadyInUse(emails: string[]): Promise<Set<string>> {
   await assertActiveAdminAccess()
-  const normalized = [...new Set(codes.map((c) => c.trim()).filter(Boolean))]
+  const normalized = [...new Set(emails.map((e) => e.trim()).filter(Boolean))]
   if (normalized.length === 0) return new Set()
 
-  const { data, error } = await supabase
-    .from('employees')
-    .select('employee_code,is_deleted')
-    .in('employee_code', normalized)
-
-  if (error) {
-    if (isMissingColumnError(error, 'employees', 'is_deleted')) return new Set()
-    ensureNoSupabaseError(error, 'Unable to verify employee delete status')
-  }
-
   const out = new Set<string>()
-  for (const row of data ?? []) {
-    const r = row as { employee_code?: string; is_deleted?: boolean | null }
-    if (r.employee_code && r.is_deleted) out.add(r.employee_code)
+  for (let i = 0; i < normalized.length; i += EMPLOYEE_ID_LOOKUP_CHUNK) {
+    const chunk = normalized.slice(i, i + EMPLOYEE_ID_LOOKUP_CHUNK)
+    const res = await supabase.from('employees').select('email').in('email', chunk)
+    ensureNoSupabaseError(res.error, 'Unable to check emails')
+    for (const row of res.data ?? []) {
+      const e = (row as { email?: string | null }).email
+      if (e != null && String(e).trim()) {
+        out.add(String(e).trim().toLowerCase())
+      }
+    }
   }
   return out
+}
+
+/** IDs that exist and are soft-deleted (bulk import should reject until restored from Recycle Bin).
+ * NOTE: Soft-delete has been removed, this function returns empty set for compatibility.
+ */
+export async function getSoftDeletedEmployeeIds(_ids: string[]): Promise<Set<string>> {
+  await assertActiveAdminAccess()
+  return new Set()
 }
 
 export async function setEmployeeAdminStatus(
-  targetEmployee: Pick<EmployeeRecord, 'id' | 'employee_code'>,
+  targetEmployee: Pick<EmployeeRecord, 'id' | 'employee_id'>,
   makeAdmin: boolean,
 ) {
   await assertActiveAdminAccess()
@@ -1441,7 +1198,7 @@ export async function setEmployeeAdminStatus(
     p_is_admin: makeAdmin,
     p_metadata: {
       source: 'employee-page',
-      target_employee_code: targetEmployee.employee_code,
+      target_employee_id: targetEmployee.employee_id,
     },
   })
   ensureNoSupabaseError(error, 'Unable to update admin privileges')
@@ -1458,7 +1215,7 @@ export async function setEmployeeAdminStatus(
 }
 
 export async function setEmployeeRole(
-  targetEmployee: Pick<EmployeeRecord, 'id' | 'employee_code'>,
+  targetEmployee: Pick<EmployeeRecord, 'id' | 'employee_id'>,
   role: EmployeeRole,
 ) {
   await assertActiveItOpsAccess()
@@ -1469,7 +1226,7 @@ export async function setEmployeeRole(
     p_new_role: normalizedRole,
     p_metadata: {
       source: 'employee-page',
-      target_employee_code: targetEmployee.employee_code,
+      target_employee_id: targetEmployee.employee_id,
     },
   })
   ensureNoSupabaseError(error, 'Unable to update employee role')
@@ -1591,6 +1348,11 @@ export async function createAsset(payload: AssetWriteInput) {
     throw new Error('Category is required')
   }
 
+  const serialNumber = payload.serial_number.trim()
+  if (!serialNumber) {
+    throw new Error('Serial number is required')
+  }
+
   let assetTag = payload.asset_tag?.trim()
   if (!assetTag) {
     const nextTagRes = await supabase.rpc('fn_next_asset_tag')
@@ -1611,7 +1373,7 @@ export async function createAsset(payload: AssetWriteInput) {
     p_category_name: categoryDisplayName,
     p_manufacturer_name: payload.manufacturer_name?.trim() || null,
     p_model: payload.model?.trim() || null,
-    p_serial_number: payload.serial_number?.trim() || null,
+    p_serial_number: serialNumber,
     p_location_code: normalizeLocationCode(payload.location_code),
     p_location_name: payload.location_name?.trim() || null,
     p_status: payload.status || null,
@@ -1632,6 +1394,50 @@ export async function createAsset(payload: AssetWriteInput) {
 
   const createdAssetTag = extractRpcScalarString(result, ['asset_tag']) || assetTag
   return getAsset(createdAssetTag)
+}
+
+export async function bulkInsertAssets(rows: AssetWriteInput[]): Promise<{ inserted: number }> {
+  await assertActiveAdminAccess()
+  if (rows.length === 0) throw new Error('No assets to import')
+  if (rows.length > 500) throw new Error('Too many rows (max 500). Split into smaller files.')
+
+  const p_rows = rows.map((r) => ({
+    category_slug: r.category_slug,
+    category_name: r.category_name ?? null,
+    manufacturer_name: r.manufacturer_name ?? null,
+    model: r.model ?? null,
+    serial_number: r.serial_number,
+    location_code: r.location_code ?? null,
+    location_name: r.location_name ?? null,
+    status: r.status ?? 'in_stock',
+    purchase_date: r.purchase_date ?? null,
+    warranty_expiry: r.warranty_expiry ?? null,
+    custom_fields: r.custom_fields ?? {},
+    metadata: r.metadata ?? {},
+  }))
+
+  const { data, error } = await supabase.rpc('fn_bulk_insert_assets', { p_rows })
+  if (error) {
+    const msg = String((error as { message?: string }).message || '').toLowerCase()
+    const code = String((error as { code?: string }).code ?? '')
+    if (code === '23505' || msg.includes('duplicate') || msg.includes('unique')) {
+      throw new Error('Duplicate serial number found — no assets were saved. Fix the file and try again.')
+    }
+    ensureNoSupabaseError(error, 'Bulk asset import failed')
+  }
+
+  const rawRow = Array.isArray(data) && data.length > 0 ? data[0] : data
+  const payload =
+    rawRow && typeof rawRow === 'object' && rawRow !== null && 'payload' in rawRow
+      ? (rawRow as { payload: unknown }).payload
+      : rawRow
+  if (!payload || typeof payload !== 'object') {
+    throw new Error('Unexpected response from bulk asset import')
+  }
+  if ((payload as { ok?: boolean }).ok === false) {
+    throw new Error(String((payload as { message?: unknown }).message || 'Bulk import failed'))
+  }
+  return { inserted: Number((payload as { inserted?: unknown }).inserted ?? rows.length) }
 }
 
 export async function updateAsset(assetTag: string, payload: Partial<AssetWriteInput>) {
@@ -1656,7 +1462,13 @@ export async function updateAsset(assetTag: string, payload: Partial<AssetWriteI
     patch.location_id = await getOrCreateLocationId(payload.location_code, payload.location_name)
   }
   if (payload.model !== undefined) patch.model = payload.model?.trim() || null
-  if (payload.serial_number !== undefined) patch.serial_number = payload.serial_number?.trim() || null
+  if (payload.serial_number !== undefined) {
+    const sn = payload.serial_number.trim()
+    if (!sn) {
+      throw new Error('Serial number cannot be empty')
+    }
+    patch.serial_number = sn
+  }
   if (payload.purchase_date !== undefined) patch.purchase_date = payload.purchase_date || null
   if (payload.warranty_expiry !== undefined) patch.warranty_expiry = payload.warranty_expiry || null
   if (payload.custom_fields !== undefined) patch.custom_fields = payload.custom_fields
@@ -1691,7 +1503,7 @@ export async function getAssets(filters: AssetFilters = {}): Promise<AssetInvent
 
   // PostgREST: use `is.true` for booleans (see postgrest.org horizontal filtering). `eq.true` can miss rows on some stacks.
   if (filters.hideHeldByInactive) {
-    query = query.or('assignment_id.is.null,current_employee_erp_active.is.true')
+    query = query.or('assignment_id.is.null,current_employee_is_active.is.true')
   }
 
   if (filters.current_employee_id?.trim()) {
@@ -1759,44 +1571,25 @@ export async function getEmployeeAssetPortfolio(employeeId: string): Promise<Emp
         ensureNoSupabaseError(eventsError, 'Unable to load employee assignment history')
       }
 
-      const actorIds = [...new Set(
-        (events ?? [])
-          .map((row) => (typeof row.actor_id === 'string' ? row.actor_id.trim() : ''))
-          .filter(Boolean),
-      )]
-
-      const actorByAuthUserId = new Map<string, string>()
-      if (actorIds.length > 0) {
-        const { data: actorRows, error: actorError } = await supabase
-          .from('employees')
-          .select('auth_user_id,name,employee_code')
-          .in('auth_user_id', actorIds)
-
-        if (actorError) {
-          ensureNoSupabaseError(actorError, 'Unable to resolve assignment actors')
-        }
-
-        for (const row of actorRows ?? []) {
-          const authUserId = typeof row.auth_user_id === 'string' ? row.auth_user_id.trim() : ''
-          if (!authUserId) continue
-          const name = typeof row.name === 'string' ? row.name.trim() : ''
-          const employeeCode = typeof row.employee_code === 'string' ? row.employee_code.trim() : ''
-          const display = name || employeeCode
-          if (display) actorByAuthUserId.set(authUserId, display)
-        }
-      }
-
       for (const row of events ?? []) {
         const payload = row.payload && typeof row.payload === 'object' && !Array.isArray(row.payload)
-          ? row.payload as Record<string, unknown>
-          : null
-        const assignmentId = typeof payload?.assignment_id === 'string' ? payload.assignment_id.trim() : ''
+          ? (row.payload as Record<string, unknown>)
+          : {}
+        const snapshot = parseActorSnapshot(payload)
+        const assignmentId = typeof payload.assignment_id === 'string' ? payload.assignment_id.trim() : ''
         if (!assignmentId || assignedByByAssignmentId.has(assignmentId) || !assignmentIds.includes(assignmentId)) {
           continue
         }
 
-        const actorId = typeof row.actor_id === 'string' ? row.actor_id.trim() : ''
-        assignedByByAssignmentId.set(assignmentId, actorByAuthUserId.get(actorId) ?? null)
+        const display =
+          (typeof snapshot?.actor_name === 'string' && snapshot.actor_name.trim()
+            ? snapshot.actor_name.trim()
+            : '') ||
+          (typeof snapshot?.actor_employee_code === 'string' && snapshot.actor_employee_code.trim()
+            ? snapshot.actor_employee_code.trim()
+            : '') ||
+          null
+        assignedByByAssignmentId.set(assignmentId, display)
       }
     } catch {
       // Employee detail should still render even when assignment actor history is unavailable.
@@ -1839,7 +1632,7 @@ export async function getAssetsPage(
   }
 
   if (filters.hideHeldByInactive) {
-    query = query.or('assignment_id.is.null,current_employee_erp_active.is.true')
+    query = query.or('assignment_id.is.null,current_employee_is_active.is.true')
   }
 
   if (filters.current_employee_id?.trim()) {
@@ -1890,7 +1683,7 @@ export async function getAssetDetail(assetTag: string): Promise<AssetDetailRecor
       .order('created_at', { ascending: false }),
     supabase
       .from('asset_assignments')
-      .select('id,assigned_at,returned_at,source,notes,employee:employees(id,employee_code,name,is_active,erp_active)')
+      .select('id,assigned_at,returned_at,source,notes,employee:employees(id,employee_id,name,is_active,department,role)')
       .eq('asset_id', asset.id)
       .order('assigned_at', { ascending: false }),
     supabase
@@ -1939,11 +1732,11 @@ export async function getAssetDetail(assetTag: string): Promise<AssetDetailRecor
       employee: employee
         ? {
           id: String(employee.id ?? ''),
-          employee_code: String(employee.employee_code ?? ''),
+          employee_id: String(employee.employee_id ?? ''),
           name: String(employee.name ?? ''),
           is_active: Boolean(employee.is_active),
-          erp_active:
-            employee.erp_active === undefined ? Boolean(employee.is_active) : Boolean(employee.erp_active),
+          department: typeof employee.department === 'string' ? employee.department : null,
+          role: typeof employee.role === 'string' ? employee.role : null,
         }
         : null,
     }
@@ -1962,65 +1755,6 @@ export async function getAssetDetail(assetTag: string): Promise<AssetDetailRecor
     lifecycle_is_capped = rawEvents.length >= ASSET_DETAIL_LIFECYCLE_LIMIT
   }
 
-  const actorIds = [
-    ...new Set(
-      [
-        asset.created_by ?? null,
-        asset.updated_by ?? null,
-        ...rawEvents.map((r) => {
-          const payload = r.payload && typeof r.payload === 'object' && !Array.isArray(r.payload)
-            ? (r.payload as Record<string, unknown>)
-            : {}
-          const snapshot = parseActorSnapshot(payload)
-          const actorIdFromSnapshot = snapshot?.actor_id
-          if (typeof actorIdFromSnapshot === 'string' && actorIdFromSnapshot.length > 0) {
-            return actorIdFromSnapshot
-          }
-          const rowActor = r.actor_id
-          return typeof rowActor === 'string' && rowActor.length > 0 ? rowActor : null
-        }),
-      ].filter((id): id is string => typeof id === 'string' && id.length > 0),
-    ),
-  ]
-
-  const actorByAuthUserId = new Map<
-    string,
-    { id: string; employee_code: string; name: string; department_name: string | null }
-  >()
-
-  if (actorIds.length > 0) {
-    const { data: actorRows, error: actorErr } = await supabase
-      .from('employees')
-      .select('id,employee_code,name,auth_user_id,department:departments(name)')
-      .in('auth_user_id', actorIds)
-    if (!actorErr && actorRows) {
-      for (const row of actorRows) {
-        const e = row as {
-          id: string
-          employee_code: string
-          name: string
-          auth_user_id?: string | null
-          department?: { name?: string } | { name?: string }[] | null
-        }
-        const uid = e.auth_user_id
-        if (uid) {
-          const deptVal = e.department
-          const deptName = Array.isArray(deptVal)
-            ? (typeof deptVal[0]?.name === 'string' ? deptVal[0].name : null)
-            : typeof deptVal?.name === 'string'
-              ? deptVal.name
-              : null
-          actorByAuthUserId.set(uid, {
-            id: String(e.id),
-            employee_code: String(e.employee_code ?? ''),
-            name: String(e.name ?? ''),
-            department_name: deptName,
-          })
-        }
-      }
-    }
-  }
-
   for (const row of rawEvents) {
     const payload =
       row.payload && typeof row.payload === 'object' && !Array.isArray(row.payload)
@@ -2030,15 +1764,14 @@ export async function getAssetDetail(assetTag: string): Promise<AssetDetailRecor
     const aid =
       snapshot?.actor_id ??
       (typeof row.actor_id === 'string' && row.actor_id.length > 0 ? row.actor_id : null)
-    const emp = aid ? actorByAuthUserId.get(aid) : undefined
     lifecycle_events.push({
       id: String(row.id ?? ''),
       event_type: String(row.event_type ?? ''),
       actor_id: aid,
-      actor_employee_id: snapshot?.actor_employee_id ?? emp?.id ?? null,
-      actor_name: snapshot?.actor_name ?? emp?.name ?? null,
-      actor_employee_code: snapshot?.actor_employee_code ?? emp?.employee_code ?? null,
-      actor_department_name: snapshot?.actor_department_name ?? emp?.department_name ?? null,
+      actor_employee_id: snapshot?.actor_employee_id ?? null,
+      actor_name: snapshot?.actor_name ?? null,
+      actor_employee_code: snapshot?.actor_employee_code ?? null,
+      actor_department_name: snapshot?.actor_department_name ?? null,
       payload,
       created_at: String(row.created_at ?? ''),
     })
@@ -2054,12 +1787,10 @@ export async function getAssetDetail(assetTag: string): Promise<AssetDetailRecor
   const audit_actors = {
     created_by: buildAssetAuditActorDisplay({
       authUserId: asset.created_by ?? null,
-      employee: asset.created_by ? actorByAuthUserId.get(asset.created_by) : undefined,
       fallbackEvent: createdEvent,
     }),
     updated_by: buildAssetAuditActorDisplay({
       authUserId: asset.updated_by ?? null,
-      employee: asset.updated_by ? actorByAuthUserId.get(asset.updated_by) : undefined,
       fallbackEvent: latestUpdateEvent,
     }),
   }
@@ -2075,7 +1806,7 @@ export async function assignAsset(payload: AssignAssetPayload) {
   const session = await getSession()
   const body: Record<string, unknown> = {
     asset_tag: payload.asset_tag.trim(),
-    employee_code: payload.employee_code.trim(),
+    employee_id: payload.employee_id.trim(),
     source: 'runtime',
   }
   if (payload.assigned_at?.trim()) body.assigned_at = payload.assigned_at.trim()
@@ -2100,9 +1831,9 @@ export async function assignAsset(payload: AssignAssetPayload) {
 
   if (!resp.ok || !data || data.ok === false) {
     const msg =
-      typeof data?.message === 'string' && data.message.trim()
-        ? data.message.trim()
-        : `Assign failed (${resp.status}). Confirm the server is reachable.`
+      (typeof data?.detail === 'string' && data.detail.trim()) ||
+      (typeof data?.message === 'string' && data.message.trim()) ||
+      `Assign failed (${resp.status}). Check server logs or connectivity.`
     throw new Error(msg)
   }
   return data
@@ -2138,9 +1869,9 @@ export async function returnAsset(payload: ReturnAssetPayload) {
 
   if (!resp.ok || !data || data.ok === false) {
     const msg =
-      typeof data?.message === 'string' && data.message.trim()
-        ? data.message.trim()
-        : `Return failed (${resp.status}). Confirm the server is reachable.`
+      (typeof data?.detail === 'string' && data.detail.trim()) ||
+      (typeof data?.message === 'string' && data.message.trim()) ||
+      `Return failed (${resp.status}). Check server logs or connectivity.`
     throw new Error(msg)
   }
   return data
@@ -2174,7 +1905,7 @@ export async function setAssetLifecycleStatus(
   return result!
 }
 
-export async function resolveEmployeeCodeFromIdentifier(
+export async function resolveEmployeeIdForAssign(
   identifier: string,
 ): Promise<string> {
   const trimmed = identifier.trim()
@@ -2183,18 +1914,17 @@ export async function resolveEmployeeCodeFromIdentifier(
   if (trimmed.includes('@')) {
     const { data, error } = await supabase
       .from('employees')
-      .select('employee_code')
+      .select('employee_id')
       .ilike('email', trimmed)
       .eq('is_active', true)
-      .eq('is_deleted', false)
       .limit(1)
       .maybeSingle()
 
     ensureNoSupabaseError(error, 'Unable to resolve employee by email')
-    if (!data?.employee_code) {
+    if (!data?.employee_id) {
       throw new Error(`No active employee found with email "${trimmed}"`)
     }
-    return data.employee_code
+    return data.employee_id
   }
 
   return trimmed
@@ -2285,6 +2015,71 @@ export async function getQrDataUriForAssetTag(assetTag: string): Promise<string>
   return buildAssetQrDataUri(asset.asset_tag || normalizedTag)
 }
 
+export async function downloadAssetQrLabelsPdf(assetTags: string[], newTab: Window | null): Promise<void> {
+  await assertActiveAdminAccess()
+
+  const normalizedTags = [...new Set(assetTags.map((tag) => tag.trim()).filter(Boolean))]
+  if (normalizedTags.length === 0) {
+    if (newTab && !newTab.closed) newTab.close()
+    throw new Error('No assets available for QR export.')
+  }
+
+  const session = await getSession()
+  const headers = bffHeaders()
+  if (session?.access_token) headers['Authorization'] = `Bearer ${session.access_token}`
+
+  let resp: Response
+  try {
+    resp = await fetch(`${getBffBaseUrl()}/assets/qr-labels/export`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ asset_tags: normalizedTags }),
+    })
+  } catch (err) {
+    if (newTab && !newTab.closed) newTab.close()
+    throw err
+  }
+
+  if (!resp.ok) {
+    if (newTab && !newTab.closed) newTab.close()
+    const message = await readBffErrorMessage(resp, `QR export failed (${resp.status}). Confirm the server is reachable.`)
+    throw new Error(message)
+  }
+
+  const blob = await resp.blob()
+  if (!blob.size) {
+    if (newTab && !newTab.closed) newTab.close()
+    throw new Error('QR export returned an empty file.')
+  }
+
+  const fileName = extractDownloadFileName(resp.headers.get('content-disposition'), 'Asset manager QRs.pdf')
+  const pdfBlob = new Blob([blob], { type: 'application/pdf' })
+  const url = URL.createObjectURL(pdfBlob)
+
+  if (newTab && !newTab.closed) {
+    newTab.location.href = url
+    // Revoke the URL after a long delay so the browser's PDF viewer has ample time to load/print
+    setTimeout(() => URL.revokeObjectURL(url), 120000)
+  } else if (newTab === null) {
+    // Fallback: Browser strictly blocked the popup creation. Download directly.
+    try {
+      const link = document.createElement('a')
+      link.href = url
+      link.download = fileName
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      window.alert('Browser blocked the PDF tab popup. The QR PDF has been downloaded instead.')
+    } finally {
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+    }
+  } else {
+    // Edge case: User manually closed the 'Generating PDF...' tab before fetch finished.
+    // Respect user intent, silently abort without triggering forced downloads or alerts.
+    URL.revokeObjectURL(url)
+  }
+}
+
 export async function createLog(assetTag: string, note: string) {
   const asset = await getAssetIdentityByTag(assetTag)
   return createLogForAsset(asset.id, asset.asset_tag, note)
@@ -2331,6 +2126,34 @@ export async function softDeleteEmployeeById(employeeId: string, note?: string) 
   }
 }
 
+/** Hard delete: removes dependent audit/assignment rows, then the employee row. Requires migration 27. */
+export async function deleteEmployeePermanently(employeeId: string) {
+  await assertActiveAdminAccess()
+  const { data, error } = await supabase.rpc('fn_delete_employee_permanent', {
+    p_employee_id: employeeId,
+  })
+  ensureNoSupabaseError(error, 'Unable to delete employee')
+  const payload = Array.isArray(data) ? data[0] : data
+  if (!payload || typeof payload !== 'object') throw new Error('Unexpected response while deleting employee')
+  if ((payload as { ok?: boolean }).ok === false) {
+    throw new Error(String((payload as { message?: unknown }).message || 'Unable to delete employee'))
+  }
+}
+
+/** Hard delete a soft-deleted asset; removes recycle-bin row. Requires migration 28. */
+export async function deleteAssetPermanently(assetId: string) {
+  await assertActiveAdminAccess()
+  const { data, error } = await supabase.rpc('fn_delete_asset_permanent', {
+    p_asset_id: assetId,
+  })
+  ensureNoSupabaseError(error, 'Unable to delete asset')
+  const payload = Array.isArray(data) ? data[0] : data
+  if (!payload || typeof payload !== 'object') throw new Error('Unexpected response while deleting asset')
+  if ((payload as { ok?: boolean }).ok === false) {
+    throw new Error(String((payload as { message?: unknown }).message || 'Unable to delete asset'))
+  }
+}
+
 export async function listRecycleBinEntries(): Promise<RecycleBinEntry[]> {
   await assertActiveAdminAccess()
   const { data, error } = await supabase.rpc('fn_list_recycle_bin_entries')
@@ -2346,7 +2169,12 @@ export async function listRecycleBinEntries(): Promise<RecycleBinEntry[]> {
       payload: r.payload && typeof r.payload === 'object' && !Array.isArray(r.payload) ? (r.payload as Record<string, unknown>) : {},
       deleted_at: String(r.deleted_at ?? ''),
       deleted_by_employee_id: String(r.deleted_by_employee_id ?? ''),
-      deleted_by_employee_code: typeof r.deleted_by_employee_code === 'string' ? r.deleted_by_employee_code : null,
+      deleted_by_employee_id_code:
+        typeof r.deleted_by_employee_id_code === 'string'
+          ? r.deleted_by_employee_id_code
+          : typeof r.deleted_by_employee_code === 'string'
+            ? r.deleted_by_employee_code
+            : null,
       deleted_by_employee_name: typeof r.deleted_by_employee_name === 'string' ? r.deleted_by_employee_name : null,
     }
   })
@@ -2402,12 +2230,16 @@ async function buildAssetQrDataUri(assetTag: string): Promise<string> {
 export async function scanAsset(assetTag: string) {
   const [asset, sessionEmp] = await Promise.all([getAsset(assetTag), getSessionEmployee()])
   const isPrivileged = Boolean(sessionEmp?.is_active && sessionEmp?.role !== 'employee')
-  if (!isPrivileged && sessionEmp?.id && asset.current_employee_id && asset.current_employee_id !== sessionEmp.id) {
-    throw new Error('You can only view assets assigned to you.')
-  }
+  // is_own_asset: true for admin/IT Ops, or if the asset is assigned to the signed-in employee.
+  // false means employee is viewing an asset not assigned to them — caller shows limited view via ScanPage.
+  const isOwnAsset =
+    isPrivileged ||
+    Boolean(sessionEmp?.id && asset.current_employee_id === sessionEmp.id)
 
   return {
     asset_tag: asset.asset_tag,
+    is_own_asset: isOwnAsset,
+    is_privileged: isPrivileged,
     category: asset.category_name,
     manufacturer: asset.manufacturer_name,
     model: asset.model,
@@ -2415,7 +2247,7 @@ export async function scanAsset(assetTag: string) {
     location: asset.location_name,
     holder: asset.current_employee_name,
     holder_erp_status: asset.current_employee_id
-      ? (asset.current_employee_erp_active ? ERP_ACTIVE_LABEL : ERP_INACTIVE_LABEL)
+      ? (asset.current_employee_is_active ? ERP_ACTIVE_LABEL : ERP_INACTIVE_LABEL)
       : 'N/A',
     custom_fields: asset.custom_fields,
   }
@@ -2425,7 +2257,7 @@ export async function getDashboardStats() {
   const [assetsRes, assignmentsRes, employeesRes] = await Promise.all([
     supabase.from('assets').select('id,status', { count: 'exact' }).eq('is_deleted', false),
     supabase.from('asset_assignments').select('id,returned_at', { count: 'exact' }).is('returned_at', null),
-    supabase.from('employees').select('id,is_active', { count: 'exact' }).eq('is_deleted', false),
+    supabase.from('v_employee_directory').select('id,is_active', { count: 'exact' }),
   ])
 
   ensureNoSupabaseError(assetsRes.error, 'Unable to load dashboard assets stats')
@@ -2489,7 +2321,7 @@ export async function getOverviewAnalysisData(
     {
       employee_id: string
       employee_name: string
-      employee_code: string | null
+      display_employee_id: string | null
       department: string | null
       assigned_assets: number
     }
@@ -2540,7 +2372,7 @@ export async function getOverviewAnalysisData(
     employeeLoadMap.set(employeeId, {
       employee_id: employeeId,
       employee_name: employeeName,
-      employee_code: employeeCode,
+      display_employee_id: employeeCode,
       department: employeeDepartment,
       assigned_assets: 1,
     })
@@ -2638,13 +2470,12 @@ export function subscribeDashboardRealtime(onChange: () => void) {
 
 /** Payload from `fn_public_scan_asset` (anonymous QR): tightly-scoped public scan details. */
 export type PublicScanAsset = {
-  asset_name: string
+  category_name: string
   asset_tag: string
   status: string
   is_assigned: boolean
   holder_name?: string | null
   holder_employee_code?: string | null
-  holder_department?: string | null
 }
 
 export async function getPublicScanAsset(assetTag: string): Promise<PublicScanAsset> {
@@ -2671,12 +2502,10 @@ export async function getPublicScanAsset(assetTag: string): Promise<PublicScanAs
 
   const p = payload as Record<string, unknown>
   return {
-    asset_name:
-      typeof p.asset_name === 'string' && p.asset_name.trim()
-        ? p.asset_name
-        : typeof p.asset_tag === 'string'
-          ? p.asset_tag
-          : normalizedTag,
+    category_name:
+      typeof p.category_name === 'string' && p.category_name.trim()
+        ? p.category_name
+        : normalizedTag,
     asset_tag:
       typeof p.asset_tag === 'string' && p.asset_tag.trim()
         ? p.asset_tag
@@ -2686,7 +2515,6 @@ export async function getPublicScanAsset(assetTag: string): Promise<PublicScanAs
     holder_name: typeof p.holder_name === 'string' ? p.holder_name : null,
     holder_employee_code:
       typeof p.holder_employee_code === 'string' ? p.holder_employee_code : null,
-    holder_department: typeof p.holder_department === 'string' ? p.holder_department : null,
   }
 }
 

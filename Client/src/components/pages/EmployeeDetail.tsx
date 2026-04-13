@@ -2,25 +2,21 @@ import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useSetBreadcrumbOverride } from '../../hooks/useBreadcrumbOverride'
 import AnimatedNavIcon from '../common/AnimatedNavIcon'
+import ConfirmDialog from '../common/ConfirmDialog'
 import Error from '../common/Error'
 import Loader from '../common/Loader'
 import PageHeaderActions from '../common/PageHeaderActions'
 import InventoryStatusBadge from '../common/InventoryStatusBadge'
+import { useToast } from '../common/ToastProvider'
 import {
+  deleteEmployeePermanently,
   getSessionEmployee,
   hasActiveAdminAccess,
   getEmployeeAssetPortfolio,
   type EmployeeAssetPortfolio,
 } from '../../api'
 import { getErrorDebugDetail, getUserFacingMessage, logDevError } from '../../utils/errors'
-import { formatDateTime, formatDisplay } from '../../utils/formatDisplay'
-
-function formatRoleLabel(role: string): string {
-  const normalized = role.trim().toLowerCase()
-  if (normalized === 'it_ops') return 'IT Ops'
-  if (normalized === 'admin') return 'Admin'
-  return 'Employee'
-}
+import { formatDateTime, formatDisplay, formatRoleLabel } from '../../utils/formatDisplay'
 
 function statusBadgeClass(isActive: boolean): string {
   return isActive
@@ -36,16 +32,22 @@ export default function EmployeeDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
   const setBreadcrumb = useSetBreadcrumbOverride()
+  const { showToast } = useToast()
   const [detail, setDetail] = useState<EmployeeAssetPortfolio | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [errorDebug, setErrorDebug] = useState<string | undefined>(undefined)
+  const [privilegedForDelete, setPrivilegedForDelete] = useState(false)
+  const [sessionEmployeeId, setSessionEmployeeId] = useState<string | null>(null)
+  const [sessionEmployeeRole, setSessionEmployeeRole] = useState<string | null>(null)
+  const [permanentDeleteOpen, setPermanentDeleteOpen] = useState(false)
+  const [permanentDeleteBusy, setPermanentDeleteBusy] = useState(false)
 
   useEffect(() => {
     if (!detail) return
-    const { name, employee_code, is_active } = detail.employee
+    const { name, employee_id, is_active } = detail.employee
     const status = is_active ? 'Active' : 'Inactive'
-    setBreadcrumb(employee_code ? `${name} (${employee_code} / ${status})` : name)
+    setBreadcrumb(employee_id ? `${name} (${employee_id} / ${status})` : name)
   }, [detail, setBreadcrumb])
 
   useEffect(() => {
@@ -70,9 +72,15 @@ export default function EmployeeDetail() {
         ])
         if (!mounted) return
 
+        setSessionEmployeeId(sessionEmployee?.id ?? null)
+        setSessionEmployeeRole(sessionEmployee?.role ?? null)
+        setPrivilegedForDelete(canViewAllEmployees)
+
         const canViewRequestedEmployee = canViewAllEmployees || sessionEmployee?.id === id
         if (!canViewRequestedEmployee) {
           setDetail(null)
+          setPrivilegedForDelete(false)
+          setSessionEmployeeId(null)
           setError('You do not have permission to view this employee record.')
           return
         }
@@ -95,6 +103,34 @@ export default function EmployeeDetail() {
     }
   }, [id])
 
+  const isViewingOwnProfile = sessionEmployeeId === id && sessionEmployeeRole === 'employee'
+
+  const canOfferPermanentDelete =
+    Boolean(detail) &&
+    privilegedForDelete &&
+    Boolean(id) &&
+    sessionEmployeeId !== id &&
+    detail!.totalAssignedAssets === 0
+
+  const handleConfirmPermanentDelete = async () => {
+    if (!id) return
+    setPermanentDeleteBusy(true)
+    try {
+      await deleteEmployeePermanently(id)
+      showToast({ variant: 'success', message: 'Employee removed from the directory.' })
+      setPermanentDeleteOpen(false)
+      navigate('/employee')
+    } catch (err) {
+      logDevError('employeeDetail.permanentDelete', err)
+      showToast({
+        variant: 'error',
+        message: getUserFacingMessage(err, 'Unable to permanently delete this employee.'),
+      })
+    } finally {
+      setPermanentDeleteBusy(false)
+    }
+  }
+
   if (loading && !detail) {
     return (
       <main className="min-h-screen bg-app px-4 py-6 text-primary sm:px-6 sm:py-8">
@@ -108,14 +144,18 @@ export default function EmployeeDetail() {
       <main className="min-h-screen bg-app px-4 py-6 text-primary sm:px-6 sm:py-8">
         <PageHeaderActions
           title="Employee Detail"
-          actions={[
-            {
-              id: 'back-to-employees',
-              label: 'Back to Employees',
-              icon: 'users' as const,
-              onClick: () => navigate('/employee'),
-            },
-          ]}
+          actions={
+            isViewingOwnProfile
+              ? []
+              : [
+                {
+                  id: 'back-to-employees',
+                  label: 'Back to Employees',
+                  icon: 'users' as const,
+                  onClick: () => navigate('/employee'),
+                },
+              ]
+          }
         />
         <Error
           title="Could not load employee"
@@ -131,20 +171,24 @@ export default function EmployeeDetail() {
   return (
     <main className="min-h-screen bg-app px-4 py-6 text-primary sm:px-6 sm:py-8">
       <PageHeaderActions
-        title={detail.employee.name}
+        title={isViewingOwnProfile ? 'My Assigned Assets' : detail.employee.name}
         auxiliary={
           <div className="inline-flex items-center rounded-xl border border-base bg-surface px-4 py-2 text-sm font-semibold text-primary">
-            Assigned Total: {detail.totalAssignedAssets}
+            {isViewingOwnProfile ? 'Total Assigned' : 'Assigned Total'}: {detail.totalAssignedAssets}
           </div>
         }
-        actions={[
-          {
-            id: 'back-to-employees',
-            label: 'Back to Employees',
-            icon: 'users' as const,
-            onClick: () => navigate('/employee'),
-          },
-        ]}
+        actions={
+          isViewingOwnProfile
+            ? []
+            : [
+              {
+                id: 'back-to-employees',
+                label: 'Back to Employees',
+                icon: 'users' as const,
+                onClick: () => navigate('/employee'),
+              },
+            ]
+        }
       />
 
       {error ? (
@@ -167,7 +211,7 @@ export default function EmployeeDetail() {
         <div className="rounded-xl border border-base bg-surface-2 p-4">
           <SectionHeading icon="users" label="Employee Summary" />
           <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Info label="Employee Code" value={detail.employee.employee_code} />
+            <Info label="Employee ID" value={detail.employee.employee_id} />
             <Info label="Email" value={formatDisplay(detail.employee.email)} />
             <Info label="Department" value={formatDisplay(detail.employee.department)} />
             <Info label="Role" value={formatRoleLabel(detail.employee.role)} />
@@ -181,13 +225,47 @@ export default function EmployeeDetail() {
               <span className={`h-2.5 w-2.5 rounded-full ${statusDotClass(detail.employee.is_active)}`} aria-hidden="true" />
               {detail.employee.is_active ? 'Active Employee' : 'Inactive Employee'}
             </span>
-            <span className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm ${statusBadgeClass(detail.employee.erp_active)}`}>
-              <span className={`h-2.5 w-2.5 rounded-full ${statusDotClass(detail.employee.erp_active)}`} aria-hidden="true" />
-              {detail.employee.erp_active ? 'ERP Active' : 'ERP Inactive'}
-            </span>
           </div>
+          {privilegedForDelete && id && sessionEmployeeId !== id ? (
+            <div className="mt-4 border-t border-base pt-4">
+              <p className="text-xs text-subtle">
+                Permanent delete removes the employee row and related audit/assignment history. Requires no active
+                assignments.
+              </p>
+              <button
+                type="button"
+                disabled={!canOfferPermanentDelete || permanentDeleteBusy}
+                title={
+                  detail.totalAssignedAssets > 0
+                    ? 'Return or reassign all assets before permanent delete.'
+                    : undefined
+                }
+                onClick={() => setPermanentDeleteOpen(true)}
+                className="mt-2 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs font-semibold text-red-600 transition hover:bg-red-500/15 disabled:pointer-events-none disabled:opacity-45 dark:text-red-400"
+              >
+                Delete permanently
+              </button>
+            </div>
+          ) : null}
         </div>
       </section>
+
+      <ConfirmDialog
+        open={permanentDeleteOpen}
+        title="Delete employee permanently"
+        message={
+          detail
+            ? `This cannot be undone. Remove ${detail.employee.name} (${detail.employee.employee_id}) and related history from the database?`
+            : ''
+        }
+        confirmLabel="Delete permanently"
+        loading={permanentDeleteBusy}
+        showDismissIcon
+        onClose={() => {
+          if (!permanentDeleteBusy) setPermanentDeleteOpen(false)
+        }}
+        onConfirm={() => void handleConfirmPermanentDelete()}
+      />
 
       <section className="mt-4 rounded-xl border border-base bg-surface-2 p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -196,11 +274,15 @@ export default function EmployeeDetail() {
               <span className="flex h-4 w-4 items-center justify-center text-accent">
                 <AnimatedNavIcon name="boxes" className="h-4 w-4" />
               </span>
-              <h2 className="text-lg font-semibold">Assigned Total</h2>
+              <h2 className="text-lg font-semibold">
+                {isViewingOwnProfile ? 'Assets Assigned to You' : 'Assigned Assets'}
+              </h2>
             </div>
             {detail.assets.length > 0 ? (
               <p className="mt-1 text-sm text-muted">
-                Click an asset row to open the asset detail page.
+                {isViewingOwnProfile
+                  ? 'Click any row to view full details for that asset.'
+                  : 'Click an asset row to open the asset detail page.'}
               </p>
             ) : null}
           </div>
@@ -210,9 +292,11 @@ export default function EmployeeDetail() {
         </div>
 
         {detail.assets.length === 0 ? (
-          <div className="mt-3  px-4 py-5 text-center">
+          <div className="mt-3 px-4 py-5 text-center">
             <p className="mt-1 text-sm text-subtle">
-              No assets are currently assigned to {formatDisplay(detail.employee.name)}.
+              {isViewingOwnProfile
+                ? 'No assets are currently assigned to you.'
+                : `No assets are currently assigned to ${formatDisplay(detail.employee.name)}.`}
             </p>
           </div>
         ) : (

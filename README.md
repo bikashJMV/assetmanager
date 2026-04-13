@@ -28,6 +28,7 @@ The repo currently contains:
 - Lifecycle status changes (in_stock, in_repair, retired, lost, disposed) belong to `fn_set_asset_lifecycle_status`.
 - Public QR scan uses `fn_public_scan_asset` and exposes a tightly-scoped anonymous payload.
 - Assets and employees use soft delete and recycle-bin workflows.
+- The employee directory view (`v_employee_directory`) hides employees with an open Recycle Bin entry. Migration `45_recycle_bin_grants_v_employee_directory.sql` grants the `SELECT` on `recycle_bin_entries` required for that filter when the view runs as the signed-in user (`security_invoker`).
 
 ## Repository guides
 

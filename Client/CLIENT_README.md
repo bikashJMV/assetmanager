@@ -119,6 +119,7 @@ Available scripts:
 - The analysis page is the main exception to the "direct to Supabase" pattern; it fetches from the FastAPI server using the signed-in user's bearer token.
 - `src/utils/errors.ts` rewrites raw DB/RPC error messages into user-friendly guidance (e.g. "Employee is not active" → "This employee is currently inactive. Please verify their status before assigning assets."). Add new patterns there when introducing new RPCs.
 - Detail pages (asset, employee) use `useSetBreadcrumbOverride()` to push readable labels into the breadcrumb bar instead of showing raw UUIDs or bare IDs. The store resets automatically on route change.
+- All Employees (`/employee`) loads from `v_employee_directory` and defaults the employment-status filter to **Active**. Use **All** or **Inactive** to include employees who are inactive but not in the Recycle Bin. Employees with an open Recycle Bin row are omitted from that view when the database has migration **45** (`recycle_bin_entries` `SELECT` grant + view). `getEmployeeById` uses the same view, so soft-deleted profiles do not resolve on `/employee/:id`.
 
 ## QR behavior
 

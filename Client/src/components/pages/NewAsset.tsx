@@ -11,6 +11,7 @@ import {
   ASSET_IMPORT_MAX_ROWS,
   ASSET_IMPORT_TEMPLATE_HREF,
 } from '../../utils/assetBulkImport'
+import { filterCategoriesForNewAssetPicker } from '../../utils/newAssetCategoryPolicy'
 import { getUserFacingMessage, logDevError } from '../../utils/errors'
 
 export default function NewAsset() {
@@ -66,23 +67,28 @@ export default function NewAsset() {
     }
   }, [accessState])
 
+  const pickerCategories = useMemo(
+    () => filterCategoriesForNewAssetPicker(categories),
+    [categories],
+  )
+
   const baselineSlug = useMemo(() => {
-    if (!categories.length) return null
-    const laptop = categories.find((c) => c.slug === 'laptop')
-    return laptop?.slug ?? categories[0]!.slug
-  }, [categories])
+    if (!pickerCategories.length) return null
+    const laptop = pickerCategories.find((c) => c.slug === 'laptop')
+    return laptop?.slug ?? pickerCategories[0]!.slug
+  }, [pickerCategories])
 
   const effectiveSlug = selectedSlug === 'other' ? 'other' : (selectedSlug ?? baselineSlug)
 
   const activeCategory = useMemo(() => {
     if (!effectiveSlug || effectiveSlug === 'other') return undefined
-    return categories.find((c) => c.slug === effectiveSlug)
-  }, [categories, effectiveSlug])
+    return pickerCategories.find((c) => c.slug === effectiveSlug)
+  }, [pickerCategories, effectiveSlug])
 
-  /** Mode B uses slug from picker — closing avoids stale slug if user changes chip while dialog was open. */
-  useEffect(() => {
-    setBulkImportOpen(false)
-  }, [effectiveSlug])
+  const baselineCategoryName = useMemo(() => {
+    if (!baselineSlug) return null
+    return pickerCategories.find((c) => c.slug === baselineSlug)?.name ?? null
+  }, [pickerCategories, baselineSlug])
 
   const handleCreated = (result: unknown) => {
     const tag = (result as AssetInventoryRecord)?.asset_tag
@@ -122,7 +128,9 @@ export default function NewAsset() {
     )
   }
 
-  const pickerValue = effectiveSlug ?? 'laptop'
+  /** Empty string = no chip selected (e.g. all standard categories hidden from this page). */
+  const pickerValue: string | 'other' =
+    effectiveSlug === 'other' ? 'other' : (effectiveSlug ?? baselineSlug ?? '')
   const importDefaultCategorySlug = effectiveSlug && effectiveSlug !== 'other' ? effectiveSlug : undefined
 
   return (
@@ -134,8 +142,18 @@ export default function NewAsset() {
             <div>
               <h1 className="text-xl sm:text-2xl font-semibold text-primary">Add new asset</h1>
               <p className="text-sm text-muted">
-                Choose a category in the row below — the form updates on this page. Defaults to{' '}
-                <strong className="text-primary font-medium">Laptop</strong> when that category exists.
+                Choose a category in the row below — the form updates on this page.
+                {baselineCategoryName ? (
+                  <>
+                    {' '}
+                    Defaults to <strong className="text-primary font-medium">{baselineCategoryName}</strong>.
+                  </>
+                ) : (
+                  <>
+                    {' '}
+                    Use <strong className="text-primary font-medium">Other</strong> for a custom type, or bulk import.
+                  </>
+                )}
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2 shrink-0 sm:pt-0.5">
@@ -159,9 +177,9 @@ export default function NewAsset() {
                     the category selected on this page.
                   </li>
                   <li>
-                    <span className="text-primary font-medium">Standard categories:</span> use only the fields for that
-                    category. Example: laptop needs <code className="text-[0.8rem] text-primary">processor</code>, SIM
-                    needs <code className="text-[0.8rem] text-primary">sim_number</code>.
+                    <span className="text-primary font-medium">Extra columns:</span> any headers beyond the core set are
+                    saved as <span className="text-primary font-medium">custom fields</span> on each asset (no
+                    category-specific column restrictions).
                   </li>
                   <li>
                     <span className="text-primary font-medium">Custom categories:</span> add extra values in{' '}
@@ -211,14 +229,22 @@ export default function NewAsset() {
             </div>
           </div>
 
-          <div className="mt-5">
+          <div className="mt-5 space-y-2">
+            {!categoriesLoading && pickerCategories.length === 0 && categories.length > 0 ? (
+              <p className="text-xs text-muted">
+                No standard category templates are shown on this page (some may be reserved). Use{' '}
+                <span className="font-medium text-primary">Other</span> or bulk import — SIM-style details can go in
+                custom fields.
+              </p>
+            ) : null}
             <CategoryPickerGrid
               variant="row"
-              categories={categories}
+              categories={pickerCategories}
               loading={categoriesLoading}
               error={categoriesError}
               selectedSlug={pickerValue}
               onSelectSlug={(slug) => {
+                setBulkImportOpen(false)
                 if (slug === 'other') {
                   setSelectedSlug('other')
                   return
@@ -259,8 +285,13 @@ export default function NewAsset() {
             onClose={() => navigate('/assets')}
             onSuccess={handleCreated}
           />
-        ) : (
+        ) : categoriesLoading ? (
           <p className="text-sm text-subtle text-center py-8">Loading categories…</p>
+        ) : (
+          <p className="text-sm text-subtle text-center py-8">
+            Select <span className="font-medium text-primary">Other</span> above to add a custom asset type, or use bulk
+            import.
+          </p>
         )}
       </div>
     </main>

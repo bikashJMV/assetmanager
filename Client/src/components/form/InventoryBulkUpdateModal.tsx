@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'reac
 import * as XLSX from 'xlsx'
 import {
   assignAsset,
-  resolveEmployeeCodeFromIdentifier,
+  resolveEmployeeIdForAssign,
   returnAsset,
   setAssetLifecycleStatus,
 } from '../../api'
@@ -14,6 +14,8 @@ import {
   parseInventoryUpdateMatrix,
   type InventoryUpdateParsedRow,
 } from '../../utils/inventoryBulkUpdate'
+import { useModalScrollLock } from '../../hooks/useModalScrollLock'
+import { ModalPortal } from '../common/ModalPortal'
 import { useToast } from '../common/ToastProvider'
 import AnimatedNavIcon from '../common/AnimatedNavIcon'
 
@@ -30,10 +32,10 @@ async function executeRow(row: InventoryUpdateParsedRow): Promise<void> {
 
   switch (action) {
     case 'assigned': {
-      const employeeCode = await resolveEmployeeCodeFromIdentifier(assignee)
+      const employeeId = await resolveEmployeeIdForAssign(assignee)
       await assignAsset({
         asset_tag: assetTag,
-        employee_code: employeeCode,
+        employee_id: employeeId,
         notes: comment || undefined,
       })
       break
@@ -58,6 +60,7 @@ type Props = {
 
 export default function InventoryBulkUpdateModal({ open, onClose, onSuccess }: Props) {
   const { showToast } = useToast()
+  useModalScrollLock(open)
   const mountedRef = useRef(true)
   const cancelledRef = useRef(false)
 
@@ -232,12 +235,13 @@ export default function InventoryBulkUpdateModal({ open, onClose, onSuccess }: P
     progress && progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0
 
   return (
-    <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/55 px-4 py-6 backdrop-blur-sm">
+    <ModalPortal>
+    <div className="fixed inset-0 z-[120] flex items-center justify-center overscroll-none bg-black/55 px-3 py-4 backdrop-blur-sm sm:px-4 sm:py-6">
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="inventory-bulk-update-title"
-        className="relative flex max-h-[min(92vh,640px)] w-full max-w-lg flex-col rounded-2xl border border-base bg-app p-5 shadow-[0_20px_60px_rgba(0,0,0,0.22)] ring-1 ring-black/5 dark:ring-white/10 sm:p-6"
+        className="relative flex max-h-[min(92dvh,640px)] w-full max-w-lg flex-col rounded-2xl border border-base bg-app p-4 shadow-[0_20px_60px_rgba(0,0,0,0.22)] ring-1 ring-black/5 dark:ring-white/10 sm:p-6"
       >
         <button
           type="button"
@@ -270,10 +274,10 @@ export default function InventoryBulkUpdateModal({ open, onClose, onSuccess }: P
           </h3>
           <p className="mt-1 text-sm text-muted">
             Upload an Excel sheet with columns:{' '}
-            <code className="text-[0.8rem]">asset_tag</code>,{' '}
-            <code className="text-[0.8rem]">inventory_status</code>,{' '}
-            <code className="text-[0.8rem]">employee_code/email</code> (for assign),{' '}
-            <code className="text-[0.8rem]">comment</code> (optional).
+            <code className="text-[0.8rem]">Asset Tag</code>,{' '}
+            <code className="text-[0.8rem]">Inventory Status</code>,{' '}
+            <code className="text-[0.8rem]">Employee ID</code> / email (for assign),{' '}
+            <code className="text-[0.8rem]">Comment</code> (optional).
           </p>
         </div>
 
@@ -366,5 +370,6 @@ export default function InventoryBulkUpdateModal({ open, onClose, onSuccess }: P
         </div>
       </div>
     </div>
+    </ModalPortal>
   )
 }

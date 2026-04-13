@@ -27,9 +27,9 @@ type Props = {
 const SEARCH_DEBOUNCE_MS = 250
 const RESULT_LIMIT = 10
 
-function formatSelectedEmployeeLabel(employee: Pick<EmployeeRecord, 'name' | 'employee_code'>): string {
+function formatSelectedEmployeeLabel(employee: Pick<EmployeeRecord, 'name' | 'employee_id'>): string {
   const name = employee.name.trim()
-  const code = employee.employee_code.trim()
+  const code = employee.employee_id.trim()
   if (name && code) return `${name} - ${code}`
   return name || code
 }
@@ -330,14 +330,14 @@ export default function EmployeeAssignLookup({
                 <div className="px-3 py-2.5 text-sm text-muted">
                   {normalizedQuery
                     ? 'No matching active employees found.'
-                    : 'Type a user name or employee code to search.'}
+                    : 'Type a user name or employee ID to search.'}
                 </div>
               ) : (
                 results.map((employee, index) => {
                   const isActiveRow = index === activeIndex
                   const isSelected =
                     selectedEmployee?.id === employee.id ||
-                    selectedEmployee?.employee_code === employee.employee_code
+                    selectedEmployee?.employee_id === employee.employee_id
 
                   return (
                     <button
@@ -357,8 +357,8 @@ export default function EmployeeAssignLookup({
                       }`}
                     >
                       <span className="min-w-0 truncate underline decoration-transparent underline-offset-[3px] transition group-hover:underline group-hover:decoration-[color:var(--accent)]">
-                        {employee.name.trim() || employee.employee_code}
-                        {employee.employee_code.trim() ? ` / ${employee.employee_code.trim()}` : ''}
+                        {employee.name.trim() || employee.employee_id}
+                        {employee.employee_id.trim() ? ` / ${employee.employee_id.trim()}` : ''}
                         {employee.department?.trim() ? ` / ${employee.department.trim()}` : ''}
                       </span>
                     </button>

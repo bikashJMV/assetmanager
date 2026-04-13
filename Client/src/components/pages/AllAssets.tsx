@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
+  downloadAssetQrLabelsPdf,
   getAssetsPage,
   getQrDataUriForAssetTag,
   getSessionEmployee,
@@ -34,8 +35,9 @@ const PAGE_SIZE_OPTIONS = [10, 25, 50, 100]
 const statusFilters = ['assigned', 'in_stock', 'in_repair', 'retired', 'lost', 'disposed']
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const OTHER_CATEGORY_FILTER_VALUE = '__other__'
-const DEFAULT_ASSET_CATEGORY_SLUGS = new Set(['laptop', 'sim', 'monitor', 'networking'])
+const DEFAULT_ASSET_CATEGORY_SLUGS = new Set(['laptop', 'desktop', 'monitor', 'pen-drive', 'mouse', 'keyboard', 'wifi-dongle'])
 const STATUS_ALL = '__all__'
+const QR_EXPORT_BATCH_SIZE = 500
 
 type AssetAdvancedFiltersInput = {
   status: string
@@ -83,6 +85,7 @@ export default function AllAssets() {
   const [errorDebug, setErrorDebug] = useState<string | undefined>(undefined)
   const [qrModal, setQrModal] = useState<AssetQrModalState | null>(null)
   const [qrLoading, setQrLoading] = useState(false)
+  const [bulkQrExporting, setBulkQrExporting] = useState(false)
   const [categories, setCategories] = useState<CategoryRecord[]>([])
   const [isAdmin, setIsAdmin] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<AssetInventoryRecord | null>(null)
@@ -112,6 +115,14 @@ export default function AllAssets() {
     if (isAdmin) return { ...base, current_employee_id: undefined }
     return { ...base, current_employee_id: scopeEmployeeId || undefined }
   }
+  const buildAssetListFilters = (base: AssetFilters): AssetFilters => {
+    const shouldFilterOtherCategories = base.category_slug === OTHER_CATEGORY_FILTER_VALUE
+    return applyScopeFilters({
+      ...base,
+      exclude_category_slugs: shouldFilterOtherCategories ? [...DEFAULT_ASSET_CATEGORY_SLUGS] : undefined,
+      category_slug: shouldFilterOtherCategories ? undefined : base.category_slug,
+    })
+  }
 
   const fetchAssets = async (
     currentFilters: AssetFilters,
@@ -138,13 +149,8 @@ export default function AllAssets() {
         return
       }
 
-      const shouldFilterOtherCategories = currentFilters.category_slug === OTHER_CATEGORY_FILTER_VALUE
       const result = await getAssetsPage(
-        applyScopeFilters({
-          ...currentFilters,
-          exclude_category_slugs: shouldFilterOtherCategories ? [...DEFAULT_ASSET_CATEGORY_SLUGS] : undefined,
-          category_slug: shouldFilterOtherCategories ? undefined : currentFilters.category_slug,
-        }),
+        buildAssetListFilters(currentFilters),
         { offset, limit: targetPageSize }
       )
       if (requestId !== requestIdRef.current) return
@@ -352,6 +358,64 @@ export default function AllAssets() {
     }
   }
 
+  const collectAssetTagsForQrExport = async (currentFilters: AssetFilters): Promise<string[]> => {
+    const resolvedFilters = buildAssetListFilters(currentFilters)
+    const collectedTags: string[] = []
+    let offset = 0
+    let total = 0
+
+    do {
+      const result = await getAssetsPage(resolvedFilters, { offset, limit: QR_EXPORT_BATCH_SIZE })
+      if (offset === 0) total = result.total
+
+      const pageTags = result.rows
+        .map((asset) => asset.asset_tag?.trim() || '')
+        .filter(Boolean)
+
+      collectedTags.push(...pageTags)
+      offset += result.rows.length
+
+      if (result.rows.length === 0) break
+    } while (offset < total)
+
+    return [...new Set(collectedTags)]
+  }
+
+  const handleDownloadQrLabels = async () => {
+    if (bulkQrExporting) return
+
+    // Immediately open tab synchronously relative to user click to circumvent strict popup blockers
+    const newTab = window.open('', '_blank')
+    if (newTab) {
+      try {
+        newTab.document.title = 'Asset manager QRs'
+        newTab.document.body.innerHTML = '<div style="font-family: sans-serif; padding: 20px;">Generating PDF...</div>'
+      } catch (e) {
+        // Ignore cross-origin frame/sandbox restrictions on empty tabs if present
+      }
+    }
+
+    setBulkQrExporting(true)
+    setError('')
+    setErrorDebug(undefined)
+
+    try {
+      const assetTags = await collectAssetTagsForQrExport(filtersRef.current)
+      if (assetTags.length === 0) {
+        if (newTab && !newTab.closed) newTab.close()
+        throw new globalThis.Error('No assets available to export QR labels.')
+      }
+      await downloadAssetQrLabelsPdf(assetTags, newTab)
+    } catch (err) {
+      if (newTab && !newTab.closed) newTab.close()
+      logDevError('assets.qr.export', err)
+      setError(getUserFacingMessage(err, 'Unable to export QR labels right now.'))
+      setErrorDebug(getErrorDebugDetail(err))
+    } finally {
+      setBulkQrExporting(false)
+    }
+  }
+
   const handleSoftDeleteAsset = async (asset: AssetInventoryRecord) => {
     if (!isAdmin) return
     try {
@@ -407,18 +471,20 @@ export default function AllAssets() {
       <PageHeaderActions
         title="All Assets"
         auxiliary={
-          <DataPagination
-            currentPage={currentPage}
-            totalCount={totalAssets}
-            pageSize={pageSize}
-            pageSizeOptions={PAGE_SIZE_OPTIONS}
-            loading={loading}
-            itemLabel="assets"
-            showSummary={false}
-            showNavigation={false}
-            onPageChange={handlePageChange}
-            onPageSizeChange={handlePageSizeChange}
-          />
+          isAdmin ? (
+            <DataPagination
+              currentPage={currentPage}
+              totalCount={totalAssets}
+              pageSize={pageSize}
+              pageSizeOptions={PAGE_SIZE_OPTIONS}
+              loading={loading}
+              itemLabel="assets"
+              showSummary={false}
+              showNavigation={false}
+              onPageChange={handlePageChange}
+              onPageSizeChange={handlePageSizeChange}
+            />
+          ) : undefined
         }
         actions={[
           ...(isAdmin
@@ -434,6 +500,15 @@ export default function AllAssets() {
                   label: 'Bulk Inventory Update',
                   icon: 'upload' as const,
                   onClick: () => setBulkUpdateOpen(true),
+                },
+                {
+                  id: 'download-asset-manager-qrs',
+                  label: bulkQrExporting ? 'Preparing Asset manager QRs...' : 'Download Asset manager QRs',
+                  icon: 'download' as const,
+                  onClick: () => {
+                    void handleDownloadQrLabels()
+                  },
+                  disabled: loading || bulkQrExporting,
                 },
               ]
             : []),
@@ -452,7 +527,7 @@ export default function AllAssets() {
             <input
               type="text"
               aria-label="Search assets"
-              placeholder="Search by tag, model, manufacturer, holder..."
+              placeholder={isAdmin ? 'Search by tag, model, manufacturer, holder...' : 'Search by tag, model, serial number...'}
               value={filters.search || ''}
               onChange={(e) => handleSearchChange(e.target.value)}
               className="w-full rounded-lg border border-base bg-surface px-3 py-2.5 text-sm text-primary outline-none transition placeholder:text-subtle focus:border-[color:var(--accent)]"
@@ -655,7 +730,7 @@ export default function AllAssets() {
                   }
                   className="h-4 w-4 shrink-0 accent-[color:var(--accent)]"
                 />
-                <span>Hide ERP-inactive employees</span>
+                <span>Hide assets held by inactive employees</span>
               </label>
             </div>
           </div>
@@ -678,7 +753,7 @@ export default function AllAssets() {
                   'Manufacturer',
                   'Model',
                   'Holder',
-                  'ERP Status',
+                  'Holder active',
                   'Inventory Status',
                 ].map((header) => (
                   <th key={header} className="px-4 py-3 whitespace-nowrap">{header}</th>
@@ -787,23 +862,23 @@ export default function AllAssets() {
                     {asset.current_employee_id ? (
                       <span
                         className={`inline-flex items-center gap-2 rounded-md border px-2 py-0.5 text-xs ${
-                          asset.current_employee_erp_active
+                          asset.current_employee_is_active
                             ? 'border-emerald-500/40 bg-emerald-500/10 text-primary'
                             : 'border-red-500/40 bg-red-500/10 text-primary'
                         }`}
                         title={
-                          asset.current_employee_erp_active
-                            ? 'Has ERP platform access'
-                            : 'No ERP platform access'
+                          asset.current_employee_is_active
+                            ? 'Holder employee account is active'
+                            : 'Holder employee account is inactive'
                         }
                       >
                         <span
                           className={`h-2.5 w-2.5 shrink-0 rounded-full ${
-                            asset.current_employee_erp_active ? 'bg-emerald-500' : 'bg-red-500'
+                            asset.current_employee_is_active ? 'bg-emerald-500' : 'bg-red-500'
                           }`}
                           aria-hidden
                         />
-                        {asset.current_employee_erp_active ? 'Active' : 'Inactive'}
+                        {asset.current_employee_is_active ? 'Active' : 'Inactive'}
                       </span>
                     ) : (
                       <span className="text-subtle">-</span>
@@ -824,19 +899,21 @@ export default function AllAssets() {
             </tbody>
           </table>
         </div>
-          <div className="mt-auto">
-            <DataPagination
-              currentPage={currentPage}
-              totalCount={totalAssets}
-              pageSize={pageSize}
-              pageSizeOptions={PAGE_SIZE_OPTIONS}
-              loading={loading}
-              itemLabel="assets"
-              showPageSizeSelector={false}
-              onPageChange={handlePageChange}
-              onPageSizeChange={handlePageSizeChange}
-            />
-          </div>
+          {isAdmin && (
+            <div className="mt-auto">
+              <DataPagination
+                currentPage={currentPage}
+                totalCount={totalAssets}
+                pageSize={pageSize}
+                pageSizeOptions={PAGE_SIZE_OPTIONS}
+                loading={loading}
+                itemLabel="assets"
+                showPageSizeSelector={false}
+                onPageChange={handlePageChange}
+                onPageSizeChange={handlePageSizeChange}
+              />
+            </div>
+          )}
         </div>
       )}
 

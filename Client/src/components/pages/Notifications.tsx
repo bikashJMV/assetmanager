@@ -75,7 +75,14 @@ export default function Notifications() {
       ])
       setProfile(sessionProfile)
       setNotifications(rows)
-      if (welcomeMessage?.show_alert) {
+
+      const profileIsPrivileged = Boolean(
+        sessionProfile?.is_active && sessionProfile.role !== 'employee',
+      )
+      // Welcome message is shown only to employee-role users, not to Admin/IT Ops.
+      if (profileIsPrivileged) {
+        setWelcome(null)
+      } else if (welcomeMessage?.show_alert) {
         setWelcome(welcomeMessage)
       } else if (sessionProfile?.id) {
         const key = `${WELCOME_DISMISSED_PREFIX}:${sessionProfile.id}`

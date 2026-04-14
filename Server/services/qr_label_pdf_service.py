@@ -26,6 +26,67 @@ class QRLabelPDFService:
     max_font_size = 7.5
     min_font_size = 5.0
 
+    def build_empty_notice_pdf(self, title: str, body: str) -> bytes:
+        """Single-page PDF when there are no labels to print (empty selection or nothing printable)."""
+        buffer = BytesIO()
+        pdf = canvas.Canvas(buffer, pagesize=A4, pageCompression=1)
+        pdf.setTitle("Asset Manager — Export notice")
+        page_width, page_height = A4
+        self._draw_header(pdf, page_width, page_height)
+
+        margin_x = self.page_margin_x
+        max_text_width = page_width - (2 * margin_x)
+        y = page_height - self.page_margin_y - 28 * mm
+
+        pdf.setFont("Helvetica-Bold", 14)
+        pdf.drawCentredString(page_width / 2.0, y, title)
+        y -= 12 * mm
+
+        pdf.setFont("Helvetica", 11)
+        for line in self._wrap_paragraph(body, "Helvetica", 11, max_text_width):
+            if y < self.page_margin_y + 24 * mm:
+                break
+            pdf.drawString(margin_x, y, line)
+            y -= 5 * mm
+
+        pdf.save()
+        return buffer.getvalue()
+
+    def _wrap_paragraph(self, text: str, font_name: str, font_size: float, max_width: float) -> list[str]:
+        words = text.split()
+        if not words:
+            return [text] if text.strip() else [""]
+        lines: list[str] = []
+        current: list[str] = []
+        for word in words:
+            trial = " ".join(current + [word])
+            if stringWidth(trial, font_name, font_size) <= max_width:
+                current.append(word)
+            else:
+                if current:
+                    lines.append(" ".join(current))
+                current = [word]
+        if current:
+            lines.append(" ".join(current))
+
+        out: list[str] = []
+        for line in lines:
+            if stringWidth(line, font_name, font_size) <= max_width:
+                out.append(line)
+                continue
+            chunk = ""
+            for ch in line:
+                trial = chunk + ch
+                if stringWidth(trial, font_name, font_size) <= max_width:
+                    chunk = trial
+                else:
+                    if chunk:
+                        out.append(chunk)
+                    chunk = ch
+            if chunk:
+                out.append(chunk)
+        return out if out else [text[:120]]
+
     def build_pdf(self, asset_tags: list[str]) -> bytes:
         cleaned_tags = [tag.strip() for tag in asset_tags if isinstance(tag, str) and tag.strip()]
         if not cleaned_tags:

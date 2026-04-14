@@ -1,11 +1,11 @@
 # Asset Manager
 
-Asset Manager is a Supabase-centered asset tracking platform for physical and digital assets.
+Asset Manager is a Supabase-centered asset tracking platform for physical and digital assets. It provides end-to-end lifecycle management with role-based access control, event-driven email notifications, and comprehensive telemetry.
 
 The repo currently contains:
 
 - `Client/` - React 19 + Vite 7 + TypeScript SPA
-- `Server/` - FastAPI backend for trusted HTTP operations
+- `Server/` - FastAPI backend for trusted HTTP operations and email notification orchestration
 - `TelemetryServer/` - optional FastAPI service for telemetry ingest and query
 - `Server/db/migrations/v2/` - canonical AMS schema, RLS, views, RPCs, and audit logic
 - `TelemetryServer/db/migrations/` - telemetry schema bootstrap
@@ -16,19 +16,19 @@ The repo currently contains:
 
 - The browser talks directly to Supabase for most runtime reads and writes.
 - Business rules live primarily in SQL, RLS, views, and RPC functions under `Server/db/migrations/v2/`.
-- `Server/` is a secondary trusted layer that uses the Supabase service-role key.
-- `TelemetryServer/` is optional and isolated from the main app database.
+- `Server/` is a secondary trusted layer that uses the Supabase service-role key. It also acts as an orchestrator proxying event payloads to the Email Notification Microservice.
+- The external `Email Notification Microservice` acts as a dedicated dispatch system handling automated CC-enabled receipts.
+- `TelemetryServer/` is a modular and isolated service for collecting platform usage metrics.
 
 ## Core domain rules
 
-- Canonical employee role is `employees.role`: `employee`, `admin`, `it_ops`.
-- `it_ops` is the highest role.
-- `employees.is_active` and `employees.erp_active` are different flags and must not be treated as the same thing.
-- Assignment and return flows belong to DB RPCs: `fn_assign_asset` and `fn_return_asset`.
-- Lifecycle status changes (in_stock, in_repair, retired, lost, disposed) belong to `fn_set_asset_lifecycle_status`.
-- Public QR scan uses `fn_public_scan_asset` and exposes a tightly-scoped anonymous payload.
-- Assets and employees use soft delete and recycle-bin workflows.
-- The employee directory view (`v_employee_directory`) hides employees with an open Recycle Bin entry. Migration `45_recycle_bin_grants_v_employee_directory.sql` grants the `SELECT` on `recycle_bin_entries` required for that filter when the view runs as the signed-in user (`security_invoker`).
+- **Nomenclature**: The platform standardizes labels across the UI and data to **Asset Tag** (identifier), **Category**, and **User** (assignment holder).
+- **Roles**: Canonical employee role is `employees.role`: `employee`, `admin`, `it_ops`. `it_ops` holds the highest tier.
+- **Flags**: `employees.is_active` and `employees.erp_active` are distinct flags requiring disparate handling.
+- **Assignments**: Assignment and return streams are exclusively powered by DB RPCs: `fn_assign_asset` and `fn_return_asset`.
+- **Lifecycle**: Post-assignment lifecycle states (`in_stock`, `in_repair`, `retired`, `lost`, `disposed`) are governed by `fn_set_asset_lifecycle_status`.
+- **Public Scan**: QR-based scans utilize `fn_public_scan_asset` fetching tightly-scoped anonymous records without leaking internal status logs.
+- **Recycle Bin**: Asset Manager delegates deletions to soft-delete mechanisms. The `v_employee_directory` dynamically conceals binned employees. Permanent purge necessitates validation on bin history (`fn_delete_employee_permanent_requires_recycle_bin`).
 
 ## Repository guides
 
@@ -75,17 +75,16 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8010
 ## Setup order
 
 1. Configure the client Supabase variables in `Client/.env`.
-2. Create `Server/.env` with the required backend variables.
-3. Apply AMS migrations in `Server/db/migrations/v2/` in order.
+2. Create `Server/.env` ensuring all environment properties including telemetry and email settings are provisioned.
+3. Apply AMS migrations mapped in `Server/db/migrations/v2/` iteratively.
 4. Start the client and server.
-5. If telemetry is enabled, apply the telemetry migration, configure both services, and start `TelemetryServer/`.
+5. If telemetry flows are requisite, initialize the telemetry schema, bind `.env` configurations, and spin up `TelemetryServer/`.
 
 ## Notes
 
-- The current client code defaults QR links to `https://web-assetmanager.vercel.app` unless `VITE_PUBLIC_APP_ORIGIN` overrides it.
-- The FastAPI server must have `FRONTEND_URL` aligned with the frontend origin for server-generated QR codes.
-- Anonymous QR scan now exposes only:
-- assigned assets: `asset_name`, `holder_name`, `holder_employee_code`, `holder_department`
-- unassigned assets: `asset_name`, `status`, `asset_tag`
-- The public QR page always keeps the sign-in redirect action and "Powered by Asset Manager" footer.
-- Treat the migration SQL as the source of truth when docs and assumptions differ.
+- The Client currently assumes `https://web-assetmanager.vercel.app` natively for QR scaffolding unless overridden by `VITE_PUBLIC_APP_ORIGIN`.
+- The FastAPI server must have `FRONTEND_URL` corresponding with the Client host for accurate code deployments.
+- Anonymous QR scan limits expose strictly to:
+  - assigned assets: `asset_name`, `holder_name`, `holder_employee_code`, `holder_department`
+  - unassigned assets: `asset_name`, `status`, `asset_tag`
+- Treat the PostgreSQL (`Server/db/migrations/v2/`) RPC schema as your single source of truth when architecture assumptions or documents differ.

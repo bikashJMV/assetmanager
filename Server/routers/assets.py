@@ -189,7 +189,7 @@ def next_asset_tag(db) -> str:
     raise HTTPException(status_code=500, detail="Unable to generate next asset tag")
 
 
-def normalize_asset_tag_list(asset_tags: list[str]) -> list[str]:
+def normalize_asset_tag_list(asset_tags: list[str], *, min_count: int = 1) -> list[str]:
     normalized: list[str] = []
     seen: set[str] = set()
 
@@ -200,7 +200,7 @@ def normalize_asset_tag_list(asset_tags: list[str]) -> list[str]:
         normalized.append(tag)
         seen.add(tag)
 
-    if not normalized:
+    if len(normalized) < min_count:
         raise HTTPException(status_code=400, detail="At least one asset_tag is required.")
     if len(normalized) > MAX_QR_LABEL_EXPORT_TAGS:
         raise HTTPException(
@@ -425,10 +425,29 @@ def export_asset_qr_labels(
     _=Depends(require_manage_platform_access),
 ):
     try:
-        requested_tags = normalize_asset_tag_list(payload.asset_tags)
+        requested_tags = normalize_asset_tag_list(payload.asset_tags or [], min_count=0)
+
+        empty_notice_headers = {
+            "Content-Disposition": f'inline; filename="{qr_label_pdf_service.file_name}"',
+            "Cache-Control": "no-store",
+            "X-Export-Empty": "1",
+            "X-Exported-Asset-Count": "0",
+        }
+
+        if not requested_tags:
+            pdf_bytes = qr_label_pdf_service.build_empty_notice_pdf(
+                "No assets to export",
+                "There are no assets with tags in the current view. Adjust filters or add assets, then try again.",
+            )
+            return Response(content=pdf_bytes, media_type="application/pdf", headers=empty_notice_headers)
+
         printable_tags = get_existing_asset_tags_in_order(db, requested_tags)
         if not printable_tags:
-            raise HTTPException(status_code=404, detail="No printable assets found for the requested asset tags.")
+            pdf_bytes = qr_label_pdf_service.build_empty_notice_pdf(
+                "No printable labels",
+                "None of the requested assets could be found in the directory, or they cannot be printed.",
+            )
+            return Response(content=pdf_bytes, media_type="application/pdf", headers=empty_notice_headers)
 
         pdf_bytes = qr_label_pdf_service.build_pdf(printable_tags)
         headers = {

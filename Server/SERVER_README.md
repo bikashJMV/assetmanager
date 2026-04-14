@@ -8,6 +8,7 @@ This service is important, but it is not the primary runtime data path. The brow
 
 - Exposes HTTP endpoints for assets, employees, logs, assignments, health, and analysis
 - Uses the Supabase service-role key for trusted server-side access
+- Orchestrates automated events and proxies payloads to the Email Notification Microservice
 - Generates server-side QR payload images
 - Issues short-lived telemetry ingest tokens for browser telemetry
 - Proxies IT Ops analysis requests to `TelemetryServer/`
@@ -181,7 +182,7 @@ python -m pytest tests/test_envelope.py -v
 
 AMS SQL lives in `db/migrations/v2/`.
 
-- Start with [`db/migrations/v2/README.md`](./db/migrations/v2/README.md) for the full ordered migration list through `45_recycle_bin_grants_v_employee_directory.sql` (employee directory vs Recycle Bin visibility).
+- Start with [`db/migrations/v2/README.md`](./db/migrations/v2/README.md) for the full ordered migration list. For the **employee Recycle Bin** workflow, apply at least **`45_recycle_bin_grants_v_employee_directory.sql`**, **`47_recycle_bin_entries_rls_and_idempotent_soft_delete_employee.sql`** (RLS `SELECT` policy + idempotent soft-delete; fixes “binned users still on All Employees” when RLS is on), and **`46_fn_delete_employee_permanent_requires_recycle_bin.sql`** (permanent delete only when an open bin row exists).
 - Use [`db/migrations/v2/STAGING_RUNBOOK.md`](./db/migrations/v2/STAGING_RUNBOOK.md) for staged rollout work
 
 ## Related docs

@@ -3,16 +3,26 @@
   "ariaLabel": "Open help: Recycle Bin soft-deleted records",
   "sections": [
     {
-      "heading": "What this is",
+      "heading": "Employee lifecycle (strict).",
+      "bullets": [
+        "Active and Inactive: switch only via Edit Employee on All Employees (employment status). Do not use Delete to make someone inactive.",
+        "Move to bin: soft-delete from All Employees only. The person leaves the main directory until restored; the row still exists for restore or permanent removal.",
+        "Restore: only from this Recycle Bin. Restored employees appear again on All Employees (their Active/Inactive flag is unchanged by delete/restore).",
+        "Permanent delete: only from this page, and only after the employee was soft-deleted into the bin. Not available from the employee profile."
+      ]
+    },
+    {
+      "heading": "what it is used for.",
       "bullets": [
         "The Recycle Bin lists employees and assets that were soft-deleted from the app. Records stay here until someone restores them; they do not disappear on a timer.",
-        "Each row shows the item type, what was deleted (first name or model / id), when it was deleted, and who deleted it (first name / employee code when available)."
+        "Each row shows the item type, what was deleted (first name or model / id), when it was deleted, and who deleted it (first name / employee id when available)."
       ]
     },
     {
       "heading": "Admin and IT Ops",
       "bullets": [
         "Restore puts the record back into normal use. Use Refresh to reload the list after changes.",
+        "Permanent delete for employees runs only from here after a prior soft-delete from All Employees. Open assignments must be cleared before purge where the database enforces it.",
         "If you do not see the Recycle Bin in navigation, your account does not have access."
       ]
     }

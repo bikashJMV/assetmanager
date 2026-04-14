@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
-  downloadAssetQrLabelsPdf,
+  fetchAssetQrLabelsPdf,
   getAssetsPage,
   getQrDataUriForAssetTag,
   getSessionEmployee,
@@ -13,6 +13,7 @@ import {
   type CategoryRecord,
 } from '../../api'
 import Error from '../common/Error'
+import { useToast } from '../common/ToastProvider'
 import RefreshButton from '../common/RefreshButton'
 import ConfirmDialog from '../common/ConfirmDialog'
 import FilterPopup from '../common/FilterPopup'
@@ -42,7 +43,6 @@ const QR_EXPORT_BATCH_SIZE = 500
 type AssetAdvancedFiltersInput = {
   status: string
   categorySlug: string
-  hideHeldByInactive: boolean
 }
 
 type AssetQrModalState = {
@@ -50,6 +50,9 @@ type AssetQrModalState = {
   assetLabel: string
   qrCode: string
 }
+
+/** Pending blob when a new tab could not be opened; user must confirm download or close to revoke. */
+type AssetQrPdfTabFallbackState = { blobUrl: string; fileName: string; emptyExport: boolean }
 
 function getAssetQrLabel(asset: AssetInventoryRecord): string {
   return asset.model?.trim() || asset.category_name?.trim() || asset.asset_tag?.trim() || 'Asset'
@@ -59,7 +62,6 @@ function getActiveAdvancedFilterCount(input: AssetAdvancedFiltersInput): number 
   let count = 0
   if (input.status && input.status !== STATUS_ALL) count += 1
   if (input.categorySlug.trim()) count += 1
-  if (input.hideHeldByInactive) count += 1
   return count
 }
 
@@ -86,6 +88,8 @@ export default function AllAssets() {
   const [qrModal, setQrModal] = useState<AssetQrModalState | null>(null)
   const [qrLoading, setQrLoading] = useState(false)
   const [bulkQrExporting, setBulkQrExporting] = useState(false)
+  const [qrPdfTabFallback, setQrPdfTabFallback] = useState<AssetQrPdfTabFallbackState | null>(null)
+  const qrPdfTabFallbackRef = useRef<AssetQrPdfTabFallbackState | null>(null)
   const [categories, setCategories] = useState<CategoryRecord[]>([])
   const [isAdmin, setIsAdmin] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<AssetInventoryRecord | null>(null)
@@ -97,7 +101,6 @@ export default function AllAssets() {
   const [draftAdvancedFilters, setDraftAdvancedFilters] = useState<AssetAdvancedFiltersInput>({
     status: STATUS_ALL,
     categorySlug: '',
-    hideHeldByInactive: false,
   })
   /** False until session scope is known and the first asset list request has finished (success or error). */
   const [initialListReady, setInitialListReady] = useState(false)
@@ -105,10 +108,10 @@ export default function AllAssets() {
   const requestIdRef = useRef(0)
   const filtersRef = useRef<AssetFilters>({})
   const navigate = useNavigate()
+  const { showToast } = useToast()
   const currentAdvancedFilters: AssetAdvancedFiltersInput = {
     status: filters.status || STATUS_ALL,
     categorySlug: filters.category_slug || '',
-    hideHeldByInactive: Boolean(filters.hideHeldByInactive),
   }
   const activeAdvancedFilterCount = getActiveAdvancedFilterCount(currentAdvancedFilters)
   const applyScopeFilters = (base: AssetFilters): AssetFilters => {
@@ -225,6 +228,15 @@ export default function AllAssets() {
     if (debounceRef.current) clearTimeout(debounceRef.current)
   }, [])
 
+  useEffect(() => {
+    qrPdfTabFallbackRef.current = qrPdfTabFallback
+  }, [qrPdfTabFallback])
+
+  useEffect(() => () => {
+    const pending = qrPdfTabFallbackRef.current
+    if (pending) URL.revokeObjectURL(pending.blobUrl)
+  }, [])
+
   const handleSearchChange = (value: string) => {
     if (debounceRef.current) clearTimeout(debounceRef.current)
     setFilters((current) => {
@@ -265,7 +277,6 @@ export default function AllAssets() {
     handleFilterChange({
       status: draftAdvancedFilters.status === STATUS_ALL ? undefined : draftAdvancedFilters.status,
       category_slug: draftAdvancedFilters.categorySlug || undefined,
-      hideHeldByInactive: draftAdvancedFilters.hideHeldByInactive || undefined,
     })
     setFiltersOpen(false)
   }
@@ -274,7 +285,6 @@ export default function AllAssets() {
     setDraftAdvancedFilters({
       status: STATUS_ALL,
       categorySlug: '',
-      hideHeldByInactive: false,
     })
   }
 
@@ -381,18 +391,40 @@ export default function AllAssets() {
     return [...new Set(collectedTags)]
   }
 
-  const handleDownloadQrLabels = async () => {
-    if (bulkQrExporting) return
+  const closeQrPdfTabFallbackModal = () => {
+    setQrPdfTabFallback((current) => {
+      if (current) URL.revokeObjectURL(current.blobUrl)
+      return null
+    })
+  }
 
-    // Immediately open tab synchronously relative to user click to circumvent strict popup blockers
-    const newTab = window.open('', '_blank')
-    if (newTab) {
-      try {
-        newTab.document.title = 'Asset manager QRs'
-        newTab.document.body.innerHTML = '<div style="font-family: sans-serif; padding: 20px;">Generating PDF...</div>'
-      } catch (e) {
-        // Ignore cross-origin frame/sandbox restrictions on empty tabs if present
-      }
+  const confirmQrPdfTabFallbackDownload = () => {
+    let started = false
+    setQrPdfTabFallback((current) => {
+      if (!current) return current
+      started = true
+      const { blobUrl, fileName } = current
+      const link = document.createElement('a')
+      link.href = blobUrl
+      link.download = fileName
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 120000)
+      return null
+    })
+    if (started) {
+      showToast({ variant: 'success', message: 'Download started.' })
+    }
+  }
+
+  const handleDownloadQrLabels = async () => {
+    if (bulkQrExporting) {
+      showToast({
+        variant: 'warning',
+        message: 'An export is already in progress. Please wait for it to finish.',
+      })
+      return
     }
 
     setBulkQrExporting(true)
@@ -401,13 +433,21 @@ export default function AllAssets() {
 
     try {
       const assetTags = await collectAssetTagsForQrExport(filtersRef.current)
-      if (assetTags.length === 0) {
-        if (newTab && !newTab.closed) newTab.close()
-        throw new globalThis.Error('No assets available to export QR labels.')
+      const { pdfBlob, fileName, emptyExport } = await fetchAssetQrLabelsPdf(assetTags)
+      const blobUrl = URL.createObjectURL(pdfBlob)
+      const viewer = window.open(blobUrl, '_blank', 'noopener,noreferrer')
+      if (viewer) {
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 120000)
+        if (emptyExport) {
+          showToast({
+            variant: 'info',
+            message: 'Opened a summary PDF — there are no QR labels to print for this export.',
+          })
+        }
+        return
       }
-      await downloadAssetQrLabelsPdf(assetTags, newTab)
+      setQrPdfTabFallback({ blobUrl, fileName, emptyExport })
     } catch (err) {
-      if (newTab && !newTab.closed) newTab.close()
       logDevError('assets.qr.export', err)
       setError(getUserFacingMessage(err, 'Unable to export QR labels right now.'))
       setErrorDebug(getErrorDebugDetail(err))
@@ -436,8 +476,7 @@ export default function AllAssets() {
 
   const hasDraftAdvancedChanges =
     draftAdvancedFilters.status !== currentAdvancedFilters.status ||
-    draftAdvancedFilters.categorySlug !== currentAdvancedFilters.categorySlug ||
-    draftAdvancedFilters.hideHeldByInactive !== currentAdvancedFilters.hideHeldByInactive
+    draftAdvancedFilters.categorySlug !== currentAdvancedFilters.categorySlug
   const draftAdvancedFilterCount = getActiveAdvancedFilterCount(draftAdvancedFilters)
   const statusOptions: FilterSelectOption[] = [
     { value: STATUS_ALL, label: 'All Inventory Status' },
@@ -467,7 +506,25 @@ export default function AllAssets() {
   }
 
   return (
-    <main className="flex min-h-screen flex-col bg-app px-4 py-6 text-primary sm:px-6 sm:py-8">
+    <main className="relative flex min-h-screen flex-col bg-app px-4 py-6 text-primary sm:px-6 sm:py-8">
+      {bulkQrExporting ? (
+        <div
+          className="fixed inset-0 z-[110] flex items-center justify-center bg-black/40 px-4 backdrop-blur-[2px]"
+          role="status"
+          aria-live="polite"
+          aria-busy="true"
+        >
+          <div className="flex max-w-sm items-center gap-3 rounded-2xl border border-base bg-app px-5 py-4 shadow-lg">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center text-accent refresh-spin" aria-hidden>
+              <AnimatedNavIcon name="refresh-cw" className="h-5 w-5" />
+            </span>
+            <div>
+              <p className="text-sm font-semibold text-primary">Preparing your PDF</p>
+              <p className="mt-0.5 text-xs text-muted">When ready, it will open in a new browser tab.</p>
+            </div>
+          </div>
+        </div>
+      ) : null}
       <PageHeaderActions
         title="All Assets"
         auxiliary={
@@ -621,16 +678,6 @@ export default function AllAssets() {
               <option key={category.id} value={category.slug} className="bg-surface-2 text-primary">{category.name}</option>
             ))}
           </select>
-
-          <label className="inline-flex items-center gap-2 text-sm text-muted bg-surface border border-base rounded-lg px-3 py-2.5 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={Boolean(filters.hideHeldByInactive)}
-              onChange={(e) => handleFilterChange({ hideHeldByInactive: e.target.checked || undefined })}
-              className="accent-[color:var(--accent)]"
-            />
-            Hide ERP-inactive employees
-          </label>
           */}
           <RefreshButton
             onClick={handleRefresh}
@@ -717,22 +764,6 @@ export default function AllAssets() {
                 })
               }
             />
-
-            <div className="md:col-span-2">
-              <label className="inline-flex w-full items-center gap-3 rounded-xl border border-base bg-surface px-4 py-3 text-sm text-primary transition hover:border-accent-soft hover:bg-[color:var(--accent-soft)]/10">
-                <input
-                  type="checkbox"
-                  checked={draftAdvancedFilters.hideHeldByInactive}
-                  onChange={(e) =>
-                    handleDraftAdvancedFilterChange({
-                      hideHeldByInactive: e.target.checked,
-                    })
-                  }
-                  className="h-4 w-4 shrink-0 accent-[color:var(--accent)]"
-                />
-                <span>Hide assets held by inactive employees</span>
-              </label>
-            </div>
           </div>
         </FilterPopup>
       ) : null}
@@ -979,6 +1010,21 @@ export default function AllAssets() {
         onConfirm={() => {
           if (deleteTarget) void handleSoftDeleteAsset(deleteTarget)
         }}
+      />
+
+      <ConfirmDialog
+        open={Boolean(qrPdfTabFallback)}
+        title="Couldn't open PDF in a new tab"
+        message={
+          qrPdfTabFallback?.emptyExport
+            ? 'Your browser may have blocked the popup, or a policy prevented it. Use Download PDF to save the summary file, or Close to discard it.'
+            : 'Your browser may have blocked the popup, or a policy prevented it. Use Download PDF to save the file, or Close to discard it.'
+        }
+        confirmLabel="Download PDF"
+        cancelLabel="Close"
+        showDismissIcon
+        onClose={closeQrPdfTabFallbackModal}
+        onConfirm={confirmQrPdfTabFallbackDownload}
       />
 
       {isAdmin && (

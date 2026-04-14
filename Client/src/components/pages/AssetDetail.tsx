@@ -443,8 +443,14 @@ export default function AssetDetail() {
             <Info label="Inventory Status" value={formatEnumLabel(asset.status)} />
             <Info label="Purchase Date" value={formatDisplay(asset.purchase_date)} />
             <Info label="Warranty Expiry" value={formatDisplay(asset.warranty_expiry)} />
-            <Info label="Created by" value={formatAuditActorDisplay(detail.audit_actors.created_by)} />
-            <Info label="Last updated by" value={formatAuditActorDisplay(detail.audit_actors.updated_by)} />
+            <Info
+              label="Created by"
+              value={formatAuditActorWithTimestamp(detail.audit_actors.created_by, asset.created_at)}
+            />
+            <Info
+              label="Last updated by"
+              value={formatAuditActorWithTimestamp(detail.audit_actors.updated_by, asset.updated_at)}
+            />
           </div>
         </Section>
 
@@ -503,13 +509,12 @@ export default function AssetDetail() {
 
         <Section
           title="Assignment Summary"
-          description="Current holder, start time, and whether custody is still open."
+          description="Current holder, employee ID, and when the assignment started."
         >
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 sm:gap-4">
             <Info label="Current Holder" value={formatDisplay(asset.current_employee_name)} />
             <Info label="Current Holder ID" value={formatDisplay(asset.current_employee_code)} />
             <Info label="Assigned At" value={formatDateTime(asset.assigned_at)} />
-            <Info label="Open Assignment" value={openAssignment ? 'Yes' : 'No'} />
           </div>
         </Section>
 
@@ -739,6 +744,31 @@ function formatAuditActorDisplay(
   if (employeeId) return employeeId
 
   return formatAuthUserRef(actor.auth_user_id)
+}
+
+function auditActorHasIdentity(
+  actor: AssetDetailRecord['audit_actors']['created_by'] | AssetDetailRecord['audit_actors']['updated_by'],
+): boolean {
+  if (!actor) return false
+  return Boolean(actor.name?.trim() || actor.employee_id?.trim())
+}
+
+/** Person (if known) plus a locale-formatted timestamp; never show anonymous auth UUID fragments. */
+function formatAuditActorWithTimestamp(
+  actor: AssetDetailRecord['audit_actors']['created_by'] | AssetDetailRecord['audit_actors']['updated_by'],
+  at: string | null | undefined,
+): string {
+  const when = formatDateTime(at ?? null)
+  const who = formatAuditActorDisplay(actor)
+
+  if (auditActorHasIdentity(actor)) {
+    if (when === '-') return who
+    return `${who} · ${when}`
+  }
+
+  // Only an auth user id (or no actor): show readable date/time only, not `621576a6…`.
+  if (when !== '-') return when
+  return '-'
 }
 
 function formatEmployeeAssignSummary(employee: EmployeeRecord | null): string {

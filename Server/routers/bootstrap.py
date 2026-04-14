@@ -79,19 +79,12 @@ def bootstrap_employee_role(payload: BootstrapRoleBody, db=Depends(get_db)):
         raise HTTPException(status_code=500, detail="Invalid employee record.")
 
     try:
-        updated = (
-            db.table("employees")
-            .update({"role": new_role})
-            .eq("id", emp_id)
-            .select("id,employee_id,email,role,is_active")
-            .execute()
-        )
+        # postgrest-py: avoid update().select().eq() — some versions expose no .select on the update builder.
+        db.table("employees").update({"role": new_role}).eq("id", emp_id).execute()
     except Exception as e:
         handle_supabase_error(e)
 
-    out = (updated.data or [None])[0]
-    if not out:
-        raise HTTPException(status_code=500, detail="Role update returned no data.")
+    out = {**row, "role": new_role}
 
     return {
         "ok": True,

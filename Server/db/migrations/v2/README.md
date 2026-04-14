@@ -50,6 +50,8 @@ Apply the files in this exact order:
 44. `43_fix_fn_return_asset_employee_id.sql`
 45. `44_fix_fn_soft_delete_asset.sql`
 46. `45_recycle_bin_grants_v_employee_directory.sql`
+47. `46_fn_delete_employee_permanent_requires_recycle_bin.sql`
+48. `47_recycle_bin_entries_rls_and_idempotent_soft_delete_employee.sql`
 
 ## Important invariants
 
@@ -66,6 +68,7 @@ Apply the files in this exact order:
 - Soft delete and recycle-bin behavior are part of the schema contract.
 - `v_employee_directory` lists employees who do **not** have an **open** Recycle Bin row (`recycle_bin_entries` with `entity_type = 'employee'` and `restored_at is null`). With `security_invoker = true` (migration 33), callers must be able to `SELECT` from `recycle_bin_entries` for that exclusion to work; migration **45** grants that.
 - After **45**, soft-deleted employees disappear from the directory view and from client flows that read it (e.g. `getEmployeeById`).
+- After **46**, `fn_delete_employee_permanent` returns an error unless the employee has an **open** Recycle Bin row (`entity_type = 'employee'`, `restored_at is null`). Purge is only valid after soft-delete from All Employees.
 
 ## Notes
 
@@ -82,6 +85,37 @@ Apply the files in this exact order:
 - `22_public_scan_holder_details.sql` keeps `qr_scanned` lifecycle logging and the same RPC signature.
 - `33_scoped_views_employee_role.sql` sets `security_invoker = true` on `v_employee_directory` (and `v_asset_inventory`) so employee-scoped RLS applies; pair it with **45** so the Recycle Bin subquery is visible to authenticated users.
 - `45_recycle_bin_grants_v_employee_directory.sql` grants `SELECT` on `public.recycle_bin_entries` to `authenticated` and `service_role`, and recreates `v_employee_directory`. Apply on any database that was missing those grants or soft-deleted rows still appeared in the employee list.
+- `46_fn_delete_employee_permanent_requires_recycle_bin.sql` ties permanent employee removal to the Recycle Bin workflow so clients cannot purge directory-visible employees without a prior soft-delete.
+- `47_recycle_bin_entries_rls_and_idempotent_soft_delete_employee.sql` enables RLS on `recycle_bin_entries` with a **SELECT** policy for `authenticated` (required when RLS is on; otherwise `v_employee_directory` cannot “see” bin rows and soft-deleted employees stay listed). Also makes `fn_soft_delete_employee` idempotent (no duplicate open bin rows).
+
+## Employee directory visibility (production checklist)
+
+Use this when **soft-deleted employees still appear** on All Employees, or when onboarding a new Supabase environment.
+
+### 1) Inventory (per environment)
+
+- Confirm the Supabase project matches the app: `Client/.env` (or deployment env) points at this database.
+- Confirm migrations applied **through at least** `33_scoped_views_employee_role.sql`, `45_recycle_bin_grants_v_employee_directory.sql`, and **`47_recycle_bin_entries_rls_and_idempotent_soft_delete_employee.sql`** if Supabase has RLS on `recycle_bin_entries` or soft-deleted users still appear in the directory. Include `46_fn_delete_employee_permanent_requires_recycle_bin.sql` for purge rules.
+- Track last applied migration in your team’s usual place (Supabase migration history, ticket, or runbook).
+
+### 2) Apply (if directory shows bin-deleted users)
+
+- In Supabase **SQL Editor**, run `45_recycle_bin_grants_v_employee_directory.sql` (safe to re-run: grants + `create or replace view`).
+- If `v_employee_directory` never had `security_invoker`, apply `33_scoped_views_employee_role.sql` first so the view behaves as designed.
+
+### 3) Automated / catalog verification
+
+- Run [`../../scripts/verify_employee_directory_post_deploy.sql`](../../scripts/verify_employee_directory_post_deploy.sql) and confirm section (1) returns **SELECT** for `authenticated` (and `service_role`) on `public.recycle_bin_entries`.
+- Follow commented spot-checks in section (4) of that script after a **test** soft-delete: directory row absent for binned `entity_id`; inactive-without-bin still present.
+
+### 4) Manual smoke (same release window as DB change)
+
+- Sign-in (admin or IT Ops and employee if applicable).
+- **All Employees:** load, default filters, pagination.
+- **Soft-delete** a disposable test user: row **gone** from list; row **present** in Recycle Bin UI.
+- **Restore** from bin: user **back** on list.
+- **Edit → Inactive** (no delete): user **still** on list with inactive status; **not** in Recycle Bin.
+- **New employee** form and **small bulk import**: save succeeds; list refresh OK.
 
 ## Re-run guidance
 

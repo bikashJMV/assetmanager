@@ -23,20 +23,28 @@ function bffHeaders(): Record<string, string> {
   return headers
 }
 
+/** Strip path segments and unsafe patterns from server-provided download names (RFC 5987 / filename=). */
+function sanitizeDownloadFileName(raw: string, fallback: string): string {
+  let base = raw.trim().replace(/^.*[/\\]/, '').replace(/\0/g, '') || fallback
+  if (base === '.' || base === '..' || base.includes('..')) base = fallback
+  return base.length > 180 ? base.slice(0, 180) : base
+}
+
 function extractDownloadFileName(contentDisposition: string | null, fallback: string): string {
-  if (!contentDisposition) return fallback
+  if (!contentDisposition) return sanitizeDownloadFileName(fallback, fallback)
 
   const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i)
   if (utf8Match?.[1]) {
     try {
-      return decodeURIComponent(utf8Match[1])
+      return sanitizeDownloadFileName(decodeURIComponent(utf8Match[1]), fallback)
     } catch {
-      return utf8Match[1]
+      return sanitizeDownloadFileName(utf8Match[1], fallback)
     }
   }
 
   const basicMatch = contentDisposition.match(/filename="?([^"]+)"?/i)
-  return basicMatch?.[1]?.trim() || fallback
+  const fromHeader = basicMatch?.[1]?.trim()
+  return sanitizeDownloadFileName(fromHeader || fallback, fallback)
 }
 
 async function readBffErrorMessage(resp: Response, fallback: string): Promise<string> {
@@ -306,7 +314,6 @@ export type AssetFilters = {
   search?: string
   status?: string
   category_slug?: string
-  hideHeldByInactive?: boolean
   current_employee_id?: string
   exclude_category_slugs?: string[]
 }
@@ -540,16 +547,23 @@ function isMissingTableError(error: unknown, tableName: string): boolean {
 
 const ASSET_DETAIL_LIFECYCLE_LIMIT = 100
 
+function snapshotString(v: unknown): string | null {
+  if (v == null) return null
+  if (typeof v === 'string') return v.trim() || null
+  if (typeof v === 'number' || typeof v === 'boolean') return String(v)
+  return String(v).trim() || null
+}
+
 function parseActorSnapshot(payload: Record<string, unknown>): AssetEventActorSnapshot | null {
   const raw = payload.actor_snapshot
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
   const s = raw as Record<string, unknown>
   return {
-    actor_id: typeof s.actor_id === 'string' ? s.actor_id : null,
-    actor_employee_id: typeof s.actor_employee_id === 'string' ? s.actor_employee_id : null,
-    actor_employee_code: typeof s.actor_employee_code === 'string' ? s.actor_employee_code : null,
-    actor_name: typeof s.actor_name === 'string' ? s.actor_name : null,
-    actor_department_name: typeof s.actor_department_name === 'string' ? s.actor_department_name : null,
+    actor_id: snapshotString(s.actor_id),
+    actor_employee_id: snapshotString(s.actor_employee_id),
+    actor_employee_code: snapshotString(s.actor_employee_code),
+    actor_name: snapshotString(s.actor_name),
+    actor_department_name: snapshotString(s.actor_department_name),
   }
 }
 
@@ -1426,6 +1440,12 @@ export async function bulkInsertAssets(rows: AssetWriteInput[]): Promise<{ inser
     ensureNoSupabaseError(error, 'Bulk asset import failed')
   }
 
+  if (Array.isArray(data) && data.length === 0) {
+    throw new Error(
+      'Bulk import returned no rows from fn_bulk_insert_assets. Confirm migration 48+ is applied on the database and the RPC returns one { payload } row.',
+    )
+  }
+
   const rawRow = Array.isArray(data) && data.length > 0 ? data[0] : data
   const payload =
     rawRow && typeof rawRow === 'object' && rawRow !== null && 'payload' in rawRow
@@ -1499,11 +1519,6 @@ export async function getAssets(filters: AssetFilters = {}): Promise<AssetInvent
     query = query.or(
       `asset_tag.ilike.%${s}%,model.ilike.%${s}%,manufacturer_name.ilike.%${s}%,current_employee_name.ilike.%${s}%`
     )
-  }
-
-  // PostgREST: use `is.true` for booleans (see postgrest.org horizontal filtering). `eq.true` can miss rows on some stacks.
-  if (filters.hideHeldByInactive) {
-    query = query.or('assignment_id.is.null,current_employee_is_active.is.true')
   }
 
   if (filters.current_employee_id?.trim()) {
@@ -1629,10 +1644,6 @@ export async function getAssetsPage(
     query = query.or(
       `asset_tag.ilike.%${s}%,model.ilike.%${s}%,manufacturer_name.ilike.%${s}%,current_employee_name.ilike.%${s}%`
     )
-  }
-
-  if (filters.hideHeldByInactive) {
-    query = query.or('assignment_id.is.null,current_employee_is_active.is.true')
   }
 
   if (filters.current_employee_id?.trim()) {
@@ -1761,9 +1772,10 @@ export async function getAssetDetail(assetTag: string): Promise<AssetDetailRecor
         ? (row.payload as Record<string, unknown>)
         : {}
     const snapshot = parseActorSnapshot(payload)
+    const rowActor = row.actor_id
     const aid =
       snapshot?.actor_id ??
-      (typeof row.actor_id === 'string' && row.actor_id.length > 0 ? row.actor_id : null)
+      (rowActor != null && String(rowActor).length > 0 ? String(rowActor) : null)
     lifecycle_events.push({
       id: String(row.id ?? ''),
       event_type: String(row.event_type ?? ''),
@@ -2015,14 +2027,18 @@ export async function getQrDataUriForAssetTag(assetTag: string): Promise<string>
   return buildAssetQrDataUri(asset.asset_tag || normalizedTag)
 }
 
-export async function downloadAssetQrLabelsPdf(assetTags: string[], newTab: Window | null): Promise<void> {
+/** Result of fetching the QR label PDF from the BFF; UI opens a tab or offers an explicit download. */
+export type FetchedQrLabelsPdf = {
+  pdfBlob: Blob
+  fileName: string
+  /** Server set when the PDF is a notice (no labels) rather than label sheets. */
+  emptyExport: boolean
+}
+
+export async function fetchAssetQrLabelsPdf(assetTags: string[]): Promise<FetchedQrLabelsPdf> {
   await assertActiveAdminAccess()
 
   const normalizedTags = [...new Set(assetTags.map((tag) => tag.trim()).filter(Boolean))]
-  if (normalizedTags.length === 0) {
-    if (newTab && !newTab.closed) newTab.close()
-    throw new Error('No assets available for QR export.')
-  }
 
   const session = await getSession()
   const headers = bffHeaders()
@@ -2036,48 +2052,23 @@ export async function downloadAssetQrLabelsPdf(assetTags: string[], newTab: Wind
       body: JSON.stringify({ asset_tags: normalizedTags }),
     })
   } catch (err) {
-    if (newTab && !newTab.closed) newTab.close()
     throw err
   }
 
   if (!resp.ok) {
-    if (newTab && !newTab.closed) newTab.close()
     const message = await readBffErrorMessage(resp, `QR export failed (${resp.status}). Confirm the server is reachable.`)
     throw new Error(message)
   }
 
   const blob = await resp.blob()
   if (!blob.size) {
-    if (newTab && !newTab.closed) newTab.close()
     throw new Error('QR export returned an empty file.')
   }
 
+  const emptyExport = resp.headers.get('X-Export-Empty') === '1'
   const fileName = extractDownloadFileName(resp.headers.get('content-disposition'), 'Asset manager QRs.pdf')
   const pdfBlob = new Blob([blob], { type: 'application/pdf' })
-  const url = URL.createObjectURL(pdfBlob)
-
-  if (newTab && !newTab.closed) {
-    newTab.location.href = url
-    // Revoke the URL after a long delay so the browser's PDF viewer has ample time to load/print
-    setTimeout(() => URL.revokeObjectURL(url), 120000)
-  } else if (newTab === null) {
-    // Fallback: Browser strictly blocked the popup creation. Download directly.
-    try {
-      const link = document.createElement('a')
-      link.href = url
-      link.download = fileName
-      document.body.appendChild(link)
-      link.click()
-      document.body.removeChild(link)
-      window.alert('Browser blocked the PDF tab popup. The QR PDF has been downloaded instead.')
-    } finally {
-      setTimeout(() => URL.revokeObjectURL(url), 1000)
-    }
-  } else {
-    // Edge case: User manually closed the 'Generating PDF...' tab before fetch finished.
-    // Respect user intent, silently abort without triggering forced downloads or alerts.
-    URL.revokeObjectURL(url)
-  }
+  return { pdfBlob, fileName, emptyExport }
 }
 
 export async function createLog(assetTag: string, note: string) {
@@ -2112,6 +2103,7 @@ export async function softDeleteAssetById(assetId: string, note?: string) {
   }
 }
 
+/** Soft-delete: moves employee to Recycle Bin; main directory hides them until restore. Not for Active/Inactive (use employee upsert / is_active). */
 export async function softDeleteEmployeeById(employeeId: string, note?: string) {
   await assertActiveAdminAccess()
   const { data, error } = await supabase.rpc('fn_soft_delete_employee', {
@@ -2126,7 +2118,10 @@ export async function softDeleteEmployeeById(employeeId: string, note?: string) 
   }
 }
 
-/** Hard delete: removes dependent audit/assignment rows, then the employee row. Requires migration 27. */
+/**
+ * Hard delete: removes dependent audit/assignment rows, then the employee row.
+ * Only valid after soft-delete (open bin row). Migrations 27 + 46; call from Recycle Bin UI only.
+ */
 export async function deleteEmployeePermanently(employeeId: string) {
   await assertActiveAdminAccess()
   const { data, error } = await supabase.rpc('fn_delete_employee_permanent', {

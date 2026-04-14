@@ -207,7 +207,8 @@ export default function RecycleBin() {
                         type="button"
                         onClick={() => setPurgeTarget(entry)}
                         disabled={restoringId === entry.entry_id || purgingId === entry.entry_id}
-                        className="rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-1.5 text-xs font-semibold text-red-600 transition hover:bg-red-500/15 disabled:opacity-60 dark:text-red-400"
+                        title="Permanently remove this record (opens confirmation)"
+                        className="rounded-lg border-2 border-red-600/80 bg-surface px-3 py-1.5 text-xs font-semibold text-red-700 shadow-sm transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-red-500 dark:bg-surface-2 dark:text-red-300 dark:hover:bg-red-950/40"
                       >
                         {purgingId === entry.entry_id ? "Removing..." : "Delete permanently"}
                       </button>

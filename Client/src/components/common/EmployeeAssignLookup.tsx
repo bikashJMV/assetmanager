@@ -329,7 +329,7 @@ export default function EmployeeAssignLookup({
               ) : results.length === 0 ? (
                 <div className="px-3 py-2.5 text-sm text-muted">
                   {normalizedQuery
-                    ? 'No matching active employees found.'
+                    ? "Not found, possibly employee is inactive or doesn't exist." // "Not found or possibly inactive."
                     : 'Type a user name or employee ID to search.'}
                 </div>
               ) : (

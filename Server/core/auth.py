@@ -71,10 +71,15 @@ def require_role_bootstrap_secret(
         )
 
 
-def _resolve_request_role(
+def get_auth_user_id_from_bearer(
     authorization: str | None = Header(default=None),
     db: Client = Depends(get_db),
-) -> Literal['employee', 'admin', 'it_ops']:
+) -> str:
+    """
+    Supabase JWT sub (auth.users id) from Authorization: Bearer.
+    Used by BFF routes that call SECURITY DEFINER RPCs with the service-role client
+    (where auth.uid() is null unless we pass the actor explicitly).
+    """
     if not authorization or not authorization.strip().lower().startswith('bearer '):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Missing bearer token.')
 
@@ -92,6 +97,13 @@ def _resolve_request_role(
     if not auth_user_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Unable to resolve authenticated user.')
 
+    return str(auth_user_id)
+
+
+def _resolve_request_role(
+    auth_user_id: str = Depends(get_auth_user_id_from_bearer),
+    db: Client = Depends(get_db),
+) -> Literal['employee', 'admin', 'it_ops']:
     try:
         res = (
             db.table('employees')

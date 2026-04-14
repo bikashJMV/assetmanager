@@ -1,6 +1,6 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 
-from core.auth import require_manage_platform_access
+from core.auth import get_auth_user_id_from_bearer, require_manage_platform_access
 from core.deps import get_db
 from core.errors import handle_supabase_error
 from schemas.assignment import AssignAssetRequest, AssignmentRPCResult, ReturnAssetRequest
@@ -115,6 +115,7 @@ def assign_asset(
     payload: AssignAssetRequest,
     background_tasks: BackgroundTasks,
     db=Depends(get_db),
+    actor_auth_uid: str = Depends(get_auth_user_id_from_bearer),
     _=Depends(require_manage_platform_access),
 ):
     """
@@ -137,6 +138,8 @@ def assign_asset(
                 "p_assigned_at": payload.assigned_at.isoformat() if payload.assigned_at else None,
                 "p_source": payload.source,
                 "p_notes": payload.notes,
+                # Service-role client has no JWT in Postgres; pass actor for lifecycle audit BY column.
+                "p_actor_auth_uid": actor_auth_uid,
             },
         ).execute()
 
@@ -192,6 +195,7 @@ def return_asset(
     payload: ReturnAssetRequest,
     background_tasks: BackgroundTasks,
     db=Depends(get_db),
+    actor_auth_uid: str = Depends(get_auth_user_id_from_bearer),
     _=Depends(require_manage_platform_access),
 ):
     """
@@ -212,6 +216,7 @@ def return_asset(
                 "p_returned_at": payload.returned_at.isoformat() if payload.returned_at else None,
                 "p_source": payload.source,
                 "p_notes": payload.notes,
+                "p_actor_auth_uid": actor_auth_uid,
             },
         ).execute()
 

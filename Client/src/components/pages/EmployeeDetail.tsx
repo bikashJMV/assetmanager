@@ -1,15 +1,12 @@
 import { useEffect, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useSetBreadcrumbOverride } from '../../hooks/useBreadcrumbOverride'
 import AnimatedNavIcon from '../common/AnimatedNavIcon'
-import ConfirmDialog from '../common/ConfirmDialog'
 import Error from '../common/Error'
 import Loader from '../common/Loader'
 import PageHeaderActions from '../common/PageHeaderActions'
 import InventoryStatusBadge from '../common/InventoryStatusBadge'
-import { useToast } from '../common/ToastProvider'
 import {
-  deleteEmployeePermanently,
   getSessionEmployee,
   hasActiveAdminAccess,
   getEmployeeAssetPortfolio,
@@ -32,16 +29,13 @@ export default function EmployeeDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
   const setBreadcrumb = useSetBreadcrumbOverride()
-  const { showToast } = useToast()
   const [detail, setDetail] = useState<EmployeeAssetPortfolio | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [errorDebug, setErrorDebug] = useState<string | undefined>(undefined)
-  const [privilegedForDelete, setPrivilegedForDelete] = useState(false)
+  const [viewerHasAdminAccess, setViewerHasAdminAccess] = useState(false)
   const [sessionEmployeeId, setSessionEmployeeId] = useState<string | null>(null)
   const [sessionEmployeeRole, setSessionEmployeeRole] = useState<string | null>(null)
-  const [permanentDeleteOpen, setPermanentDeleteOpen] = useState(false)
-  const [permanentDeleteBusy, setPermanentDeleteBusy] = useState(false)
 
   useEffect(() => {
     if (!detail) return
@@ -74,12 +68,12 @@ export default function EmployeeDetail() {
 
         setSessionEmployeeId(sessionEmployee?.id ?? null)
         setSessionEmployeeRole(sessionEmployee?.role ?? null)
-        setPrivilegedForDelete(canViewAllEmployees)
+        setViewerHasAdminAccess(canViewAllEmployees)
 
         const canViewRequestedEmployee = canViewAllEmployees || sessionEmployee?.id === id
         if (!canViewRequestedEmployee) {
           setDetail(null)
-          setPrivilegedForDelete(false)
+          setViewerHasAdminAccess(false)
           setSessionEmployeeId(null)
           setError('You do not have permission to view this employee record.')
           return
@@ -105,31 +99,8 @@ export default function EmployeeDetail() {
 
   const isViewingOwnProfile = sessionEmployeeId === id && sessionEmployeeRole === 'employee'
 
-  const canOfferPermanentDelete =
-    Boolean(detail) &&
-    privilegedForDelete &&
-    Boolean(id) &&
-    sessionEmployeeId !== id &&
-    detail!.totalAssignedAssets === 0
-
-  const handleConfirmPermanentDelete = async () => {
-    if (!id) return
-    setPermanentDeleteBusy(true)
-    try {
-      await deleteEmployeePermanently(id)
-      showToast({ variant: 'success', message: 'Employee removed from the directory.' })
-      setPermanentDeleteOpen(false)
-      navigate('/employee')
-    } catch (err) {
-      logDevError('employeeDetail.permanentDelete', err)
-      showToast({
-        variant: 'error',
-        message: getUserFacingMessage(err, 'Unable to permanently delete this employee.'),
-      })
-    } finally {
-      setPermanentDeleteBusy(false)
-    }
-  }
+  const showRecycleBinRemovalHint =
+    Boolean(detail) && viewerHasAdminAccess && Boolean(id) && sessionEmployeeId !== id
 
   if (loading && !detail) {
     return (
@@ -226,46 +197,23 @@ export default function EmployeeDetail() {
               {detail.employee.is_active ? 'Active Employee' : 'Inactive Employee'}
             </span>
           </div>
-          {privilegedForDelete && id && sessionEmployeeId !== id ? (
+          {showRecycleBinRemovalHint ? (
             <div className="mt-4 border-t border-base pt-4">
               <p className="text-xs text-subtle">
-                Permanent delete removes the employee row and related audit/assignment history. Requires no active
-                assignments.
+                To mark someone Active or Inactive only, use Edit on{' '}
+                <Link to="/employee" className="font-medium text-accent underline-offset-2 hover:underline">
+                  All Employees
+                </Link>
+                . To remove them from the directory, soft-delete from that list (Recycle Bin). To erase a record permanently, use permanent delete on the{' '}
+                <Link to="/recycle-bin" className="font-medium text-accent underline-offset-2 hover:underline">
+                  Recycle Bin
+                </Link>{' '}
+                after assignments are returned or reassigned as required.
               </p>
-              <button
-                type="button"
-                disabled={!canOfferPermanentDelete || permanentDeleteBusy}
-                title={
-                  detail.totalAssignedAssets > 0
-                    ? 'Return or reassign all assets before permanent delete.'
-                    : undefined
-                }
-                onClick={() => setPermanentDeleteOpen(true)}
-                className="mt-2 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs font-semibold text-red-600 transition hover:bg-red-500/15 disabled:pointer-events-none disabled:opacity-45 dark:text-red-400"
-              >
-                Delete permanently
-              </button>
             </div>
           ) : null}
         </div>
       </section>
-
-      <ConfirmDialog
-        open={permanentDeleteOpen}
-        title="Delete employee permanently"
-        message={
-          detail
-            ? `This cannot be undone. Remove ${detail.employee.name} (${detail.employee.employee_id}) and related history from the database?`
-            : ''
-        }
-        confirmLabel="Delete permanently"
-        loading={permanentDeleteBusy}
-        showDismissIcon
-        onClose={() => {
-          if (!permanentDeleteBusy) setPermanentDeleteOpen(false)
-        }}
-        onConfirm={() => void handleConfirmPermanentDelete()}
-      />
 
       <section className="mt-4 rounded-xl border border-base bg-surface-2 p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">

@@ -154,3 +154,7 @@ Sample body:
   - `fn_return_asset`
 - Importer is bootstrap/refresh only.
 - Do not map ERP Status to `assets.status`.
+
+## 8) Employee directory vs Recycle Bin (staging)
+
+After migrations **33** and **45** are applied on staging, run catalog checks and manual smoke per **Employee directory visibility** in [`README.md`](./README.md) (section includes [`../../scripts/verify_employee_directory_post_deploy.sql`](../../scripts/verify_employee_directory_post_deploy.sql)). Ensures soft-deleted users do not remain visible on All Employees.

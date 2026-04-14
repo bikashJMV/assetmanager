@@ -90,8 +90,8 @@ function getActiveAdvancedFilterCount(input: EmployeeFiltersInput): number {
 
 
 function roleChangeConfirmLabel(role: EmployeeRole): string {
-  if (role === 'admin') return 'Set Admin'
-  if (role === 'it_ops') return 'Set IT Ops'
+  if (role === 'admin') return 'Make an Admin'
+  if (role === 'it_ops') return 'Make IT Ops'
   return 'Set Employee'
 }
 
@@ -158,13 +158,13 @@ export default function Employee() {
   const [departments, setDepartments] = useState<string[]>([])
   const [filtersInput, setFiltersInput] = useState<EmployeeFiltersInput>({
     search: '',
-    employeeStatus: 'active',
+    employeeStatus: FILTER_STATUS_ALL,
     department: '',
     role: ROLE_ALL,
   })
   const [draftFiltersInput, setDraftFiltersInput] = useState<EmployeeFiltersInput>({
     search: '',
-    employeeStatus: 'active',
+    employeeStatus: FILTER_STATUS_ALL,
     department: '',
     role: ROLE_ALL,
   })
@@ -194,7 +194,7 @@ export default function Employee() {
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const filtersRef = useRef<EmployeeListFilters>(toApiFilters({
     search: '',
-    employeeStatus: 'active',
+    employeeStatus: FILTER_STATUS_ALL,
     department: '',
     role: ROLE_ALL,
   }))
@@ -1003,13 +1003,13 @@ export default function Employee() {
       />
       <ConfirmDialog
         open={Boolean(grantAdminTarget)}
-        title="Make admin"
+        title="Make an Admin"
         message={
           grantAdminTarget
             ? `Grant full admin privileges to ${grantAdminTarget.name}? Employee ID: ${grantAdminTarget.employee_id}.`
             : ''
         }
-        confirmLabel="Make Admin"
+        confirmLabel="Make an Admin"
         loading={adminPrivilegeLoading}
         showDismissIcon
         onClose={closeGrantAdminConfirm}
@@ -1118,7 +1118,7 @@ function EmployeeActions({
   if (showMakeAdmin) {
     actionItems.push({
       key: 'make-admin',
-      label: 'Make Admin',
+      label: 'Make an Admin',
       icon: 'users',
       onSelect: () => onGrantAdmin(employee),
     })
@@ -1137,7 +1137,7 @@ function EmployeeActions({
   if (showSetItOps) {
     actionItems.push({
       key: 'set-it-ops',
-      label: 'Set IT Ops',
+      label: 'Make IT Ops',
       icon: 'users',
       onSelect: () => onSetRole(employee, 'it_ops'),
     })
@@ -1255,7 +1255,7 @@ function EmployeeActions({
           className={primaryButtonClass}
           type="button"
         >
-          Make Admin
+          Make an Admin
         </button>
       ) : null}
       {showRevokeAdmin ? (
@@ -1273,7 +1273,7 @@ function EmployeeActions({
       {showSetItOps ? (
         <IconActionButton
           icon="users"
-          label="Set IT Ops"
+          label="Make IT Ops"
           onClick={() => onSetRole(employee, 'it_ops')}
           variant="base"
         />

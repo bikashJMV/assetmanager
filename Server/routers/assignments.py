@@ -38,7 +38,7 @@ def _get_open_assignment_holder(db, asset_tag: str) -> dict | None:
         resp = (
             db.table("asset_assignments")
             .select(
-                "id, employee:employees(employee_id, name, email),"
+                "id, employee:employees(employee_id, name, email, role),"
                 " asset:assets(model, serial_number)"
             )
             .eq("asset_id", asset_id)
@@ -60,6 +60,7 @@ def _get_open_assignment_holder(db, asset_tag: str) -> dict | None:
             "employee_id": emp.get("employee_id", ""),
             "name": emp.get("name", ""),
             "email": emp.get("email") or "",
+            "role": emp.get("role") or "employee",
             "asset_model": asset_meta.get("model") or "",
             "serial_number": asset_meta.get("serial_number") or "",
         }
@@ -68,32 +69,54 @@ def _get_open_assignment_holder(db, asset_tag: str) -> dict | None:
         return None
 
 
-def _get_asset_meta(db, asset_tag: str) -> dict:
-    """Return {model, serial_number} for an asset tag."""
+def _get_asset_for_email(db, asset_tag: str) -> dict:
+    """category_name, model, asset_tag for the email microservice asset_data block."""
     try:
         resp = (
-            db.table("assets")
-            .select("model, serial_number")
-            .eq("asset_tag", asset_tag)
+            db.table("v_asset_inventory")
+            .select("category_name, model, asset_tag")
+            .eq("asset_tag", (asset_tag or "").strip())
             .limit(1)
             .execute()
         )
         row = (resp.data or [{}])[0]
         return {
-            "asset_model": row.get("model") or "",
-            "serial_number": row.get("serial_number") or "",
+            "category": row.get("category_name") or "",
+            "model_no": row.get("model") or "",
+            "asset_id": row.get("asset_tag") or (asset_tag or "").strip(),
         }
     except Exception:
-        return {"asset_model": "", "serial_number": ""}
+        tag = (asset_tag or "").strip()
+        return {"category": "", "model_no": "", "asset_id": tag}
 
 
-def _get_employee_email(db, employee_id: str) -> dict:
-    """Return {name, email} for an employee_id."""
+def _get_employee_profile(db, employee_id: str) -> dict:
+    """Return {name, email, role} for an employee_id (code)."""
+    try:
+        resp = (
+            db.table("employees")
+            .select("name, email, role")
+            .eq("employee_id", employee_id.upper().strip())
+            .limit(1)
+            .execute()
+        )
+        row = (resp.data or [{}])[0]
+        return {
+            "name": row.get("name") or "",
+            "email": row.get("email") or "",
+            "role": row.get("role") or "employee",
+        }
+    except Exception:
+        return {"name": "", "email": "", "role": "employee"}
+
+
+def _get_actor_assigner(db, actor_auth_uid: str) -> dict:
+    """Employee row for the JWT actor (assigner), or empty dict."""
     try:
         resp = (
             db.table("employees")
             .select("name, email")
-            .eq("employee_id", employee_id.upper().strip())
+            .eq("auth_user_id", actor_auth_uid)
             .limit(1)
             .execute()
         )
@@ -104,6 +127,34 @@ def _get_employee_email(db, employee_id: str) -> dict:
         }
     except Exception:
         return {"name": "", "email": ""}
+
+
+def _list_admin_cc_emails(db) -> list[str]:
+    """
+    Emails for CC: active employees with role admin or it_ops.
+    """
+    try:
+        resp = (
+            db.table("employees")
+            .select("email")
+            .eq("is_active", True)
+            .in_("role", ["admin", "it_ops"])
+            .execute()
+        )
+        out: list[str] = []
+        seen: set[str] = set()
+        for row in resp.data or []:
+            raw = (row.get("email") or "").strip()
+            if not raw:
+                continue
+            key = raw.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(raw)
+        return out
+    except Exception:
+        return []
 
 
 # ---------------------------------------------------------------------------
@@ -148,9 +199,11 @@ def assign_asset(
             message = (data or {}).get("message", "Assignment failed")
             raise HTTPException(status_code=400, detail=message)
 
-        # ── 3. Fetch new-holder contact details ───────────────────────────────
-        new_holder = _get_employee_email(db, payload.employee_id)
-        asset_meta = _get_asset_meta(db, payload.asset_tag)
+        # ── 3. Fetch contacts + asset row for structured email payload ─────────
+        new_holder = _get_employee_profile(db, payload.employee_id)
+        asset_email = _get_asset_for_email(db, payload.asset_tag)
+        assigner = _get_actor_assigner(db, actor_auth_uid)
+        admin_cc = _list_admin_cc_emails(db)
 
         # ── 4. Schedule notification(s) as background tasks ──────────────────
         is_reassign = (
@@ -163,24 +216,31 @@ def assign_asset(
             # Fire returned email to old holder FIRST (order matters per plan)
             background_tasks.add_task(
                 notify_asset_returned,
-                recipient_email=previous_holder["email"],
-                recipient_name=previous_holder["name"],
-                asset_name=f"{asset_meta.get('asset_model') or payload.asset_tag}",
-                asset_tag=payload.asset_tag,
-                serial_number=previous_holder.get("serial_number") or asset_meta.get("serial_number"),
-                returned_date=payload.assigned_at.isoformat() if payload.assigned_at else None,
+                primary_email=previous_holder["email"],
+                primary_name=previous_holder["name"],
+                primary_role=previous_holder.get("role"),
+                admin_email=assigner["email"],
+                admin_name=assigner["name"],
+                all_admin_emails=admin_cc,
+                asset_category=asset_email["category"],
+                model_no=asset_email["model_no"],
+                asset_id=asset_email["asset_id"],
             )
 
-        # Always fire assigned email to new holder
+        # Always fire assigned email (structured body → email microservice)
         background_tasks.add_task(
             notify_asset_assigned,
-            recipient_email=new_holder["email"],
-            recipient_name=new_holder["name"],
-            asset_name=asset_meta.get("asset_model") or payload.asset_tag,
-            asset_tag=payload.asset_tag,
-            asset_model=asset_meta.get("asset_model"),
-            serial_number=asset_meta.get("serial_number"),
-            assigned_date=payload.assigned_at.isoformat() if payload.assigned_at else None,
+            primary_email=new_holder["email"],
+            primary_name=new_holder["name"],
+            primary_role=new_holder.get("role"),
+            admin_email=assigner["email"],
+            admin_name=assigner["name"],
+            all_admin_emails=admin_cc,
+            asset_category=asset_email["category"],
+            model_no=asset_email["model_no"],
+            asset_id=asset_email["asset_id"],
+            previous_employee_email=previous_holder["email"] if is_reassign and previous_holder else None,
+            new_employee_email=new_holder["email"] if is_reassign else None,
         )
 
         return data
@@ -227,15 +287,20 @@ def return_asset(
 
         # ── 3. Schedule returned notification ─────────────────────────────────
         if previous_holder:
-            asset_meta = _get_asset_meta(db, payload.asset_tag)
+            asset_email = _get_asset_for_email(db, payload.asset_tag)
+            assigner = _get_actor_assigner(db, actor_auth_uid)
+            admin_cc = _list_admin_cc_emails(db)
             background_tasks.add_task(
                 notify_asset_returned,
-                recipient_email=previous_holder["email"],
-                recipient_name=previous_holder["name"],
-                asset_name=asset_meta.get("asset_model") or payload.asset_tag,
-                asset_tag=payload.asset_tag,
-                serial_number=previous_holder.get("serial_number") or asset_meta.get("serial_number"),
-                returned_date=payload.returned_at.isoformat() if payload.returned_at else None,
+                primary_email=previous_holder["email"],
+                primary_name=previous_holder["name"],
+                primary_role=previous_holder.get("role"),
+                admin_email=assigner["email"],
+                admin_name=assigner["name"],
+                all_admin_emails=admin_cc,
+                asset_category=asset_email["category"],
+                model_no=asset_email["model_no"],
+                asset_id=asset_email["asset_id"],
             )
 
         return data

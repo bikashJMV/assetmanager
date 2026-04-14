@@ -16,3 +16,4 @@ TelemetryServer/.env
 Telemetry.plan.md
 .cursorignore
 EVALUATION_SCORECARD.md
+./email.service.implementation.md

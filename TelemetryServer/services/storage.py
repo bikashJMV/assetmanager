@@ -108,7 +108,7 @@ class Storage:
 
     async def insert_event(self, event: TelemetryEvent) -> bool:
         pool = self._require_pool()
-        meta: dict[str, Any] = dict(event.metadata) if isinstance(event.metadata, dict) else json.loads(json.dumps(event.metadata))
+        meta: str = json.dumps(event.metadata) if isinstance(event.metadata, dict) else json.dumps(json.loads(str(event.metadata)))
         created = event.created_at if event.created_at.tzinfo else event.created_at.replace(tzinfo=timezone.utc)
 
         async with pool.acquire() as conn:
@@ -295,7 +295,10 @@ class Storage:
             d["created_at"] = ca.isoformat()
         md = d.get("metadata")
         if md is not None and not isinstance(md, (dict, list)):
-            d["metadata"] = md
+            try:
+                d["metadata"] = json.loads(md)
+            except (ValueError, TypeError):
+                d["metadata"] = {}
         return d
 
     async def get_events(self, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
@@ -332,6 +335,64 @@ class Storage:
         async with pool.acquire() as conn:
             rows = await conn.fetch(sql, limit, offset)
         return [self._serialize_row(r) for r in rows]
+
+    async def delete_event_rows(self, targets: list[tuple[str, int]]) -> int:
+        """
+        Delete telemetry rows by (table_source, id). table_source is success|error|general
+        (same labels as get_events). Removes matching dedupe keys so the same (source, event_id)
+        can be ingested again.
+        """
+        allowed = frozenset({"success", "error", "general"})
+        by_table: dict[str, list[int]] = {k: [] for k in allowed}
+        for ts, row_id in targets:
+            if ts not in allowed:
+                raise ValueError(f"invalid table_source: {ts}")
+            by_table[ts].append(int(row_id))
+        for ts in allowed:
+            by_table[ts] = list(dict.fromkeys(by_table[ts]))
+
+        pool = self._require_pool()
+        fq = {
+            "success": self._fq("telemetry_events_success"),
+            "error": self._fq("telemetry_events_error"),
+            "general": self._fq("telemetry_events_general"),
+        }
+        tik = self._fq("telemetry_ingest_keys")
+        deleted_rows = 0
+        key_sources: list[str] = []
+        key_event_ids: list[str] = []
+
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                for ts, ids in by_table.items():
+                    if not ids:
+                        continue
+                    t = fq[ts]
+                    rows = await conn.fetch(
+                        f"DELETE FROM {t} WHERE id = ANY($1::bigint[]) RETURNING source, event_id",
+                        ids,
+                    )
+                    deleted_rows += len(rows)
+                    for r in rows:
+                        key_sources.append(r["source"])
+                        key_event_ids.append(r["event_id"])
+
+                if key_sources:
+                    await conn.execute(
+                        f"""
+                        DELETE FROM {tik} AS k
+                        WHERE EXISTS (
+                            SELECT 1
+                            FROM unnest($1::text[], $2::text[]) AS v(source, event_id)
+                            WHERE k.source = v.source AND k.event_id = v.event_id
+                        )
+                        """,
+                        key_sources,
+                        key_event_ids,
+                    )
+
+        logger.info("storage.delete_event_rows deleted=%s request_targets=%s", deleted_rows, len(targets))
+        return deleted_rows
 
 
 storage = Storage()

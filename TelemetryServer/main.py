@@ -29,6 +29,7 @@ async def lifespan(_: FastAPI):
         min_size=settings.DB_POOL_MIN_SIZE,
         max_size=settings.DB_POOL_MAX_SIZE,
         ssl=ssl,
+        statement_cache_size=0,  # required for Supabase PgBouncer (port 6543, transaction mode)
     )
     queue: TelemetryQueue | None = None
     try:

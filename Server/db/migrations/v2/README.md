@@ -52,6 +52,11 @@ Apply the files in this exact order:
 46. `45_recycle_bin_grants_v_employee_directory.sql`
 47. `46_fn_delete_employee_permanent_requires_recycle_bin.sql`
 48. `47_recycle_bin_entries_rls_and_idempotent_soft_delete_employee.sql`
+49. `48_fn_bulk_import_audit_actor.sql`
+50. `49_bulk_inventory_audit_actor.sql`
+51. `50_actor_snapshot_embed_auth_uid.sql`
+52. `51_actor_snapshot_pass_auth_uid.sql`
+53. `52_bff_actor_uid_assign_return.sql`
 
 ## Important invariants
 
@@ -61,7 +66,7 @@ Apply the files in this exact order:
 - `it_ops` is the highest role.
 - `employees.is_active` and `employees.erp_active` serve different purposes.
 - Asset status must not be derived from ERP status.
-- Runtime assign/return flows must use `fn_assign_asset` and `fn_return_asset`.
+- Runtime assign/return flows must use `fn_assign_asset` and `fn_return_asset`. After **52**, the FastAPI BFF can supply `p_actor_auth_uid` (verified JWT sub) when calling those RPCs with the service-role client; browser callers continue to rely on `auth.uid()`.
 - `fn_assign_asset` only allows assignment when `assets.status` is `in_stock` or `assigned` (whitelist). Assets in `lost`, `disposed`, `retired`, or `in_repair` must have their status changed first.
 - Lifecycle status changes (in_stock, in_repair, retired, lost, disposed) must use `fn_set_asset_lifecycle_status` — it auto-closes open assignments and records proper audit events.
 - Public QR scan uses `fn_public_scan_asset` and must stay tightly scoped to the documented anonymous payload.
@@ -87,6 +92,11 @@ Apply the files in this exact order:
 - `45_recycle_bin_grants_v_employee_directory.sql` grants `SELECT` on `public.recycle_bin_entries` to `authenticated` and `service_role`, and recreates `v_employee_directory`. Apply on any database that was missing those grants or soft-deleted rows still appeared in the employee list.
 - `46_fn_delete_employee_permanent_requires_recycle_bin.sql` ties permanent employee removal to the Recycle Bin workflow so clients cannot purge directory-visible employees without a prior soft-delete.
 - `47_recycle_bin_entries_rls_and_idempotent_soft_delete_employee.sql` enables RLS on `recycle_bin_entries` with a **SELECT** policy for `authenticated` (required when RLS is on; otherwise `v_employee_directory` cannot “see” bin rows and soft-deleted employees stay listed). Also makes `fn_soft_delete_employee` idempotent (no duplicate open bin rows).
+- `48_fn_bulk_import_audit_actor.sql` ties bulk asset import lifecycle and `asset_logs` to the signed-in importer (`employees` row for `auth.uid()`), embeds `actor_snapshot` in `fn_create_asset_with_log`, and preserves explicit snapshots in `fn_internal_record_asset_event` when `SECURITY DEFINER` chains yield an empty JWT snapshot.
+- `49_bulk_inventory_audit_actor.sql` adds `fn_actor_snapshot_from_employee_pk` and merges the same snapshot shape into bulk inventory flows that call `fn_assign_asset`, `fn_return_asset`, and `fn_set_asset_lifecycle_status`, so bulk Excel actions show the correct “BY” actor.
+- `50_actor_snapshot_embed_auth_uid.sql` introduces `fn_actor_snapshot_for_event_payload` so nested `SECURITY DEFINER` calls still get a minimal `{ actor_id: … }` snapshot when no `employees` row exists (avoids “System / public” in assign/return/lifecycle audit UI when `auth.uid()` is null inside helpers).
+- `51_actor_snapshot_pass_auth_uid.sql` fixes migration 50 by changing `fn_actor_snapshot_for_event_payload` to accept the caller’s `auth.uid()` captured in the outer RPC (Supabase often nulls `auth.uid()` inside nested `SECURITY DEFINER` helpers).
+- `52_bff_actor_uid_assign_return.sql` adds optional `p_actor_auth_uid` to `fn_assign_asset` / `fn_return_asset` so the Python BFF (service-role client, `auth.uid()` null in Postgres) can pass the verified JWT subject; direct browser RPCs keep using `auth.uid()`.
 
 ## Employee directory visibility (production checklist)
 

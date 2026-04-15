@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
 import httpx
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from core.auth import require_it_ops_access
 from core.settings import settings
-from schemas.analysis import AnalysisEventsResponse
+from schemas.analysis import AnalysisBulkDeleteRequest, AnalysisEventsResponse
 
 router = APIRouter(prefix="/analysis", tags=["Analysis"])
 
@@ -55,4 +55,38 @@ async def analysis_events(
     # TelemetryServer returns: { "events": [...] }
     payload = resp.json()
     return payload
+
+
+@router.delete("/bulk", dependencies=[Depends(require_it_ops_access)])
+async def analysis_bulk_delete(body: AnalysisBulkDeleteRequest):
+    """Bulk-delete telemetry rows (proxied to TelemetryServer). IT Ops JWT required."""
+
+    telemetry_key = settings.TELEMETRY_ITOPS_QUERY_KEY_NEW
+    if not telemetry_key:
+        raise HTTPException(status_code=503, detail="TELEMETRY_ITOPS_QUERY_KEY_NEW is not configured on AMS Server.")
+
+    telemetry_base = settings.TELEMETRY_SERVER_BASE_URL
+    if not telemetry_base:
+        raise HTTPException(status_code=503, detail="TELEMETRY_SERVER_BASE_URL is not configured on AMS Server.")
+
+    url = f"{telemetry_base}/telemetry/overview/events"
+    headers = {"X-Telemetry-Query-Key": telemetry_key}
+    payload = body.model_dump()
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        try:
+            resp = await client.request("DELETE", url, json=payload, headers=headers)
+        except httpx.RequestError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Unable to reach TelemetryServer at {telemetry_base}. ({exc.__class__.__name__})",
+            ) from exc
+
+    if resp.status_code != 200:
+        raise HTTPException(
+            status_code=resp.status_code,
+            detail=f"TelemetryServer error: {resp.text}",
+        )
+
+    return resp.json()
 

@@ -47,6 +47,18 @@ class Settings:
     # ENVIRONMENT: local | production
     ENV: str = field(default_factory=lambda: os.getenv("ENV", os.getenv("VITE_ENV", "local")))
 
+    # ── Internal telemetry toggle ─────────────────────────────────────────────
+    # Set TELEMETRY_ENABLED=true to forward server API call logs to TelemetryServer.
+    # When false, middleware logs locally only — no network calls to TelemetryServer.
+    TELEMETRY_ENABLED: bool = field(
+        default_factory=lambda: os.getenv("TELEMETRY_ENABLED", "false").strip().lower() == "true"
+    )
+    # Shared static secret for server-to-server ingest. Must match
+    # TELEMETRY_INGEST_SERVER_TOKEN on the TelemetryServer side.
+    TELEMETRY_INGEST_SERVER_TOKEN: str = field(
+        default_factory=lambda: os.getenv("TELEMETRY_INGEST_SERVER_TOKEN", "").strip()
+    )
+
     # TelemetryServer (telemetry ingestion/query backend) integration
     # - Keep TELEMETRY_ITOPS_QUERY_KEY_NEW on the server only (never expose to browser).
     TELEMETRY_SERVER_BASE_URL: str = field(

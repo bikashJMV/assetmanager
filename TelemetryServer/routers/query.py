@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from core.auth import require_itops_query_key
 from core.settings import settings
+from models.schemas import OverviewEventsBulkDeleteRequest, OverviewEventsBulkDeleteResponse
 from services.metrics import metrics
 from services.storage import storage
 
@@ -42,6 +43,22 @@ async def overview_events(
     events = await storage.get_events(limit=limit, offset=offset)
     await storage.audit_access("/overview/events", None, "n/a", len(events))
     return {"events": events}
+
+
+@router.delete(
+    "/overview/events",
+    response_model=OverviewEventsBulkDeleteResponse,
+    dependencies=[Depends(require_itops_query_key)],
+)
+async def overview_events_delete(payload: OverviewEventsBulkDeleteRequest):
+    logger.info("query.events.delete targets=%s", len(payload.targets))
+    pairs = [(t.table_source, t.id) for t in payload.targets]
+    try:
+        deleted = await storage.delete_event_rows(pairs)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    await storage.audit_access("/overview/events", None, "delete", deleted)
+    return OverviewEventsBulkDeleteResponse(deleted=deleted)
 
 
 @router.get("/alerts", dependencies=[Depends(require_itops_query_key)])

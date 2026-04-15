@@ -51,7 +51,7 @@ Create `Server/.env` (start from `Server/.env.example`).
 | `BACKEND_API_KEY_EMAIL_NOTIFICATION` | For notifications | Purpose-specific `X-API-Key` used when this server calls the email notification microservice |
 | `ENV` | No | Runtime mode such as `local` or `production` |
 | `TELEMETRY_SERVER_BASE_URL` | For `/analysis` | Base URL of `TelemetryServer/` |
-| `TELEMETRY_ITOPS_QUERY_KEY_NEW` | For `/analysis` | Shared key used when this server calls `TelemetryServer/telemetry/overview/events` |
+| `TELEMETRY_ITOPS_QUERY_KEY_NEW` | For `/analysis` | Shared key used when this server calls `TelemetryServer` query routes (`/telemetry/overview/events`, etc.) |
 | `TELEMETRY_INGEST_TOKEN_SECRET` | For browser telemetry | HMAC secret used to sign ingest tokens |
 | `TELEMETRY_TOKEN_TTL_SECONDS` | No | Browser ingest token TTL; handler enforces a minimum of 60 seconds |
 | `TELEMETRY_ENV` | For browser telemetry | Environment claim embedded in signed ingest tokens |
@@ -105,7 +105,7 @@ Useful URLs:
 ### Role-protected inside routers
 
 - Asset, employee, log, and assignment write routes require a valid bearer token with the appropriate employee role.
-- `GET /analysis` requires an IT Ops bearer token and then calls `TelemetryServer/` server-to-server.
+- `GET /analysis` and `DELETE /analysis/bulk` require an IT Ops bearer token and then call `TelemetryServer/` server-to-server (list and bulk-delete telemetry events).
 
 ## API response envelope (v2)
 
@@ -182,7 +182,7 @@ python -m pytest tests/test_envelope.py -v
 
 AMS SQL lives in `db/migrations/v2/`.
 
-- Start with [`db/migrations/v2/README.md`](./db/migrations/v2/README.md) for the full ordered migration list. For the **employee Recycle Bin** workflow, apply at least **`45_recycle_bin_grants_v_employee_directory.sql`**, **`47_recycle_bin_entries_rls_and_idempotent_soft_delete_employee.sql`** (RLS `SELECT` policy + idempotent soft-delete; fixes “binned users still on All Employees” when RLS is on), and **`46_fn_delete_employee_permanent_requires_recycle_bin.sql`** (permanent delete only when an open bin row exists).
+- Start with [`db/migrations/v2/README.md`](./db/migrations/v2/README.md) for the full ordered migration list. For the **employee Recycle Bin** workflow, apply at least **`45_recycle_bin_grants_v_employee_directory.sql`**, **`47_recycle_bin_entries_rls_and_idempotent_soft_delete_employee.sql`** (RLS `SELECT` policy + idempotent soft-delete; fixes “binned users still on All Employees” when RLS is on), and **`46_fn_delete_employee_permanent_requires_recycle_bin.sql`** (permanent delete only when an open bin row exists). Migrations **`48_*` through `52_*`** cover bulk-import and bulk-inventory audit actors, nested `SECURITY DEFINER` actor snapshots, and optional **`p_actor_auth_uid`** on assign/return for the Python BFF (service-role Supabase client).
 - Use [`db/migrations/v2/STAGING_RUNBOOK.md`](./db/migrations/v2/STAGING_RUNBOOK.md) for staged rollout work
 
 ## Related docs

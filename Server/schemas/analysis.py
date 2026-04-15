@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -49,4 +49,21 @@ class TelemetryEventOut(BaseModel):
 
 class AnalysisEventsResponse(BaseModel):
     events: list[TelemetryEventOut]
+
+
+class AnalysisEventDeleteTarget(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    table_source: Literal["success", "error", "general"]
+    id: int = Field(gt=0)
+
+
+class AnalysisBulkDeleteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    targets: list[AnalysisEventDeleteTarget] = Field(min_length=1, max_length=500)
+
+
+class AnalysisBulkDeleteResponse(BaseModel):
+    deleted: int
 

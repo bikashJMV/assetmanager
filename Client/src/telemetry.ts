@@ -32,7 +32,12 @@ const MAX_BUFFER_SIZE = 300
 const MAX_EVENT_AGE_MS = 60 * 60 * 1000
 const RETRY_BACKOFF_MS = [5_000, 10_000, 20_000, 30_000]
 
-const TELEMETRY_ENABLED = (import.meta.env.VITE_TELEMETRY_ENABLED ?? 'false') === 'true'
+const TELEMETRY_ENV_ENABLED = (import.meta.env.VITE_TELEMETRY_ENABLED ?? 'false') === 'true'
+
+function isTelemetryEnabled(): boolean {
+  if (!TELEMETRY_ENV_ENABLED) return false
+  return localStorage.getItem('ams.telemetry.enabled') !== 'false'
+}
 const TELEMETRY_INGEST_URL = (import.meta.env.VITE_TELEMETRY_INGEST_URL as string | undefined)?.trim() ?? ''
 const TELEMETRY_TOKEN_URL = (import.meta.env.VITE_TELEMETRY_TOKEN_URL as string | undefined)?.trim() || '/telemetry/ingest-token'
 const ENV_RAW = ((import.meta.env.MODE as string | undefined) ?? 'local').toLowerCase()
@@ -252,7 +257,7 @@ function toPayloadEvents(batch: BufferedTelemetryEvent[]): TelemetryEvent[] {
 }
 
 async function flushInternal() {
-  if (!TELEMETRY_ENABLED || !TELEMETRY_INGEST_URL) return
+  if (!isTelemetryEnabled() || !TELEMETRY_INGEST_URL) return
   if (flushing) return
   flushing = true
   try {
@@ -297,7 +302,7 @@ async function flushInternal() {
 }
 
 function flushWithBeacon() {
-  if (!TELEMETRY_ENABLED || !TELEMETRY_INGEST_URL) return
+  if (!isTelemetryEnabled() || !TELEMETRY_INGEST_URL) return
   if (typeof navigator.sendBeacon !== 'function') return
   const batch = pickBatch()
   if (!batch.length) return
@@ -356,7 +361,7 @@ export function trackTelemetryEvent(input: {
   priority?: TelemetryPriority
   metadata?: Record<string, unknown>
 }) {
-  if (!TELEMETRY_ENABLED) return
+  if (!isTelemetryEnabled()) return
   const event = buildBufferedEvent(input)
   inMemoryBuffer.push(event)
   pruneBuffer()

@@ -62,3 +62,24 @@ class IngestResponse(BaseModel):
     deduped: int
     dropped: int
     queued: int
+
+
+EventTableSource = Literal["success", "error", "general"]
+
+
+class EventDeleteTarget(BaseModel):
+    """Identifies one row in the union feed (get_events); numeric id is per physical table."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    table_source: EventTableSource
+    id: int = Field(gt=0)
+
+
+class OverviewEventsBulkDeleteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    targets: list[EventDeleteTarget] = Field(min_length=1, max_length=500)
+
+
+class OverviewEventsBulkDeleteResponse(BaseModel):
+    deleted: int

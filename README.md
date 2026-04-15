@@ -6,7 +6,7 @@ The repo currently contains:
 
 - `Client/` - React 19 + Vite 7 + TypeScript SPA
 - `Server/` - FastAPI backend for trusted HTTP operations and email notification orchestration
-- `TelemetryServer/` - optional FastAPI service for telemetry ingest and query
+- `TelemetryServer/` - optional FastAPI service for telemetry ingest and query (the Client exposes `/analysis` for IT Ops when telemetry is wired; see [`Client/CLIENT_README.md`](./Client/CLIENT_README.md))
 - `Server/db/migrations/v2/` - canonical AMS schema, RLS, views, RPCs, and audit logic
 - `TelemetryServer/db/migrations/` - telemetry schema bootstrap
 - `Telemetry.plan.md` - telemetry rollout notes
@@ -76,7 +76,7 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8010
 
 1. Configure the client Supabase variables in `Client/.env`.
 2. Create `Server/.env` ensuring all environment properties including telemetry and email settings are provisioned.
-3. Apply AMS migrations mapped in `Server/db/migrations/v2/` iteratively.
+3. Apply AMS migrations in the order listed in [`Server/db/migrations/v2/README.md`](./Server/db/migrations/v2/README.md) (through **`52_*`** for bulk-import audit actors and BFF assign/return identity).
 4. Start the client and server.
 5. If telemetry flows are requisite, initialize the telemetry schema, bind `.env` configurations, and spin up `TelemetryServer/`.
 

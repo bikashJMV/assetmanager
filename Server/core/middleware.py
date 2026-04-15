@@ -1,8 +1,12 @@
+import asyncio
+import base64
 import json
 import logging
 import time
 import uuid
+from datetime import datetime, timezone
 
+import httpx
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import Response
@@ -10,6 +14,79 @@ from starlette.responses import Response
 from schemas.envelope import error_envelope, success_envelope
 
 logger = logging.getLogger(__name__)
+
+# Paths that add no value as telemetry events
+_TELEMETRY_SKIP_PATHS = frozenset({"/", "/health", "/docs", "/openapi.json", "/redoc"})
+
+_ERROR_CATEGORY_MAP: dict[int, str] = {
+    400: "validation",
+    401: "auth",
+    403: "forbidden",
+    404: "not_found",
+    422: "validation",
+    429: "rate_limit",
+    500: "server_error",
+    503: "dependency",
+}
+
+
+def _extract_user_id(request: Request) -> str | None:
+    """Decode user_id (sub claim) from Bearer JWT. No verification — logging only."""
+    auth = request.headers.get("authorization", "")
+    if not auth.lower().startswith("bearer "):
+        return None
+    try:
+        parts = auth[7:].split(".")
+        if len(parts) != 3:
+            return None
+        payload = json.loads(base64.urlsafe_b64decode(parts[1] + "=="))
+        return str(payload.get("sub", "")) or None
+    except Exception:
+        return None
+
+
+async def _forward_api_event(
+    method: str,
+    route_pattern: str,
+    status_code: int,
+    elapsed_ms: float,
+    request_id: str,
+    base_url: str,
+    server_token: str,
+    environment: str,
+    user_id: str | None,
+) -> None:
+    """Fire-and-forget: POST one server_api event to TelemetryServer. Never raises."""
+    success = status_code < 400
+    metadata: dict = {}
+    if user_id:
+        metadata["user_id"] = user_id
+    event = {
+        "event_id": request_id,
+        "schema_version": 1,
+        "source": "server_api",
+        "event_name": "api_request",
+        "route_pattern": route_pattern,
+        "method": method,
+        "status_code": status_code,
+        "success": success,
+        "duration_ms": int(elapsed_ms),
+        "error_category": None if success else _ERROR_CATEGORY_MAP.get(status_code, "unknown"),
+        "environment": environment,
+        "priority": "HIGH" if not success else "LOW",
+        "request_id": request_id,
+        "metadata": metadata,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            await client.post(
+                f"{base_url}/telemetry/events",
+                json={"events": [event]},
+                headers={"X-Telemetry-Server-Token": server_token},
+            )
+    except Exception:
+        pass  # Never block or surface errors from telemetry forwarding
 
 _ERROR_CODE_MAP: dict[int, str] = {
     400: "BAD_REQUEST",
@@ -48,6 +125,8 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
     """Attach a unique request_id to every request and log it with basic timing."""
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+        from core.settings import settings  # local import avoids circular dep at module load
+
         request_id = request.headers.get("x-request-id") or str(uuid.uuid4())
         request.state.request_id = request_id
 
@@ -67,6 +146,37 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
                 "elapsed_ms": elapsed_ms,
             },
         )
+
+        # ── TelemetryServer forwarding ────────────────────────────────────────
+        if (
+            settings.TELEMETRY_ENABLED
+            and settings.TELEMETRY_INGEST_SERVER_TOKEN
+            and settings.TELEMETRY_SERVER_BASE_URL
+            and request.url.path not in _TELEMETRY_SKIP_PATHS
+            and not request.url.path.startswith("/telemetry")
+        ):
+            # Reconstruct route template from matched path params
+            # e.g. /assets/abc123 → /assets/{asset_ref}
+            path_params: dict = request.scope.get("path_params", {})
+            route_pattern = request.url.path
+            for key, val in path_params.items():
+                route_pattern = route_pattern.replace(str(val), f"{{{key}}}")
+
+            asyncio.create_task(
+                _forward_api_event(
+                    method=request.method,
+                    route_pattern=route_pattern,
+                    status_code=response.status_code,
+                    elapsed_ms=elapsed_ms,
+                    request_id=request_id,
+                    base_url=settings.TELEMETRY_SERVER_BASE_URL,
+                    server_token=settings.TELEMETRY_INGEST_SERVER_TOKEN,
+                    environment=settings.TELEMETRY_ENV,
+                    user_id=_extract_user_id(request),
+                )
+            )
+        # ─────────────────────────────────────────────────────────────────────
+
         return response
 
 

@@ -101,6 +101,7 @@ Useful URLs:
 
 - `GET /telemetry/overview`
 - `GET /telemetry/overview/events`
+- `DELETE /telemetry/overview/events` (JSON body: `{ "targets": [ { "table_source": "success"|"error"|"general", "id": <bigint> } ] }`, max 500 targets)
 - `GET /telemetry/alerts`
 - `POST /telemetry/retention/run`
 

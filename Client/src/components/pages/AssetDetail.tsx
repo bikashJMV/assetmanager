@@ -429,30 +429,45 @@ export default function AssetDetail() {
           </section>
         </div>
 
-        <Section
-          title="Inventory Details"
-          description="Identity, classification, location, warranty, and audit hints."
-        >
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            <Info label="Asset Tag" value={formatDisplay(asset.asset_tag)} />
-            <Info label="Category" value={formatDisplay(asset.category_name)} />
-            <Info label="Manufacturer" value={formatDisplay(asset.manufacturer_name)} />
-            <Info label="Model" value={formatDisplay(asset.model)} />
-            <Info label="Serial Number" value={formatDisplay(asset.serial_number)} />
-            <Info label="Location" value={formatDisplay(asset.location_name)} />
-            <Info label="Inventory Status" value={formatEnumLabel(asset.status)} />
-            <Info label="Purchase Date" value={formatDisplay(asset.purchase_date)} />
-            <Info label="Warranty Expiry" value={formatDisplay(asset.warranty_expiry)} />
-            <Info
-              label="Created by"
-              value={formatAuditActorWithTimestamp(detail.audit_actors.created_by, asset.created_at)}
-            />
-            <Info
-              label="Last updated by"
-              value={formatAuditActorWithTimestamp(detail.audit_actors.updated_by, asset.updated_at)}
-            />
-          </div>
-        </Section>
+        <div className={`grid grid-cols-1 gap-3 ${Object.keys(asset.custom_fields || {}).length > 0 ? 'md:grid-cols-2' : ''}`}>
+          <Section
+            title="Inventory Details"
+            description="Identity, classification, location, warranty, and audit hints."
+          >
+            <dl className="divide-y divide-[color:var(--border)]">
+              <InfoRow label="Asset Tag" value={formatDisplay(asset.asset_tag)} />
+              <InfoRow label="Category" value={formatDisplay(asset.category_name)} />
+              <InfoRow label="Manufacturer" value={formatDisplay(asset.manufacturer_name)} />
+              <InfoRow label="Model" value={formatDisplay(asset.model)} />
+              <InfoRow label="Serial Number" value={formatDisplay(asset.serial_number)} />
+              <InfoRow label="Location" value={formatDisplay(asset.location_name)} />
+              <InfoRow label="Inventory Status" value={formatEnumLabel(asset.status)} />
+              <InfoRow label="Purchase Date" value={formatDisplay(asset.purchase_date)} />
+              <InfoRow label="Warranty Expiry" value={formatDisplay(asset.warranty_expiry)} />
+              <InfoRow
+                label="Created by"
+                value={formatAuditActorWithTimestamp(detail.audit_actors.created_by, asset.created_at)}
+              />
+              <InfoRow
+                label="Last updated by"
+                value={formatAuditActorWithTimestamp(detail.audit_actors.updated_by, asset.updated_at)}
+              />
+            </dl>
+          </Section>
+
+          {Object.keys(asset.custom_fields || {}).length > 0 && (
+            <Section
+              title="Custom Fields"
+              description="These fields capturing additional data beyond inventory."
+            >
+              <dl className="divide-y divide-[color:var(--border)]">
+                {Object.entries(asset.custom_fields || {}).map(([key, value]) => (
+                  <InfoRow key={key} label={key} value={formatDisplay(value)} />
+                ))}
+              </dl>
+            </Section>
+          )}
+        </div>
 
         {canManage ? (
           <section className="bg-surface border border-base rounded-xl p-4 sm:p-5">
@@ -507,31 +522,18 @@ export default function AssetDetail() {
           </section>
         ) : null}
 
-        <Section
-          title="Assignment Summary"
-          description="Current holder, employee ID, and when the assignment started."
-        >
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 sm:gap-4">
-            <Info label="Current Holder" value={formatDisplay(asset.current_employee_name)} />
-            <Info label="Current Holder ID" value={formatDisplay(asset.current_employee_code)} />
-            <Info label="Assigned At" value={formatDateTime(asset.assigned_at)} />
-          </div>
-        </Section>
-
-        <Section
-          title="Custom Fields"
-          description="Extra attributes defined for this category (beyond standard columns). They travel with the asset and appear wherever the full record is shown."
-        >
-          {Object.keys(asset.custom_fields || {}).length === 0 ? (
-            <p className="text-sm text-subtle">No custom field data.</p>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-              {Object.entries(asset.custom_fields || {}).map(([key, value]) => (
-                <Info key={key} label={key} value={formatDisplay(value)} />
-              ))}
-            </div>
-          )}
-        </Section>
+        {asset.current_employee_id ? (
+          <Section
+            title="Assignment Summary"
+            description="Current holder, employee ID, and when the assignment started."
+          >
+            <dl className="flex flex-wrap items-center divide-x divide-[color:var(--border)]">
+              <AssignmentSummaryField label="Current Holder" value={formatDisplay(asset.current_employee_name)} />
+              <AssignmentSummaryField label="Current Holder ID" value={formatDisplay(asset.current_employee_code)} />
+              <AssignmentSummaryField label="Assigned At" value={formatDateTime(asset.assigned_at)} />
+            </dl>
+          </Section>
+        ) : null}
 
         {detail.components.length > 0 && (
           <Section
@@ -714,11 +716,21 @@ function HeaderActionButton({
   )
 }
 
-function Info({ label, value }: { label: string; value: string }) {
+
+function AssignmentSummaryField({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-lg border border-base bg-surface-2 px-3 py-2.5">
-      <p className="text-[11px] uppercase tracking-[0.12em] text-subtle">{label}</p>
-      <p className="text-sm text-primary mt-1 break-words">{value}</p>
+    <div className="flex items-baseline gap-1.5 px-4 first:pl-0 last:pr-0">
+      <dt className="text-[11px] uppercase tracking-[0.12em] text-subtle shrink-0">{label}:</dt>
+      <dd className="text-sm text-primary">{value}</dd>
+    </div>
+  )
+}
+
+function InfoRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-baseline gap-2 sm:gap-4 sm:py-2.5">
+      <dt className="text-[11px] uppercase tracking-[0.12em] text-subtle shrink-0 w-28 sm:w-40">{label}</dt>
+      <dd className="text-sm text-primary break-words min-w-0">{value}</dd>
     </div>
   )
 }

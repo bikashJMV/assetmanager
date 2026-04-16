@@ -34,11 +34,11 @@ The repo currently contains:
 
 - [`Client/CLIENT_README.md`](./Client/CLIENT_README.md)
 - [`Server/SERVER_README.md`](./Server/SERVER_README.md)
+- [`Server/services/README.md`](./Server/services/README.md)
 - [`Server/db/migrations/v2/README.md`](./Server/db/migrations/v2/README.md)
 - [`TelemetryServer/TELEMETRY_SERVER_README.md`](./TelemetryServer/TELEMETRY_SERVER_README.md)
 - [`TelemetryServer/db/migrations/README.md`](./TelemetryServer/db/migrations/README.md)
 - [`Telemetry.plan.md`](./Telemetry.plan.md)
-- [`Notes/Android-Supabase-Auth-Setup.md`](./Notes/Android-Supabase-Auth-Setup.md)
 
 ## Local development
 

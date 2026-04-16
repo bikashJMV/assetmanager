@@ -115,6 +115,7 @@ export function normalizeFieldChanges(event: AssetLifecycleEvent): AssetFieldCha
       if (!isPlainObject(item)) return null
       const field = typeof item.field === 'string' ? item.field : ''
       if (!field) return null
+      if (field.startsWith('metadata.') && field !== 'metadata.notes') return null
       const base: AssetFieldChangeEntry = {
         field,
         label: typeof item.label === 'string' && item.label.trim() ? item.label.trim() : field,

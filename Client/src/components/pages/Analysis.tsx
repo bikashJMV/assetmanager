@@ -1,4 +1,6 @@
+import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
+import { hasActiveItOpsAccess } from '../../api'
 import OverviewAnalysis from './Overview.Analysis'
 import TelemetryAnalysis from './Telemetry.Analysis'
 
@@ -17,8 +19,33 @@ const SECTION_COPY: Record<AnalysisSection, { title: string; description: string
 
 export default function Analysis() {
   const [searchParams, setSearchParams] = useSearchParams()
-  const activeSection = searchParams.get('section') === 'telemetry' ? 'telemetry' : 'overview'
+  const [canViewTelemetry, setCanViewTelemetry] = useState(false)
+  const [telemetryAccessResolved, setTelemetryAccessResolved] = useState(false)
+  const telemetryRequested = searchParams.get('section') === 'telemetry'
+  const activeSection = canViewTelemetry && telemetryRequested ? 'telemetry' : 'overview'
   const activeCopy = SECTION_COPY[activeSection]
+
+  useEffect(() => {
+    let mounted = true
+
+    void (async () => {
+      const allowed = await hasActiveItOpsAccess()
+      if (!mounted) return
+      setCanViewTelemetry(allowed)
+      setTelemetryAccessResolved(true)
+    })()
+
+    return () => {
+      mounted = false
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!telemetryAccessResolved || !telemetryRequested || canViewTelemetry) return
+    const nextParams = new URLSearchParams(searchParams)
+    nextParams.delete('section')
+    setSearchParams(nextParams, { replace: true })
+  }, [canViewTelemetry, searchParams, setSearchParams, telemetryAccessResolved, telemetryRequested])
 
   const switchSection = (section: AnalysisSection) => {
     const nextParams = new URLSearchParams(searchParams)
@@ -52,17 +79,19 @@ export default function Analysis() {
                 description="Asset and employee KPIs"
                 onClick={() => switchSection('overview')}
               />
-              <SectionButton
-                active={activeSection === 'telemetry'}
-                label="Telemetry"
-                description="IT Ops event feed"
-                onClick={() => switchSection('telemetry')}
-              />
+              {canViewTelemetry ? (
+                <SectionButton
+                  active={activeSection === 'telemetry'}
+                  label="Telemetry"
+                  description="IT Ops event feed"
+                  onClick={() => switchSection('telemetry')}
+                />
+              ) : null}
             </div>
           </div>
         </header>
 
-        {activeSection === 'overview' ? <OverviewAnalysis /> : <TelemetryAnalysis />}
+        {activeSection === 'telemetry' && canViewTelemetry ? <TelemetryAnalysis /> : <OverviewAnalysis />}
       </div>
     </main>
   )

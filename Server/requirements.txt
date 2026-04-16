@@ -1,5 +1,6 @@
 fastapi[standard]
 supabase
+PyJWT[crypto]>=2.8.0,<3.0.0
 pydantic
 python-dotenv
 qrcode[pil]

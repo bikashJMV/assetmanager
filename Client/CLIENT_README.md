@@ -14,33 +14,38 @@ React 19 + Vite 7 + TypeScript single-page app for Asset Manager.
 
 - `src/App.tsx` - route tree, auth bootstrap, shell layout, idle timeout, telemetry startup, breadcrumb provider
 - `src/api.ts` - primary client integration layer for Supabase and QR helpers
-- `src/telemetry.ts` - optional client telemetry buffer and flush logic
+- `src/telemetry.ts` - optional client telemetry buffer and flush logic (coordinates `src/telemetry.worker.ts`)
 - `src/supabaseClient.ts` - fail-fast Supabase client bootstrap
 - `src/utils/errors.ts` - user-facing error message normalization with friendly rewrites
 - `src/hooks/useBreadcrumbOverride.ts` - breadcrumb context for detail pages to set readable labels
 
 ## Routes
 
-### Public
+Routes follow [`src/App.tsx`](./src/App.tsx). Unauthenticated users are sent to `/login` (with `next=` return path) for unknown paths.
+
+### Public (no session required)
 
 - `/`
-- `/dashboard/home`
+- `/dashboard/home` (same home experience as `/`)
 - `/guide`
 - `/login`
-- `/scan/:id`
+- `/scan/:id` (public QR scan)
 
-### Protected
+### Protected — any authenticated employee with a linked profile
 
-- `/assets`
-- `/assets/new`
-- `/assets/:id`
-- `/assets/scan`
-- `/assets/scan/:id`
-- `/employee`
-- `/employee/new`
-- `/employee/:id`
-- `/analysis`
+- `/assets`, `/assets/:id`
+- `/assets/scan`, `/assets/scan/:id`
 - `/notifications`
+- `/404`
+- `/employee/:id` (detail; cross-profile access is guarded inside the page)
+
+### Protected — admin or IT Ops only (`RequirePrivileged`)
+
+Other signed-in users are redirected to `/assets`.
+
+- `/assets/new`
+- `/employee`, `/employee/new`
+- `/analysis` (Overview + Telemetry tabs; server-side telemetry APIs require **IT Ops** role)
 - `/recycle-bin`
 
 ## Main feature areas
@@ -68,7 +73,8 @@ Create `Client/.env` (start from `Client/.env.example`).
 | `VITE_TELEMETRY_ENABLED` | No | `src/telemetry.ts` | Enables browser telemetry when set to `true` |
 | `VITE_TELEMETRY_INGEST_URL` | When telemetry enabled | `src/telemetry.ts` | Full `TelemetryServer` ingest URL |
 | `VITE_TELEMETRY_TOKEN_URL` | When telemetry enabled | `src/telemetry.ts` | Full main-server `POST /telemetry/ingest-token` URL; code defaults to `/telemetry/ingest-token` |
-| `VITE_API_URL` | No | `src/components/pages/Analysis.tsx` | Base URL for the main FastAPI server; defaults there to `http://localhost:8000` |
+| `VITE_API_URL` | No | `src/api.ts`, `src/components/pages/Telemetry.Analysis.tsx` | Base URL for the AMS FastAPI server (BFF); defaults to `http://localhost:8000` when unset |
+| `VITE_BACKEND_API_KEY` | No | `src/api.ts` | Optional `X-API-Key` for BFF routes that expect `BACKEND_API_KEY` when configured on the server |
 
 ## Local development
 
@@ -86,6 +92,8 @@ Available scripts:
 | `build` | `tsc -b && vite build` |
 | `lint` | `eslint .` |
 | `preview` | `vite preview` |
+| `test` | `vitest run` |
+| `test:watch` | `vitest` |
 
 ## Dependencies
 
@@ -105,6 +113,7 @@ Available scripts:
 - `tailwindcss`
 - `eslint`
 - `@vitejs/plugin-react`
+- `vitest`
 
 ## Implementation notes
 

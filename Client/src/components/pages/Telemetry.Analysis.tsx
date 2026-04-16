@@ -226,9 +226,7 @@ export default function TelemetryAnalysis() {
   // Data state
   const [loading, setLoading] = useState(false)
   const [events, setEvents] = useState<TelemetryEventRow[]>([])
-  const [offset, setOffset] = useState(0)
   const [hasMore, setHasMore] = useState(true)
-  const [fromCache, setFromCache] = useState(false)
   const [expanded, setExpanded] = useState<string | null>(null)
 
   // Selection state
@@ -245,6 +243,11 @@ export default function TelemetryAnalysis() {
   const { showToast } = useToast()
 
   const didInit = useRef(false)
+  /** Monotonic id so stale async responses (double click, refresh during load) cannot overwrite state. */
+  const fetchSeq = useRef(0)
+  /** Latest rows for paging; avoids stale closure when calling `fetchPage` before the next render. */
+  const eventsRef = useRef<TelemetryEventRow[]>([])
+  eventsRef.current = events
 
   // ── Escape key to exit selection mode ───────────────────────────────────────
 
@@ -278,9 +281,7 @@ export default function TelemetryAnalysis() {
     const cached = readCache()
     if (cached?.events.length) {
       setEvents(cached.events)
-      setOffset(cached.offset)
       setHasMore(cached.hasMore ?? true) // Preserve hasMore from cache, default to true
-      setFromCache(true)
       return
     }
     void fetchPage(0, [])
@@ -288,31 +289,31 @@ export default function TelemetryAnalysis() {
   }, [backendBase])
 
   async function fetchPage(pageOffset: number, accumulated: TelemetryEventRow[]) {
+    const seq = ++fetchSeq.current
     setLoading(true)
-    setFromCache(false)
     try {
       const token = await getAuthToken()
       const { data } = await fetchEnveloped<{ events?: TelemetryEventRow[] }>(
         `${backendBase}/analysis?limit=${pageSize}&offset=${pageOffset}`,
         { headers: { authorization: `Bearer ${token}` } },
       )
+      if (seq !== fetchSeq.current) return
+
       const next = Array.isArray(data.events) ? data.events : []
       const all = [...accumulated, ...next]
       const canLoadMore = next.length === pageSize
       setEvents(all)
-      // Offset always stays at 0 for infinite scroll (where accumulated data starts)
-      // Only update on first fetch
-      if (pageOffset === 0) {
-        setOffset(0)
-      }
       setHasMore(canLoadMore)
       writeCache({ events: all, offset: 0, hasMore: canLoadMore })
     } catch (e) {
+      if (seq !== fetchSeq.current) return
       const msg = e instanceof Error ? e.message : 'Failed to load telemetry data.'
       showToast({ variant: 'error', title: 'Load failed', message: msg })
       setHasMore(false)
     } finally {
-      setLoading(false)
+      if (seq === fetchSeq.current) {
+        setLoading(false)
+      }
     }
   }
 
@@ -352,10 +353,10 @@ export default function TelemetryAnalysis() {
   function handleBulkDelete() {
     const targets: EventDeleteTarget[] = events
       .filter(
-        e =>
+        (e, i) =>
           e.id != null
           && e.table_source
-          && selected.has(rowKey(e)),
+          && selected.has(rowKey(e, i)),
       )
       .map(e => ({ table_source: e.table_source!, id: e.id! }))
     void deleteEvents(targets)
@@ -377,8 +378,10 @@ export default function TelemetryAnalysis() {
 
   // ── Selection helpers ────────────────────────────────────────────────────────
 
-  function rowKey(ev: TelemetryEventRow) {
-    return ev.event_id ?? String(ev.id ?? Math.random())
+  function rowKey(ev: TelemetryEventRow, rowIndex: number) {
+    if (ev.event_id) return ev.event_id
+    if (ev.id != null && ev.table_source) return `${ev.table_source}:${ev.id}`
+    return `row:${rowIndex}`
   }
 
   function toggleRow(id: string) {
@@ -393,7 +396,7 @@ export default function TelemetryAnalysis() {
     })
   }
 
-  const allKeys = events.map(rowKey)
+  const allKeys = events.map((ev, i) => rowKey(ev, i))
   const allSelected = allKeys.length > 0 && allKeys.every(k => selected.has(k))
   const someSelected = !allSelected && allKeys.some(k => selected.has(k))
 
@@ -405,11 +408,14 @@ export default function TelemetryAnalysis() {
     }
   }
 
-  const loadMore = () => { if (!loading && hasMore) void fetchPage(offset + pageSize, events) }
+  const loadMore = () => {
+    if (loading || !hasMore) return
+    const acc = eventsRef.current
+    void fetchPage(acc.length, acc)
+  }
   const refresh = () => {
     clearCache()
     setEvents([])
-    setOffset(0)
     setHasMore(true)
     setExpanded(null)
     setSelected(new Set())
@@ -433,14 +439,6 @@ export default function TelemetryAnalysis() {
             <h2 className="text-lg font-semibold text-primary">API Event Feed</h2>
             <p className="mt-0.5 text-sm text-muted">
               Server API calls captured by the internal telemetry pipeline.
-              {fromCache && (
-                <span className="ml-2 text-xs text-subtle italic">
-                  From session cache —{' '}
-                  <button type="button" onClick={refresh} className="text-accent hover:underline">
-                    refresh
-                  </button>
-                </span>
-              )}
             </p>
           </div>
 
@@ -582,8 +580,8 @@ export default function TelemetryAnalysis() {
                 )}
 
                 {/* Rows */}
-                {events.map(ev => {
-                  const key = rowKey(ev)
+                {events.map((ev, rowIndex) => {
+                  const key = rowKey(ev, rowIndex)
                   const isOpen = expanded === key
                   const isSel = selected.has(key)
                   return (

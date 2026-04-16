@@ -20,7 +20,6 @@ class Settings:
     # Supabase service-role key is required for trusted server operations (QR generation, admin endpoints).
     SUPABASE_URL: str = field(default_factory=lambda: os.getenv("SUPABASE_URL", os.getenv("VITE_SUPABASE_URL", "")))
     SUPABASE_KEY: str = field(default_factory=lambda: os.getenv("SUPABASE_KEY", os.getenv("VITE_SUPABASE_KEY", "")))
-
     # FRONTEND_URL: Used for QR code generation (public SPA origin). Default matches deployed client.
     FRONTEND_URL: str = field(
         default_factory=lambda: os.getenv(
@@ -111,6 +110,7 @@ class Settings:
             print("WARNING: SUPABASE_URL or SUPABASE_KEY is missing. Database calls will fail.")
         if not self.SUPABASE_URL or not self.SUPABASE_KEY:
             raise ValueError("SUPABASE_URL and SUPABASE_KEY must be set.")
+
 
         if not self.FRONTEND_URL.startswith("http"):
             print(f"WARNING: FRONTEND_URL '{self.FRONTEND_URL}' might be invalid. It should start with http:// or https://")

@@ -64,17 +64,11 @@ Start from `TelemetryServer/.env.example`.
 | `TELEMETRY_ALLOWED_ORIGINS` | No | CORS allowlist |
 | `TELEMETRY_LOG_LEVEL` | No | Python log level |
 
-## Current implementation note
+## Query key alignment (AMS Server ↔ TelemetryServer)
 
-Protected query routes currently read `settings.ITOPS_QUERY_KEY`, and `TelemetryServer/core/settings.py` populates that value from `TELEMETRY_ITOPS_QUERY_KEY_NEW_NEW`.
+Protected query routes authenticate using `settings.ITOPS_QUERY_KEY` in [`core/settings.py`](./core/settings.py), loaded from **`TELEMETRY_ITOPS_QUERY_KEY_NEW`**.
 
-That means:
-
-- `TelemetryServer/` currently expects `TELEMETRY_ITOPS_QUERY_KEY_NEW_NEW` for query auth
-- `Server/` uses `TELEMETRY_ITOPS_QUERY_KEY_NEW` when calling telemetry query endpoints
-
-If those names are not aligned in your environment or code, `/analysis` and direct telemetry query endpoints will fail auth.
-For now, use the same underlying key value in both places.
+The AMS FastAPI server uses the **same variable name** (`TELEMETRY_ITOPS_QUERY_KEY_NEW` in its own `.env`) when it calls TelemetryServer (for example `/telemetry/overview/events` from [`Server/routers/analysis.py`](../Server/routers/analysis.py)). Use the **same secret value** in both services’ environments so `/analysis` and direct telemetry query calls succeed.
 
 ## Local development
 

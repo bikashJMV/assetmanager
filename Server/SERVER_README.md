@@ -23,18 +23,19 @@ This service is important, but it is not the primary runtime data path. The brow
 - `core/` - settings, auth, dependency wiring, error handling, Supabase client
 - `routers/` - FastAPI route modules
 - `schemas/` - request and response models
-- `services/` - QR generation
+- `services/` - QR and QR-label PDF generation; email notification orchestration (see [`services/README.md`](./services/README.md))
 - `db/migrations/v2/` - canonical AMS SQL migrations
 - `scripts/import_v2_from_sheet.py` - spreadsheet import utility
 
 ## Routers
 
-- `health.py`
-- `assets.py`
+- `health.py` - health checks
+- `assets.py` - assets + browser-facing asset routes (`browser_router`)
 - `logs.py`
-- `assignments.py`
-- `employees.py`
-- `analysis.py`
+- `assignments.py` - JWT-authenticated; not wrapped in global `BACKEND_API_KEY` middleware (see `main.py`)
+- `employees.py` - JWT-authenticated; same as assignments
+- `analysis.py` - IT Ops–gated proxy to `TelemetryServer/` (`/analysis`, `/analysis/bulk`)
+- `bootstrap.py` - break-glass role promotion (`X-Bootstrap-Secret` + `ROLE_BOOTSTRAP_SECRET`; no backend API key)
 
 ## Environment variables
 
@@ -96,11 +97,11 @@ Useful URLs:
 
 ### Protected by backend API key when configured
 
-- `/assets/*`
+- `/assets/*` (including service routes on `assets.router`)
 - `/logs/*`
-- `/assignments/*`
-- `/employees/*`
 - root-level `GET /scan/{asset_ref}`
+
+`assignments`, `employees`, and `analysis` routers are registered **without** the global `BACKEND_API_KEY` dependency so browser sessions can use `Authorization: Bearer <Supabase JWT>` alone; role checks live inside each route.
 
 ### Role-protected inside routers
 

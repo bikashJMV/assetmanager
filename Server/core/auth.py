@@ -1,11 +1,24 @@
 import hmac
 from typing import Literal
 
+import jwt
+from jwt import PyJWKClient, PyJWKClientConnectionError
+from jwt.exceptions import InvalidTokenError
+
 from fastapi import Depends, Header, HTTPException, status
 from supabase import Client
 
 from core.settings import settings
-from core.deps import get_db
+from core.deps import get_db  # used by _resolve_request_role via Depends
+
+# Fetches Supabase's RS256 public keys once and caches them.
+# Re-fetches automatically only when a token presents an unknown key ID.
+# The JWKS endpoint is public — no credentials required.
+_jwks_client = PyJWKClient(
+    f"{settings.SUPABASE_URL}/auth/v1/.well-known/jwks.json",
+    cache_keys=True,
+    max_cached_keys=16,
+)
 
 
 def require_backend_api_key(
@@ -73,12 +86,17 @@ def require_role_bootstrap_secret(
 
 def get_auth_user_id_from_bearer(
     authorization: str | None = Header(default=None),
-    db: Client = Depends(get_db),
 ) -> str:
     """
-    Supabase JWT sub (auth.users id) from Authorization: Bearer.
-    Used by BFF routes that call SECURITY DEFINER RPCs with the service-role client
-    (where auth.uid() is null unless we pass the actor explicitly).
+    Extracts and locally verifies the Supabase JWT from Authorization: Bearer <token>.
+
+    Uses RS256 local verification via Supabase's JWKS endpoint — public key is fetched
+    once at first use and cached. No network round-trip to Supabase per request.
+    Returns the JWT `sub` claim, which equals auth.users.id.
+
+    Trade-off: revoked tokens remain valid until expiry (Supabase default: 1 hour).
+    Mitigation: set JWT expiry to ≤15 min in Supabase Dashboard → Authentication → Settings.
+    For high-sensitivity operations, use a separate dependency that calls db.auth.get_user().
     """
     if not authorization or not authorization.strip().lower().startswith('bearer '):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Missing bearer token.')
@@ -88,16 +106,34 @@ def get_auth_user_id_from_bearer(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Missing bearer token.')
 
     try:
-        user_response = db.auth.get_user(jwt_token)
+        signing_key = _jwks_client.get_signing_key_from_jwt(jwt_token)
+    except PyJWKClientConnectionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail='Unable to fetch token signing key.',
+        ) from exc
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Invalid bearer token.') from exc
 
-    auth_user = getattr(user_response, 'user', None)
-    auth_user_id = getattr(auth_user, 'id', None)
-    if not auth_user_id:
+    try:
+        payload = jwt.decode(
+            jwt_token,
+            signing_key.key,
+            algorithms=[signing_key.algorithm_name],
+            audience="authenticated",
+            options={"require": ["sub", "exp"]},
+        )
+    except InvalidTokenError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail='Invalid or expired bearer token.',
+        ) from exc
+
+    user_id = payload.get("sub")
+    if not user_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Unable to resolve authenticated user.')
 
-    return str(auth_user_id)
+    return str(user_id)
 
 
 def _resolve_request_role(

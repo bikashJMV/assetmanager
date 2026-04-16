@@ -4,9 +4,9 @@ This directory contains utility services and orchestrators used by the FastAPI b
 
 ## Structure
 
-*   `qr_service.py`: Provides the core logic for generating QR codes (both raw PNG bytes and Base64-encoded PNG data URIs) that point to the frontend asset scanning URL.
-*   `qr_label_pdf_service.py`: Uses `reportlab` to build print-ready, formatted A4 PDFs of QR labels for multiple assets. It handles dynamic text resizing, bounding boxes, and multi-page layouts.
-*   `notifications/`: The email notification orchestrator responsible for dispatching domain events out to the Email Microservice (e.g., when an asset is assigned/returned or a user is created). See the `notifications/` directory for its own detailed `README.md`.
+*   [`qr_service.py`](./qr_service.py) — QR PNG bytes and Base64 data URIs for asset scan URLs.
+*   [`qr_label_pdf_service.py`](./qr_label_pdf_service.py) — A4 PDF sheets of QR labels (`reportlab`).
+*   [`notifications/`](./notifications/) — Email notification orchestration (adapter + orchestrator). See [`notifications/README.md`](./notifications/README.md).
 
 ## Principles
 

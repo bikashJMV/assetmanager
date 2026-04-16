@@ -4,9 +4,9 @@ import hmac
 import json
 import time
 
-from fastapi import FastAPI, HTTPException, Depends, Header
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from core.auth import require_backend_api_key, _resolve_request_role
+from core.auth import require_backend_api_key, _resolve_request_role, get_auth_user_id_from_bearer
 from core.middleware import EnvelopeMiddleware, RequestIdMiddleware
 from core.settings import settings
 from core.errors import custom_http_exception_handler, generic_exception_handler
@@ -70,27 +70,12 @@ def create_app() -> FastAPI:
     @app.post("/telemetry/ingest-token", tags=["Telemetry"])
     def issue_telemetry_ingest_token(
         role: str = Depends(_resolve_request_role),
-        authorization: str | None = Header(default=None),
-        db=Depends(get_db),
+        auth_user_id: str = Depends(get_auth_user_id_from_bearer),
     ):
+        # auth_user_id is already validated locally by get_auth_user_id_from_bearer (HS256).
+        # _resolve_request_role shares the same dependency — FastAPI deduplicates within the request.
         if not settings.TELEMETRY_INGEST_TOKEN_SECRET.strip():
             raise HTTPException(status_code=503, detail="Telemetry ingest token secret is not configured.")
-        if not authorization or not authorization.strip().lower().startswith("bearer "):
-            raise HTTPException(status_code=401, detail="Missing bearer token.")
-
-        jwt_token = authorization.strip()[7:].strip()
-        if not jwt_token:
-            raise HTTPException(status_code=401, detail="Missing bearer token.")
-
-        try:
-            user_response = db.auth.get_user(jwt_token)
-        except Exception as exc:
-            raise HTTPException(status_code=401, detail="Invalid bearer token.") from exc
-
-        auth_user = getattr(user_response, "user", None)
-        auth_user_id = getattr(auth_user, "id", None)
-        if not auth_user_id:
-            raise HTTPException(status_code=401, detail="Unable to resolve authenticated user.")
 
         allowed_sources = ["client_engagement", "client_data"]
         if role == "it_ops":

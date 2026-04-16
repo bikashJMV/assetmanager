@@ -2470,6 +2470,8 @@ export type PublicScanAsset = {
   status: string
   is_assigned: boolean
   holder_name?: string | null
+  holder_department?: string | null
+  holder_email?: string | null
   holder_employee_code?: string | null
 }
 
@@ -2508,6 +2510,10 @@ export async function getPublicScanAsset(assetTag: string): Promise<PublicScanAs
     status: typeof p.status === 'string' ? p.status : String(p.status ?? ''),
     is_assigned: Boolean(p.is_assigned),
     holder_name: typeof p.holder_name === 'string' ? p.holder_name : null,
+    holder_department:
+      typeof p.holder_department === 'string' ? p.holder_department : null,
+    holder_email:
+      typeof p.holder_email === 'string' ? p.holder_email : null,
     holder_employee_code:
       typeof p.holder_employee_code === 'string' ? p.holder_employee_code : null,
   }

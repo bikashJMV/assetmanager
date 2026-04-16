@@ -281,7 +281,8 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
             <Field label="Asset Tag" value={formatDisplay(publicAsset.asset_tag)} />
             <Field label="Category" value={formatDisplay(publicAsset.category_name)} />
             <Field label="User" value={formatDisplay(publicAsset.holder_name)} />
-            <Field label="Employee ID" value={formatDisplay(publicAsset.holder_employee_code)} />
+            <Field label="Department" value={formatDisplay(publicAsset.holder_department)} />
+            <Field label="Email" value={formatDisplay(publicAsset.holder_email)} />
           </>
         ) : (
           <>

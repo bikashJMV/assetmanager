@@ -1,5 +1,0 @@
-fastapi
-uvicorn
-pydantic
-python-dotenv
-asyncpg>=0.29.0

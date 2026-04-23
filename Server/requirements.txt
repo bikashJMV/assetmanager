@@ -7,3 +7,7 @@ qrcode[pil]
 openpyxl
 httpx
 reportlab
+opentelemetry-distro
+opentelemetry-exporter-otlp
+prometheus-fastapi-instrumentator
+prometheus-client

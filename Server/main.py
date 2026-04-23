@@ -11,7 +11,8 @@ from core.middleware import EnvelopeMiddleware, RequestIdMiddleware
 from core.settings import settings
 from core.errors import custom_http_exception_handler, generic_exception_handler
 from core.deps import get_db
-from routers import assets, logs, health, assignments, employees, analysis, bootstrap
+from routers import assets, logs, health, assignments, employees, bootstrap
+from prometheus_fastapi_instrumentator import Instrumentator
 
 def create_app() -> FastAPI:
     app = FastAPI(
@@ -48,10 +49,12 @@ def create_app() -> FastAPI:
     # Bearer <session JWT>, not the backend API key.
     app.include_router(assignments.router)
     app.include_router(employees.router)
-    # Role-based auth inside the router; do not require BACKEND_API_KEY for browser usage.
-    app.include_router(analysis.router)
     # Break-glass role promotion: X-Bootstrap-Secret + ROLE_BOOTSTRAP_SECRET only (no BACKEND_API_KEY).
     app.include_router(bootstrap.router)
+
+    # ── Observability ──
+    from routers import observability
+    app.include_router(observability.router)
 
     # Root-level scan endpoint kept for direct QR navigation compatibility.
     @app.get("/scan/{asset_ref}", tags=["Assets"], response_model=assets.AssetOut)
@@ -67,38 +70,10 @@ def create_app() -> FastAPI:
     def root():
         return {"message": "AMS API is running", "env": settings.ENV}
 
-    @app.post("/telemetry/ingest-token", tags=["Telemetry"])
-    def issue_telemetry_ingest_token(
-        role: str = Depends(_resolve_request_role),
-        auth_user_id: str = Depends(get_auth_user_id_from_bearer),
-    ):
-        # auth_user_id is already validated locally by get_auth_user_id_from_bearer (HS256).
-        # _resolve_request_role shares the same dependency — FastAPI deduplicates within the request.
-        if not settings.TELEMETRY_INGEST_TOKEN_SECRET.strip():
-            raise HTTPException(status_code=503, detail="Telemetry ingest token secret is not configured.")
 
-        allowed_sources = ["client_engagement", "client_data"]
-        if role == "it_ops":
-            allowed_sources.append("telemetry_internal")
-
-        now = int(time.time())
-        payload = {
-            "aud": "telemetry_ingest",
-            "sub": str(auth_user_id),
-            "environment": settings.TELEMETRY_ENV,
-            "allowed_sources": allowed_sources,
-            "iat": now,
-            "exp": now + max(settings.TELEMETRY_TOKEN_TTL_SECONDS, 60),
-        }
-        payload_json = json.dumps(payload, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
-        payload_b64 = base64.urlsafe_b64encode(payload_json).decode("utf-8").rstrip("=")
-        signature = hmac.new(
-            settings.TELEMETRY_INGEST_TOKEN_SECRET.encode("utf-8"),
-            payload_b64.encode("utf-8"),
-            hashlib.sha256,
-        ).hexdigest()
-        token = f"{payload_b64}.{signature}"
-        return {"token": token, "expires_in": max(settings.TELEMETRY_TOKEN_TTL_SECONDS, 60)}
+    # Prometheus metrics endpoint (non-invasive; does not affect existing routes)
+    if settings.OTEL_GRAFANA_ENABLED:
+        Instrumentator().instrument(app).expose(app, endpoint="/metrics")
 
     return app
 

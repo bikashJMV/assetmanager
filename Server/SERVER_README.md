@@ -6,12 +6,11 @@ This service is important, but it is not the primary runtime data path. The brow
 
 ## What this service does
 
-- Exposes HTTP endpoints for assets, employees, logs, assignments, health, and analysis
+- Exposes HTTP endpoints for assets, employees, logs, assignments, health, and observability
 - Uses the Supabase service-role key for trusted server-side access
 - Orchestrates automated events and proxies payloads to the Email Notification Microservice
 - Generates server-side QR payload images
-- Issues short-lived telemetry ingest tokens for browser telemetry
-- Proxies IT Ops analysis requests to `TelemetryServer/`
+- Proxies IT Ops log access to Loki (Grafana stack) via `/observability/logs`
 
 ## Entry points
 
@@ -34,8 +33,8 @@ This service is important, but it is not the primary runtime data path. The brow
 - `logs.py`
 - `assignments.py` - JWT-authenticated; not wrapped in global `BACKEND_API_KEY` middleware (see `main.py`)
 - `employees.py` - JWT-authenticated; same as assignments
-- `analysis.py` - IT Ops–gated proxy to `TelemetryServer/` (`/analysis`, `/analysis/bulk`)
 - `bootstrap.py` - break-glass role promotion (`X-Bootstrap-Secret` + `ROLE_BOOTSTRAP_SECRET`; no backend API key)
+- `observability.py` - IT Ops–gated Loki query proxy (`GET /observability/logs`)
 
 ## Environment variables
 
@@ -51,11 +50,8 @@ Create `Server/.env` (start from `Server/.env.example`).
 | `EMAIL_SERVICE_URL` | For notifications | Base URL of the email notification microservice |
 | `BACKEND_API_KEY_EMAIL_NOTIFICATION` | For notifications | Purpose-specific `X-API-Key` used when this server calls the email notification microservice |
 | `ENV` | No | Runtime mode such as `local` or `production` |
-| `TELEMETRY_SERVER_BASE_URL` | For `/analysis` | Base URL of `TelemetryServer/` |
-| `TELEMETRY_ITOPS_QUERY_KEY_NEW` | For `/analysis` | Shared key used when this server calls `TelemetryServer` query routes (`/telemetry/overview/events`, etc.) |
-| `TELEMETRY_INGEST_TOKEN_SECRET` | For browser telemetry | HMAC secret used to sign ingest tokens |
-| `TELEMETRY_TOKEN_TTL_SECONDS` | No | Browser ingest token TTL; handler enforces a minimum of 60 seconds |
-| `TELEMETRY_ENV` | For browser telemetry | Environment claim embedded in signed ingest tokens |
+| `OTEL_GRAFANA_ENABLED` | No | Enables `/metrics` (Prometheus) export |
+| `LOKI_BASE_URL` | No | Loki base URL for `/observability/logs` (defaults to `http://localhost:3100`) |
 
 ## Local development
 
@@ -93,7 +89,7 @@ Useful URLs:
 
 - `GET /`
 - `GET /health`
-- `POST /telemetry/ingest-token` with `Authorization: Bearer <Supabase access token>`
+- `GET /metrics` (only when `OTEL_GRAFANA_ENABLED=true`)
 
 ### Protected by backend API key when configured
 
@@ -101,12 +97,12 @@ Useful URLs:
 - `/logs/*`
 - root-level `GET /scan/{asset_ref}`
 
-`assignments`, `employees`, and `analysis` routers are registered **without** the global `BACKEND_API_KEY` dependency so browser sessions can use `Authorization: Bearer <Supabase JWT>` alone; role checks live inside each route.
+`assignments` and `employees` routers are registered **without** the global `BACKEND_API_KEY` dependency so browser sessions can use `Authorization: Bearer <Supabase JWT>` alone; role checks live inside each route.
 
 ### Role-protected inside routers
 
 - Asset, employee, log, and assignment write routes require a valid bearer token with the appropriate employee role.
-- `GET /analysis` and `DELETE /analysis/bulk` require an IT Ops bearer token and then call `TelemetryServer/` server-to-server (list and bulk-delete telemetry events).
+- `GET /observability/logs` requires an IT Ops bearer token and queries Loki (Grafana stack).
 
 ## API response envelope (v2)
 
@@ -190,4 +186,3 @@ AMS SQL lives in `db/migrations/v2/`.
 
 - [`../README.md`](../README.md)
 - [`./db/migrations/v2/README.md`](./db/migrations/v2/README.md)
-- [`../TelemetryServer/TELEMETRY_SERVER_README.md`](../TelemetryServer/TELEMETRY_SERVER_README.md)

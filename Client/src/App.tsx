@@ -3,7 +3,7 @@ import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation, useNavigat
 import type { AuthChangeEvent, Session } from '@supabase/supabase-js'
 import Sidebar from './components/common/Sidebar'
 import { getSession, onAuthStateChange, signInWithGoogle, signOut } from './api'
-import { startTelemetryBuffer, trackTelemetryEvent } from './telemetry'
+import { startOtelTelemetry } from './otel-telemetry'
 import { getSessionEmployee, listWarrantyNotifications, type SessionEmployee, type WarrantyNotification } from './api'
 import {
   applyDocumentPreferences,
@@ -61,19 +61,8 @@ function AppRoutes() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   useEffect(() => {
     applyStoredPreferences()
-    startTelemetryBuffer()
+    startOtelTelemetry()
   }, [])
-
-  useEffect(() => {
-    trackTelemetryEvent({
-      source: 'client_engagement',
-      event_name: 'route_viewed',
-      event_domain: 'navigation',
-      route_pattern: location.pathname,
-      priority: 'LOW',
-      metadata: { has_query: Boolean(location.search), has_hash: Boolean(location.hash) },
-    })
-  }, [location.pathname, location.search, location.hash])
 
   useEffect(() => {
     const onStorage = (event: StorageEvent) => {

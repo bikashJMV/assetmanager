@@ -1,97 +1,96 @@
 import { useEffect, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
 import { hasActiveItOpsAccess } from '../../api'
 import OverviewAnalysis from './Overview.Analysis'
-import TelemetryAnalysis from './Telemetry.Analysis'
+import LogViewer from './LogViewer'
 
-type AnalysisSection = 'overview' | 'telemetry'
-
-const SECTION_COPY: Record<AnalysisSection, { title: string; description: string }> = {
-  overview: {
-    title: 'Overview Analysis',
-    description: 'Operational asset and employee metrics for admins and IT Ops.',
-  },
-  telemetry: {
-    title: 'Telemetry Analysis',
-    description: 'Recent platform telemetry feeds for IT Ops investigation and diagnostics.',
-  },
-}
+type AnalysisSection = 'overview' | 'logs'
 
 export default function Analysis() {
-  const [searchParams, setSearchParams] = useSearchParams()
   const [canViewTelemetry, setCanViewTelemetry] = useState(false)
-  const [telemetryAccessResolved, setTelemetryAccessResolved] = useState(false)
-  const telemetryRequested = searchParams.get('section') === 'telemetry'
-  const activeSection = canViewTelemetry && telemetryRequested ? 'telemetry' : 'overview'
-  const activeCopy = SECTION_COPY[activeSection]
+  const [activeSection, setActiveSection] = useState<AnalysisSection>('overview')
 
   useEffect(() => {
     let mounted = true
-
     void (async () => {
       const allowed = await hasActiveItOpsAccess()
       if (!mounted) return
       setCanViewTelemetry(allowed)
-      setTelemetryAccessResolved(true)
     })()
-
     return () => {
       mounted = false
     }
   }, [])
 
-  useEffect(() => {
-    if (!telemetryAccessResolved || !telemetryRequested || canViewTelemetry) return
-    const nextParams = new URLSearchParams(searchParams)
-    nextParams.delete('section')
-    setSearchParams(nextParams, { replace: true })
-  }, [canViewTelemetry, searchParams, setSearchParams, telemetryAccessResolved, telemetryRequested])
-
-  const switchSection = (section: AnalysisSection) => {
-    const nextParams = new URLSearchParams(searchParams)
-    if (section === 'overview') {
-      nextParams.delete('section')
-    } else {
-      nextParams.set('section', section)
-    }
-    setSearchParams(nextParams, { replace: true })
-  }
-
   return (
-    <main className="min-h-screen bg-app px-4 py-10 text-primary sm:px-6">
-      <div className="mx-auto max-w-6xl space-y-8">
-        <header className="rounded-2xl border border-base bg-surface-2 p-6 sm:p-8">
-          <p className="text-xs uppercase tracking-[0.22em] text-subtle">Analysis</p>
-          <div className="mt-3 flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
-            <div className="space-y-2">
-              <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">{activeCopy.title}</h1>
-              <p className="max-w-2xl text-sm text-muted sm:text-base">{activeCopy.description}</p>
+    <main className="min-h-screen bg-app px-3 text-primary sm:px-4 sm:py-2 lg:px-6">
+      <div className="mx-auto w-full max-w-7xl space-y-2 sm:space-y-6">
+        <header className="rounded-2xl border border-base bg-surface-2 px-2 pb-2 sm:p-6">
+          <div className=" flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div className="">
+              <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
+                {activeSection === 'overview' ? 'Overview Analysis' : 'Live Telemetry Logs'}
+              </h1>
+              <p className="max-w-2xl text-sm text-muted sm:text-base">
+                {activeSection === 'overview'
+                  ? 'Operational asset and employee metrics for admins and IT Ops.'
+                  : 'Real-time application logs from Loki.'}
+              </p>
             </div>
 
-            <div
-              className="inline-flex w-full flex-wrap gap-2 rounded-xl border border-base bg-surface p-2 lg:w-auto"
-              role="tablist"
-              aria-label="Analysis sections"
-            >
-              <SectionButton
-                active={activeSection === 'overview'}
-                label="Overview"
-                description="Asset and employee KPIs"
-                onClick={() => switchSection('overview')}
-              />
-              {canViewTelemetry ? (
-                <SectionButton
-                  active={activeSection === 'telemetry'}
-                  label="Telemetry"
-                  description="IT Ops event feed"
-                  onClick={() => switchSection('telemetry')}
-                />
-              ) : null}
+            <div className="flex flex-col gap-1 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between lg:justify-end">
+              {canViewTelemetry && (
+                <div
+                  className="inline-flex w-fit flex-wrap gap-2 rounded-xl border border-base bg-surface sm:w-auto"
+                  role="tablist"
+                >
+                  <SectionButton
+                    active={activeSection === 'overview'}
+                    label="Overview"
+                    description="Asset metrics"
+                    onClick={() => setActiveSection('overview')}
+                  />
+                  <SectionButton
+                    active={activeSection === 'logs'}
+                    label="Logs"
+                    description="Live stream"
+                    onClick={() => setActiveSection('logs')}
+                  />
+                </div>
+              )}
+
+              {canViewTelemetry && (
+                <div className="flex items-center">
+                  <a
+                    href={import.meta.env.VITE_GRAFANA_DASHBOARD_URL_FOR_ITOPS}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex w-full items-center justify-center gap-2 rounded-xl bg-accent px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-accent-hover sm:w-auto"
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M3 3v18h18" />
+                      <path d="M18 17V9" />
+                      <path d="M13 17V5" />
+                      <path d="M8 17v-3" />
+                    </svg>
+                    Grafana Dashboard
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="ml-1 opacity-70">
+                      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                      <polyline points="15 3 21 3 21 9" />
+                      <line x1="10" y1="14" x2="21" y2="3" />
+                    </svg>
+                  </a>
+                </div>
+              )}
             </div>
           </div>
         </header>
 
-        {activeSection === 'telemetry' && canViewTelemetry ? <TelemetryAnalysis /> : <OverviewAnalysis />}
+        <div style={{ display: activeSection === 'overview' ? 'block' : 'none' }}>
+          <OverviewAnalysis />
+        </div>
+        <div style={{ display: activeSection === 'logs' ? 'block' : 'none' }}>
+          <LogViewer />
+        </div>
       </div>
     </main>
   )
@@ -114,14 +113,15 @@ function SectionButton({
       role="tab"
       aria-selected={active}
       onClick={onClick}
-      className={`min-w-[11rem] rounded-lg px-4 py-3 text-left transition ${
+      className={`min-w-[7rem] rounded-lg px-4 py-2 text-left transition sm:min-w-[8rem] ${
         active
           ? 'bg-accent text-white shadow-sm'
           : 'bg-transparent text-primary hover:bg-surface-3'
       }`}
     >
       <span className="block text-sm font-semibold">{label}</span>
-      <span className={`mt-1 block text-xs ${active ? 'text-white/80' : 'text-subtle'}`}>{description}</span>
+      <span className={`mt-0.5 block text-xs ${active ? 'text-white/80' : 'text-subtle'}`}>{description}</span>
     </button>
   )
 }
+

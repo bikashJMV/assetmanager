@@ -46,44 +46,16 @@ class Settings:
     # ENVIRONMENT: local | production
     ENV: str = field(default_factory=lambda: os.getenv("ENV", os.getenv("VITE_ENV", "local")))
 
-    # ── Internal telemetry toggle ─────────────────────────────────────────────
-    # Set TELEMETRY_ENABLED=true to forward server API call logs to TelemetryServer.
-    # When false, middleware logs locally only — no network calls to TelemetryServer.
-    TELEMETRY_ENABLED: bool = field(
-        default_factory=lambda: os.getenv("TELEMETRY_ENABLED", "false").strip().lower() == "true"
-    )
-    # Shared static secret for server-to-server ingest. Must match
-    # TELEMETRY_INGEST_SERVER_TOKEN on the TelemetryServer side.
-    TELEMETRY_INGEST_SERVER_TOKEN: str = field(
-        default_factory=lambda: os.getenv("TELEMETRY_INGEST_SERVER_TOKEN", "").strip()
+    # Grafana telemetry enable/disable
+    OTEL_GRAFANA_ENABLED: bool = field(
+        default_factory=lambda: os.getenv("OTEL_GRAFANA_ENABLED", "false").strip().lower() == "true"
     )
 
-    # TelemetryServer (telemetry ingestion/query backend) integration
-    # - Keep TELEMETRY_ITOPS_QUERY_KEY_NEW on the server only (never expose to browser).
-    TELEMETRY_SERVER_BASE_URL: str = field(
-        default_factory=lambda: os.getenv(
-            "TELEMETRY_SERVER_BASE_URL",
-            os.getenv("VITE_TELEMETRY_SERVER_BASE_URL", "http://localhost:8010"),
-        ).rstrip("/"),
+    # Observability (Loki Integration)
+    LOKI_BASE_URL: str = field(
+        default_factory=lambda: os.getenv("LOKI_BASE_URL", "http://localhost:3100").rstrip("/")
     )
-    TELEMETRY_ITOPS_QUERY_KEY_NEW: str = field(
-        default_factory=lambda: os.getenv(
-            "TELEMETRY_ITOPS_QUERY_KEY_NEW",
-            os.getenv("VITE_TELEMETRY_ITOPS_QUERY_KEY_NEW", ""),
-        ).strip(),
-    )
-    TELEMETRY_INGEST_TOKEN_SECRET: str = field(
-        default_factory=lambda: os.getenv(
-            "TELEMETRY_INGEST_TOKEN_SECRET",
-            os.getenv("VITE_TELEMETRY_INGEST_TOKEN_SECRET", ""),
-        )
-    )
-    TELEMETRY_TOKEN_TTL_SECONDS: int = field(
-        default_factory=lambda: int(os.getenv("TELEMETRY_TOKEN_TTL_SECONDS", "600"))
-    )
-    TELEMETRY_ENV: str = field(
-        default_factory=lambda: os.getenv("TELEMETRY_ENV", os.getenv("VITE_TELEMETRY_ENV", "local")).strip().lower()
-    )
+
 
     # ── Notification / Email microservice ────────────────────────────────────
     # EMAIL_SERVICE_URL: Full base URL of the running email microservice.

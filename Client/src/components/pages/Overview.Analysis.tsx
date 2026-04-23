@@ -6,7 +6,6 @@ import {
   type OverviewAnalysisMetric,
   type OverviewAnalysisSnapshot,
 } from '../../api'
-import RefreshButton from '../common/RefreshButton'
 import { getUserFacingMessage, logDevError } from '../../utils/errors'
 import { formatDisplay, formatEnumLabel } from '../../utils/formatDisplay'
 
@@ -79,31 +78,7 @@ export default function OverviewAnalysis() {
   }, [snapshot])
 
   return (
-    <section className="space-y-6" aria-labelledby="overview-analysis-title">
-      <header className="flex flex-col gap-4 rounded-2xl border border-base bg-surface-2 p-5 sm:flex-row sm:items-start sm:justify-between">
-        <div className="space-y-2">
-          <h2 id="overview-analysis-title" className="text-2xl font-semibold tracking-tight">
-            Overview Analysis
-          </h2>
-          <p className="max-w-2xl text-sm text-muted sm:text-base">
-            Track the current inventory footprint, assignment load, and employee coverage without leaving the analysis route.
-          </p>
-        </div>
-
-        <RefreshButton
-          onClick={() => {
-            if (accessState !== 'allowed') return
-            void loadOverview()
-          }}
-          loading={loading && accessState === 'allowed'}
-          disabled={accessState !== 'allowed'}
-          label="Refresh overview"
-          ariaLabel="Refresh overview analysis"
-          title={loading ? 'Refreshing overview analysis' : 'Refresh overview analysis'}
-          className="shrink-0"
-        />
-      </header>
-
+    <section className="" aria-labelledby="overview-analysis-title">
       {accessState === 'checking' && loading && !snapshot ? <OverviewLoadingState /> : null}
 
       {accessState === 'denied' ? (
@@ -146,7 +121,7 @@ export default function OverviewAnalysis() {
 
       {accessState === 'allowed' && snapshot && hasAnyOverviewData ? (
         <>
-          <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <section className="grid lg:mb-4 grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
             <OverviewMetricCard label="Total Assets" value={snapshot.totalAssets} detail="All non-deleted assets in the current inventory view." />
             <OverviewMetricCard label="Assigned Assets" value={snapshot.assignedAssets} detail="Assets with a current holder or open assignment." />
             <OverviewMetricCard label="In Stock" value={snapshot.inStockAssets} detail="Assets currently marked with the in-stock inventory status." />
@@ -338,11 +313,10 @@ function InlineStatePanel({
 }) {
   return (
     <section
-      className={`rounded-xl border p-5 ${
-        tone === 'warning'
+      className={`rounded-xl border p-5 ${tone === 'warning'
           ? 'border-accent-soft bg-[color:var(--accent-soft)]/10'
           : 'border-base bg-surface-2'
-      }`}
+        }`}
     >
       <p className="text-sm font-semibold text-primary">{title}</p>
       <p className="mt-2 text-sm text-muted">{message}</p>

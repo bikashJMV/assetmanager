@@ -6,10 +6,8 @@ The repo currently contains:
 
 - `Client/` - React 19 + Vite 7 + TypeScript SPA
 - `Server/` - FastAPI backend for trusted HTTP operations and email notification orchestration
-- `TelemetryServer/` - optional FastAPI service for telemetry ingest and query (the Client exposes `/analysis` for IT Ops when telemetry is wired; see [`Client/CLIENT_README.md`](./Client/CLIENT_README.md))
 - `Server/db/migrations/v2/` - canonical AMS schema, RLS, views, RPCs, and audit logic
-- `TelemetryServer/db/migrations/` - telemetry schema bootstrap
-- `Telemetry.plan.md` - telemetry rollout notes
+- `Observability/` - Grafana stack (Loki + Tempo + Prometheus + Alloy) for logs, traces, and metrics in local/dev
 - `Context.md` - working context and safety rules for AI/code changes
 
 ## Architecture
@@ -18,7 +16,9 @@ The repo currently contains:
 - Business rules live primarily in SQL, RLS, views, and RPC functions under `Server/db/migrations/v2/`.
 - `Server/` is a secondary trusted layer that uses the Supabase service-role key. It also acts as an orchestrator proxying event payloads to the Email Notification Microservice.
 - The external `Email Notification Microservice` acts as a dedicated dispatch system handling automated CC-enabled receipts.
-- `TelemetryServer/` is a modular and isolated service for collecting platform usage metrics.
+- Observability is implemented with a Grafana stack:
+  - Logs: server stdout → `logs/ams_server.log` → Alloy tails → Loki → `Server/observability/logs` → Client log viewer
+  - Traces: browser OpenTelemetry (OTLP/HTTP) → Alloy → Tempo
 
 ## Core domain rules
 
@@ -36,9 +36,7 @@ The repo currently contains:
 - [`Server/SERVER_README.md`](./Server/SERVER_README.md)
 - [`Server/services/README.md`](./Server/services/README.md)
 - [`Server/db/migrations/v2/README.md`](./Server/db/migrations/v2/README.md)
-- [`TelemetryServer/TELEMETRY_SERVER_README.md`](./TelemetryServer/TELEMETRY_SERVER_README.md)
-- [`TelemetryServer/db/migrations/README.md`](./TelemetryServer/db/migrations/README.md)
-- [`Telemetry.plan.md`](./Telemetry.plan.md)
+- `Observability/` stack docs live alongside the docker compose files
 
 ## Local development
 
@@ -62,23 +60,22 @@ pip install -r requirements.txt
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-### TelemetryServer (optional)
+### Observability (Grafana stack, optional)
 
-Apply `TelemetryServer/db/migrations/001_telemetry_schema.sql` to a dedicated telemetry database first, then run:
+Start the local Grafana stack (Loki + Tempo + Prometheus + Alloy + Grafana) from:
 
 ```bash
-cd TelemetryServer
-pip install -r requirements.txt
-uvicorn main:app --reload --host 0.0.0.0 --port 8010
+cd Observability
+docker compose up -d
 ```
 
 ## Setup order
 
 1. Configure the client Supabase variables in `Client/.env`.
-2. Create `Server/.env` ensuring all environment properties including telemetry and email settings are provisioned.
+2. Create `Server/.env` ensuring all environment properties including email and observability settings are provisioned.
 3. Apply AMS migrations in the order listed in [`Server/db/migrations/v2/README.md`](./Server/db/migrations/v2/README.md) (through **`52_*`** for bulk-import audit actors and BFF assign/return identity).
 4. Start the client and server.
-5. If telemetry flows are requisite, initialize the telemetry schema, bind `.env` configurations, and spin up `TelemetryServer/`.
+5. If you want Grafana dashboards + log viewer, start `Observability/` and run the server with the stdout redirect script so Alloy can tail `logs/ams_server.log`.
 
 ## Notes
 

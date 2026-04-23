@@ -1,0 +1,116 @@
+version: '3.8'
+
+services:
+
+  loki:
+    image: grafana/loki:3.0.0
+    container_name: loki
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./loki-config.yaml:/etc/loki/local-config.yaml
+      - loki_data:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+    networks:
+      - observability
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3100/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  tempo:
+    image: grafana/tempo:2.4.0
+    container_name: tempo
+    # ⚠️ Tempo does NOT expose 4317/4318 to host — Alloy reaches it inside Docker network.
+    # Exposing those ports here would conflict with Alloy's host bindings.
+    expose:
+      - "3200"
+      - "4317"
+      - "4318"
+    volumes:
+      - ./tempo-config.yaml:/etc/tempo/config.yaml
+      - tempo_data:/var/tempo
+    command: ["-config.file=/etc/tempo/config.yaml"]
+    networks:
+      - observability
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3200/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--web.enable-remote-write-receiver"     # Required for Alloy remote_write
+      - "--storage.tsdb.retention.time=30d"
+    networks:
+      - observability
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:9090/-/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  grafana:
+    image: grafana/grafana-oss:10.4.0
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_DASHBOARD_ADMIN_USERNAME:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_DASHBOARD_ADMIN_PASSWORD:-admin}
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel
+      - GF_SMTP_ENABLED=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+    depends_on:
+      loki:       { condition: service_healthy }
+      tempo:      { condition: service_healthy }
+      prometheus: { condition: service_healthy }
+    networks:
+      - observability
+    restart: unless-stopped
+
+  alloy:
+    image: grafana/alloy:v1.1.0
+    container_name: alloy
+    ports:
+      - "12345:12345"   # Alloy UI
+      - "4317:4317"     # OTLP gRPC  — AMS Server auto-instrument sends here
+      - "4318:4318"     # OTLP HTTP  — OTel Web SDK from browser sends here
+    command: run /etc/alloy/config.alloy
+    env_file: .env.observability
+    volumes:
+      - ./alloy/config.alloy:/etc/alloy/config.alloy
+      - ../logs:/app/logs:ro    # Tail AMS Server + TelemetryServer log files
+    depends_on:
+      loki:       { condition: service_healthy }
+      tempo:      { condition: service_healthy }
+      prometheus: { condition: service_healthy }
+    networks:
+      - observability
+    restart: unless-stopped
+
+networks:
+  observability:
+    driver: bridge
+
+volumes:
+  prometheus_data:
+  loki_data:
+  tempo_data:
+  grafana_data:

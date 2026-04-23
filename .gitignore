@@ -17,3 +17,9 @@ Telemetry.plan.md
 .cursorignore
 EVALUATION_SCORECARD.md
 ./email.service.implementation.md
+
+logs/
+*.log
+logs/**
+logs/ams_server.log
+logs/telemetry_server.log

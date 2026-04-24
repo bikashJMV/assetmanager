@@ -1,87 +1,411 @@
 # Asset Manager
 
-Asset Manager is a Supabase-centered asset tracking platform for physical and digital assets. It provides end-to-end lifecycle management with role-based access control, event-driven email notifications, and comprehensive telemetry.
+Asset Manager is a **Supabase-centered asset tracking platform** for physical and digital assets. It provides end-to-end lifecycle management with role-based access control, event-driven email notifications, and comprehensive telemetry.
 
-The repo currently contains:
+## Repository Structure
 
-- `Client/` - React 19 + Vite 7 + TypeScript SPA
-- `Server/` - FastAPI backend for trusted HTTP operations and email notification orchestration
-- `Server/db/migrations/v2/` - canonical AMS schema, RLS, views, RPCs, and audit logic
-- `Observability/` - Grafana stack (Loki + Tempo + Prometheus + Alloy) for logs, traces, and metrics in local/dev
-- `Context.md` - working context and safety rules for AI/code changes
+```
+assetmanager/
+├── Client/                 # React 19 + Vite 7 + TypeScript SPA
+├── Server/                 # FastAPI backend (Python 3.12+)
+├── Observability/          # Grafana stack (Loki + Tempo + Prometheus + Alloy)
+├── logs/                   # Server log files (tailed by Alloy)
+└── Additional notes/       # Documentation and guides
+```
 
 ## Architecture
 
-- The browser talks directly to Supabase for most runtime reads and writes.
-- Business rules live primarily in SQL, RLS, views, and RPC functions under `Server/db/migrations/v2/`.
-- `Server/` is a secondary trusted layer that uses the Supabase service-role key. It also acts as an orchestrator proxying event payloads to the Email Notification Microservice.
-- The external `Email Notification Microservice` acts as a dedicated dispatch system handling automated CC-enabled receipts.
-- Observability is implemented with a Grafana stack:
-  - Logs: server stdout → `logs/ams_server.log` → Alloy tails → Loki → `Server/observability/logs` → Client log viewer
-  - Traces: browser OpenTelemetry (OTLP/HTTP) → Alloy → Tempo
+### Data Flow
 
-## Core domain rules
+- **Browser → Supabase**: Most runtime reads and writes (direct connection with anon key + JWT)
+- **Browser → FastAPI**: Trusted operations (QR generation, PDF export, bulk operations)
+- **FastAPI → Supabase**: Service-role operations (bypasses RLS)
+- **FastAPI → Email Service**: Event-driven notifications
+- **Observability**: Logs, traces, and metrics collected by Grafana stack
 
-- **Nomenclature**: The platform standardizes labels across the UI and data to **Asset Tag** (identifier), **Category**, and **User** (assignment holder).
-- **Roles**: Canonical employee role is `employees.role`: `employee`, `admin`, `it_ops`. `it_ops` holds the highest tier.
-- **Flags**: `employees.is_active` and `employees.erp_active` are distinct flags requiring disparate handling.
-- **Assignments**: Assignment and return streams are exclusively powered by DB RPCs: `fn_assign_asset` and `fn_return_asset`.
-- **Lifecycle**: Post-assignment lifecycle states (`in_stock`, `in_repair`, `retired`, `lost`, `disposed`) are governed by `fn_set_asset_lifecycle_status`.
-- **Public Scan**: QR-based scans utilize `fn_public_scan_asset` fetching tightly-scoped anonymous records without leaking internal status logs.
-- **Recycle Bin**: Asset Manager delegates deletions to soft-delete mechanisms. The `v_employee_directory` dynamically conceals binned employees. Permanent purge necessitates validation on bin history (`fn_delete_employee_permanent_requires_recycle_bin`).
+### Key Components
 
-## Repository guides
+1. **Database (Supabase/PostgreSQL)**:
+   - Business logic in SQL (RLS policies, views, RPCs)
+   - 53 migrations in `Server/db/migrations/v2/`
+   - Row-level security for multi-tenant access control
 
-- [`Client/CLIENT_README.md`](./Client/CLIENT_README.md)
-- [`Server/SERVER_README.md`](./Server/SERVER_README.md)
-- [`Server/services/README.md`](./Server/services/README.md)
-- [`Server/db/migrations/v2/README.md`](./Server/db/migrations/v2/README.md)
-- `Observability/` stack docs live alongside the docker compose files
+2. **Frontend (React SPA)**:
+   - Direct Supabase connection for most operations
+   - OpenTelemetry Web SDK for browser traces
+   - Role-based UI (employee, admin, it_ops)
 
-## Local development
+3. **Backend (FastAPI)**:
+   - Service-role Supabase client for trusted operations
+   - QR code generation and PDF label export
+   - Email notification orchestration
+   - Prometheus metrics endpoint
+   - Loki log proxy for IT Ops
 
-### Client
+4. **Observability (Grafana Stack)**:
+   - **Logs**: Server stdout → log files → Alloy → Loki
+   - **Traces**: Browser/Server OTLP → Alloy → Tempo
+   - **Metrics**: Prometheus scraping `/metrics` endpoint
+   - **Dashboards**: Grafana with auto-provisioned data sources
 
-Create `Client/.env` (start from `Client/.env.example`), then run:
+## Core Domain Rules
+
+### Nomenclature
+
+- **Asset Tag**: System-generated identifier (e.g., AST-00001)
+- **Category**: Asset type (laptop, desktop, monitor, etc.)
+- **User**: Assignment holder (employee)
+
+### Roles
+
+Stored in `employees.role` column:
+- **employee**: View own assets, own profile
+- **admin**: Manage all assets, all employees, bulk operations
+- **it_ops**: Full access + observability dashboard (highest tier)
+
+### Employee Flags
+
+- `is_active`: Employment status (active/inactive)
+- `erp_active`: ERP system status (separate flag, migration 16)
+
+**Important**: Asset status is NOT derived from ERP status.
+
+### Assignment Rules
+
+- **Assign**: `fn_assign_asset(asset_tag, employee_code, ...)`
+- **Return**: `fn_return_asset(asset_tag, ...)`
+- **Lifecycle**: `fn_set_asset_lifecycle_status(asset_tag, new_status, ...)`
+
+**Status Whitelist** (migration 21): Only `in_stock` or `assigned` assets can be assigned.
+
+### Lifecycle States
+
+- `in_stock`: Available for assignment
+- `assigned`: Currently assigned to employee
+- `in_repair`: Under maintenance (auto-returns from employee)
+- `retired`: End of life
+- `lost`: Missing
+- `disposed`: Discarded
+
+### Public QR Scan
+
+**RPC**: `fn_public_scan_asset(asset_tag)`
+
+**Data Exposure** (migration 22):
+- **Assigned assets**: `asset_name`, `holder_name`, `holder_employee_code`, `holder_department`, `holder_email` (migration 53), `category` (migration 35)
+- **Unassigned assets**: `asset_name`, `status`, `asset_tag`, `category`
+
+**Security**: No internal IDs, purchase dates, warranty info, custom fields, or location data exposed.
+
+### Recycle Bin (Soft Delete)
+
+- **Soft Delete**: Marks record as deleted, moves to recycle bin
+- **Restore**: Recovers from recycle bin
+- **Permanent Delete**: Only after soft delete (migration 46)
+
+**Employee Directory** (`v_employee_directory`): Excludes employees with open recycle bin entries (migration 45).
+
+## Repository Guides
+
+- [`Client/CLIENT_README.md`](./Client/CLIENT_README.md) - React SPA documentation
+- [`Server/SERVER_README.md`](./Server/SERVER_README.md) - FastAPI backend documentation
+- [`Server/db/migrations/v2/README.md`](./Server/db/migrations/v2/README.md) - Database migrations
+- [`Observability/OBSERVABILITY_TELEMETRY.md`](./Observability/OBSERVABILITY_TELEMETRY.md) - Observability stack
+
+## Quick Start
+
+### Prerequisites
+
+- Node.js 18+
+- Python 3.12+
+- Docker (for Grafana stack)
+- Supabase account
+
+### 1. Database Setup
+
+1. Create Supabase project at [supabase.com](https://supabase.com)
+2. Apply migrations in order (01-53):
+   ```bash
+   # In Supabase SQL Editor, run each migration file
+   # Or use Supabase CLI:
+   supabase db push
+   ```
+3. Note down:
+   - Project URL
+   - Anon key (public)
+   - Service role key (secret)
+
+### 2. Client Setup
 
 ```bash
 cd Client
+
+# Copy environment template
+cp .env.example .env
+
+# Edit .env with your Supabase credentials
+# VITE_SUPABASE_URL=https://your-project.supabase.co
+# VITE_SUPABASE_ANON_KEY=your-anon-key
+
+# Install dependencies
 npm install
+
+# Start development server
 npm run dev
 ```
 
-### Server
+**Access**: `http://localhost:5173`
 
-Create `Server/.env` (start from `Server/.env.example`), then run:
+### 3. Server Setup
 
 ```bash
 cd Server
+
+# Copy environment template
+cp .env.example .env
+
+# Edit .env with your Supabase credentials
+# SUPABASE_URL=https://your-project.supabase.co
+# SUPABASE_KEY=your-service-role-key
+
+# Install dependencies
 pip install -r requirements.txt
+
+# Start development server
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-### Observability (Grafana stack, optional)
+**Access**: 
+- API: `http://localhost:8000`
+- Docs: `http://localhost:8000/docs`
 
-Start the local Grafana stack (Loki + Tempo + Prometheus + Alloy + Grafana) from:
+### 4. Observability Stack (Optional)
 
 ```bash
 cd Observability
+
+# Copy environment template
+cp .env.observability.example .env.observability
+
+# Start Grafana stack
 docker compose up -d
 ```
 
-## Setup order
+**Access**:
+- Grafana: `http://localhost:3000` (admin/admin)
+- Prometheus: `http://localhost:9090`
+- Loki: `http://localhost:3100`
 
-1. Configure the client Supabase variables in `Client/.env`.
-2. Create `Server/.env` ensuring all environment properties including email and observability settings are provisioned.
-3. Apply AMS migrations in the order listed in [`Server/db/migrations/v2/README.md`](./Server/db/migrations/v2/README.md) (through **`52_*`** for bulk-import audit actors and BFF assign/return identity).
-4. Start the client and server.
-5. If you want Grafana dashboards + log viewer, start `Observability/` and run the server with the stdout redirect script so Alloy can tail `logs/ams_server.log`.
+### 5. Create Initial Admin
+
+**Option 1: Bootstrap Endpoint**
+```bash
+curl -X POST http://localhost:8000/internal/bootstrap-role \
+  -H "X-Bootstrap-Secret: your-bootstrap-secret" \
+  -H "Content-Type: application/json" \
+  -d '{"email": "admin@company.com", "role": "it_ops"}'
+```
+
+**Option 2: Direct Database**
+```sql
+-- Create employee
+INSERT INTO employees (employee_code, name, email, role, is_active)
+VALUES ('EMP-001', 'Admin User', 'admin@company.com', 'it_ops', true);
+
+-- After first Google sign-in, link auth_user_id
+UPDATE employees
+SET auth_user_id = (SELECT id FROM auth.users WHERE email = 'admin@company.com')
+WHERE email = 'admin@company.com';
+```
+
+## Environment Variables
+
+### Client (`.env`)
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `VITE_SUPABASE_URL` | Yes | - | Supabase project URL |
+| `VITE_SUPABASE_ANON_KEY` | Yes | - | Supabase anon key (public) |
+| `VITE_PUBLIC_APP_ORIGIN` | No | `https://web-assetmanager.vercel.app` | QR scan origin |
+| `VITE_API_URL` | No | `http://localhost:8000` | FastAPI server URL |
+| `VITE_BACKEND_API_KEY` | No | - | Backend API key (if required) |
+| `VITE_OTEL_GRAFANA_ENABLED` | No | `false` | Enable OpenTelemetry tracing |
+| `VITE_OTEL_EXPORTER_ENDPOINT` | No | `http://localhost:4318` | OTLP/HTTP endpoint |
+| `VITE_GRAFANA_DASHBOARD_URL_FOR_ITOPS` | No | - | Grafana dashboard link |
+
+### Server (`.env`)
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `SUPABASE_URL` | Yes | - | Supabase project URL |
+| `SUPABASE_KEY` | Yes | - | Supabase service-role key (secret) |
+| `FRONTEND_URL` | Recommended | `https://web-assetmanager.vercel.app` | Client origin for QR generation |
+| `ALLOWED_ORIGINS` | Recommended | - | CORS allowlist (comma-separated) |
+| `BACKEND_API_KEY` | No | - | Optional API key for protected routes |
+| `ROLE_BOOTSTRAP_SECRET` | No | - | Break-glass role promotion secret |
+| `ENV` | No | `local` | Environment (local/production) |
+| `EMAIL_SERVICE_URL` | No | - | Email notification microservice URL |
+| `BACKEND_API_KEY_EMAIL_NOTIFICATION` | No | - | Email service API key |
+| `NOTIFICATIONS_ENABLED` | No | `false` | Enable email notifications |
+| `OTEL_GRAFANA_ENABLED` | No | `false` | Enable Prometheus `/metrics` endpoint |
+| `LOKI_BASE_URL` | No | `http://localhost:3100` | Loki URL for log proxy |
+
+## Key Features
+
+### Asset Management
+
+- ✅ Create, read, update, delete (soft delete)
+- ✅ Assign to employees
+- ✅ Return to stock
+- ✅ Lifecycle status management (in_repair, retired, lost, disposed)
+- ✅ QR code generation and scanning
+- ✅ PDF label export (bulk)
+- ✅ Bulk import from Excel
+- ✅ Complete audit trail with actor snapshots
+
+### Employee Management
+
+- ✅ Create, read, update, delete (soft delete)
+- ✅ Role-based access control (employee, admin, it_ops)
+- ✅ Google OAuth authentication
+- ✅ Auto-link auth_user_id on sign-in
+- ✅ Bulk import from Excel
+- ✅ Recycle bin with restore
+
+### Observability
+
+- ✅ Browser traces (OpenTelemetry Web SDK)
+- ✅ Server metrics (Prometheus)
+- ✅ Server logs (Loki)
+- ✅ IT Ops log viewer in UI
+- ✅ Grafana dashboards
+- ✅ Request correlation (X-Request-Id)
+
+### Security
+
+- ✅ Row-level security (RLS) policies
+- ✅ JWT authentication (Supabase Auth)
+- ✅ Role-based authorization
+- ✅ CORS protection
+- ✅ API key protection (optional)
+- ✅ Audit logging
+
+## Technology Stack
+
+| Layer | Technology | Version |
+|-------|-----------|---------|
+| Frontend | React | 19.0.0 |
+| Build Tool | Vite | 7.0.0 |
+| Language | TypeScript | 5.6.2 |
+| Styling | TailwindCSS | 3.4.17 |
+| Backend | FastAPI | Latest |
+| Language | Python | 3.12+ |
+| Database | PostgreSQL (Supabase) | 15+ |
+| Auth | Supabase Auth | Latest |
+| Observability | Grafana Stack | Latest |
+| Telemetry | OpenTelemetry | Latest |
+
+## Development Workflow
+
+### Making Database Changes
+
+1. Create new migration file: `Server/db/migrations/v2/54_your_change.sql`
+2. Apply migration in Supabase SQL Editor
+3. Update `Server/db/migrations/v2/README.md` with migration details
+4. Test migration on local database
+5. Commit migration file
+
+### Adding New Features
+
+1. Update database schema (if needed)
+2. Update backend API (if needed)
+3. Update frontend UI
+4. Update tests
+5. Update documentation
+
+### Testing
+
+**Client**:
+```bash
+cd Client
+npm run test        # Run tests once
+npm run test:watch  # Watch mode
+npm run lint        # ESLint
+```
+
+**Server**:
+```bash
+cd Server
+python -m pytest tests/ -v
+```
+
+## Deployment
+
+### Client (Vercel)
+
+1. Push to GitHub
+2. Import project in Vercel
+3. Set environment variables
+4. Deploy
+
+**Build Command**: `npm run build`  
+**Output Directory**: `dist`
+
+### Server (Vercel/Docker/Traditional)
+
+See [`Server/SERVER_README.md`](./Server/SERVER_README.md) for deployment options.
+
+### Database (Supabase)
+
+Migrations are applied via Supabase SQL Editor or CLI.
+
+## Troubleshooting
+
+### "Employee is not active" error
+
+**Cause**: Employee `is_active = false`
+
+**Fix**: Edit employee, set Active to true
+
+### "Asset status must be in_stock or assigned" error
+
+**Cause**: Asset is in `in_repair`, `retired`, `lost`, or `disposed`
+
+**Fix**: Change asset status to "In Stock" first, then assign
+
+### Soft-deleted employee still appears
+
+**Cause**: Missing migration 45 or 47
+
+**Fix**: Apply migrations 45 and 47
+
+### QR scan returns 404
+
+**Cause**: Asset doesn't exist or is soft-deleted
+
+**Fix**: Verify asset tag, check recycle bin
+
+### Logs not in Grafana
+
+**Cause**: Alloy not tailing log files
+
+**Fix**: Check Alloy config, restart Alloy
 
 ## Notes
 
-- The Client currently assumes `https://web-assetmanager.vercel.app` natively for QR scaffolding unless overridden by `VITE_PUBLIC_APP_ORIGIN`.
-- The FastAPI server must have `FRONTEND_URL` corresponding with the Client host for accurate code deployments.
-- Anonymous QR scan limits expose strictly to:
-  - assigned assets: `asset_name`, `holder_name`, `holder_employee_code`, `holder_department`
-  - unassigned assets: `asset_name`, `status`, `asset_tag`
-- Treat the PostgreSQL (`Server/db/migrations/v2/`) RPC schema as your single source of truth when architecture assumptions or documents differ.
+- The client assumes `https://web-assetmanager.vercel.app` for QR codes unless overridden by `VITE_PUBLIC_APP_ORIGIN`
+- The server must have `FRONTEND_URL` matching the client host for correct QR generation
+- Anonymous QR scan exposes only limited data (see Public QR Scan section)
+- Treat PostgreSQL RPC schema as single source of truth
+
+## License
+
+Proprietary - All rights reserved
+
+## Support
+
+For questions or issues, refer to:
+- [Detailed Technical Report](./Additional%20notes/Detailed_Report.md)
+- Individual README files in each directory
+- Database migration documentation
+

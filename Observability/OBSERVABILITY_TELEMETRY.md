@@ -1,259 +1,438 @@
-# Observality & Telemetry (Asset Manager)
+# Observability & Telemetry (Asset Manager)
 
-This document describes **how API requests flow through the system** and **what telemetry we emit** (logs, metrics, traces) so you can quickly diagnose failures, latency, and behavior changes—especially during the DB migration to PostgreSQL.
+This document describes the **actual implementation** of observability in the Asset Manager system, including how logs, metrics, and traces are collected and visualized through the Grafana stack.
 
-## Tech stack (observability-related)
+## Actual Tech Stack
 
-This repo’s local observability stack is based on **Grafana OSS** and **OpenTelemetry** components.
+The Asset Manager uses a **Grafana OSS** stack with **OpenTelemetry** for comprehensive observability:
 
-- **API/Application**: Asset Manager API (HTTP)
-- **Database**: PostgreSQL
-- **Telemetry standard**: OpenTelemetry (logs, metrics, traces)
-- **Telemetry collector**: Grafana Alloy (OpenTelemetry collector/distributor)
-- **Traces backend**: Grafana Tempo
-- **Metrics backend**: Prometheus
-- **Logs backend**: Grafana Loki
-- **Dashboards/Visualization**: Grafana
+- **Frontend**: React 19 SPA with OpenTelemetry Web SDK (`src/otel-telemetry.ts`)
+- **Backend**: FastAPI with Prometheus metrics (`prometheus-fastapi-instrumentator`)
+- **Database**: Supabase (PostgreSQL 15+) - direct browser connection
+- **Telemetry Standard**: OpenTelemetry (OTLP/HTTP for browser, OTLP/gRPC for server)
+- **Collector**: Grafana Alloy 1.1.0 (receives OTLP and tails log files)
+- **Traces Backend**: Grafana Tempo 2.4.0
+- **Metrics Backend**: Prometheus 2.51.0
+- **Logs Backend**: Grafana Loki 3.0.0
+- **Visualization**: Grafana OSS 10.4.0
 
-### Local endpoints (dev)
+### Local Endpoints (Development)
 
-- **Grafana**: `http://localhost:3000`
+- **Grafana Dashboard**: `http://localhost:3000` (default: admin/admin)
 - **Prometheus**: `http://localhost:9090`
 - **Loki**: `http://localhost:3100`
-- **Tempo**: `http://localhost:3200`
-- **Alloy (collector)**: `http://localhost:12345`
+- **Alloy UI**: `http://localhost:12345`
+- **Alloy OTLP gRPC**: `localhost:4317` (for server auto-instrumentation)
+- **Alloy OTLP HTTP**: `localhost:4318` (for browser OpenTelemetry Web SDK)
 
-### Grafana data sources (pre-configured)
+### Grafana Data Sources (Auto-Provisioned)
 
-- **Prometheus** (metrics)
-- **Loki** (logs)
-- **Tempo** (traces)
+Located in `grafana/provisioning/datasources/datasources.yaml`:
+- **Prometheus** - scrapes `/metrics` from FastAPI server
+- **Loki** - receives logs from Alloy (tails `logs/ams_server.log`)
+- **Tempo** - receives traces from Alloy (OTLP from browser and server)
 
-> Note: Credentials should be stored in environment/config (not documented in this file).
+### Credentials
 
-## Goals
+Default Grafana: `admin` / `admin`  
+Override via `.env.observability`:
+```bash
+GRAFANA_DASHBOARD_ADMIN_USERNAME=admin
+GRAFANA_DASHBOARD_ADMIN_PASSWORD=your-secure-password
+```
 
-- **Traceability**: follow a single request across services and dependencies.
-- **Fast debugging**: correlate logs ↔ traces ↔ metrics using consistent identifiers.
-- **Actionable signals**: SLO-friendly metrics (latency, error rate, saturation) with meaningful labels.
+## Architecture (As Implemented)
 
-## API request flow (high level)
+```mermaid
+graph TB
+    Browser[Browser<br/>React SPA]
+    FastAPI[FastAPI Server<br/>Port 8000]
+    Supabase[(Supabase<br/>PostgreSQL)]
+    Alloy[Grafana Alloy<br/>Collector]
+    Loki[(Loki<br/>Logs)]
+    Tempo[(Tempo<br/>Traces)]
+    Prometheus[(Prometheus<br/>Metrics)]
+    Grafana[Grafana<br/>Dashboard]
+    LogFiles[Log Files<br/>logs/ams_server.log]
+    
+    Browser -->|Direct Queries<br/>Anon Key + JWT| Supabase
+    Browser -->|OTLP/HTTP :4318<br/>Traces| Alloy
+    FastAPI -->|Service Role Key| Supabase
+    FastAPI -->|stdout| LogFiles
+    FastAPI -->|/metrics| Prometheus
+    Alloy -->|Tail| LogFiles
+    Alloy -->|Push| Loki
+    Alloy -->|Push| Tempo
+    Grafana -->|Query| Loki
+    Grafana -->|Query| Tempo
+    Grafana -->|Query| Prometheus
+```
+
+## What We Actually Emit
+
+### 1. Browser Traces (OpenTelemetry Web SDK)
+
+**File**: `Client/src/otel-telemetry.ts`
+
+**Enabled When**: `VITE_OTEL_GRAFANA_ENABLED=true`
+
+**What Gets Traced**:
+- All `fetch()` calls (auto-instrumented)
+- All `XMLHttpRequest` calls (auto-instrumented)
+- Service name: `ams-client`
+- Exports to: `http://localhost:4318/v1/traces` (Alloy OTLP/HTTP)
+
+**Span Attributes**:
+- `http.method`: GET, POST, PUT, DELETE
+- `http.url`: Request URL
+- `http.status_code`: Response status
+
+**Initialization**:
+```typescript
+// Called in App.tsx on mount
+startOtelTelemetry();
+```
+
+### 2. Server Metrics (Prometheus)
+
+**File**: `Server/main.py`
+
+**Enabled When**: `OTEL_GRAFANA_ENABLED=true`
+
+**Endpoint**: `GET /metrics` (Prometheus format)
+
+**What Gets Exposed**:
+```python
+# Automatically instrumented by prometheus-fastapi-instrumentator
+if settings.OTEL_GRAFANA_ENABLED:
+    Instrumentator().instrument(app).expose(app, endpoint="/metrics")
+```
+
+**Metrics Available**:
+- `http_request_duration_seconds` - Request latency histogram
+- `http_requests_total` - Total request count by method, path, status
+- `http_requests_in_progress` - Active requests
+
+**Scraped By**: Prometheus every 15s (configured in `prometheus.yml`)
+
+### 3. Server Logs (File Tailing)
+
+**Source**: FastAPI stdout → `logs/ams_server.log`
+
+**How It Works**:
+1. Run server with output redirection:
+   ```bash
+   uvicorn main:app --host 0.0.0.0 --port 8000 >> ../logs/ams_server.log 2>&1
+   ```
+2. Alloy tails the file (configured in `alloy/config.alloy`)
+3. Alloy pushes to Loki
+4. Grafana queries Loki
+
+**Log Format**: Plain text (FastAPI default logging)
+
+**Alloy Configuration**:
+```alloy
+// Tails log files from ../logs directory
+local.file_match "ams_logs" {
+  path_targets = [{
+    __path__ = "/app/logs/ams_server.log",
+  }]
+}
+
+loki.source.file "ams_logs" {
+  targets    = local.file_match.ams_logs.targets
+  forward_to = [loki.write.default.receiver]
+}
+```
+
+## Actual Data Flow
+
+### Browser Request Flow
 
 ```mermaid
 sequenceDiagram
-  autonumber
-  actor User as Client/User
-  participant API as Asset Manager API
-  participant MW as Middleware (Auth/Validation/Correlation)
-  participant SVC as Domain Service/Use-Case
-  participant REPO as Repository/DAO
-  participant PG as PostgreSQL
-  participant EXT as External Services (optional)
-  participant OTEL as Telemetry Pipeline (OTel Collector / APM)
-  participant LOG as Log Store
-  participant MET as Metrics Store
-  participant TR as Trace Store
+    participant User
+    participant Browser
+    participant Supabase
+    participant Alloy
+    participant Tempo
 
-  User->>API: HTTP Request (e.g. POST /assets)
-  API->>MW: Create/propagate correlation id\nStart root span
-  MW-->>OTEL: Emit request-start log/event\nAttach trace_id + correlation_id
-  MW->>SVC: Call use-case
-  SVC->>REPO: Read/Write data
-  REPO->>PG: SQL query/transaction
-  PG-->>REPO: Rows/ack
-  alt External dependency used
-    SVC->>EXT: HTTP/RPC call
-    EXT-->>SVC: Response
-  end
-  SVC-->>MW: Result / error
-  MW-->>OTEL: Record metrics (latency, status)\nEnd root span
-  OTEL-->>TR: Export traces/spans
-  OTEL-->>MET: Export metrics
-  OTEL-->>LOG: Export logs
-  MW-->>User: HTTP Response
+    User->>Browser: Click "View Assets"
+    Browser->>Browser: Start OTel span
+    Browser->>Supabase: GET v_asset_inventory
+    Supabase->>Browser: Return assets
+    Browser->>Browser: End OTel span
+    Browser->>Alloy: Export span (OTLP/HTTP :4318)
+    Alloy->>Tempo: Store trace
 ```
 
-## What telemetry we should emit
-
-### Traces
-
-- **Root span** per inbound HTTP request.
-- **Child spans** for:
-  - auth/permission checks (if significant)
-  - input validation (if significant)
-  - service/use-case execution
-  - database calls (queries + transactions)
-  - external calls (HTTP/RPC)
-
-**Minimum span attributes**
-
-- **request**: `http.method`, `http.route`, `http.status_code`
-- **identity** (when available): `enduser.id` (or internal user id), `tenant.id` (if multi-tenant)
-- **correlation**: `trace_id`, `span_id`, plus an application-level `correlation_id` (see below)
-- **db** (for PG spans): `db.system=postgresql`, `db.name`, `db.operation` (SELECT/INSERT/UPDATE/DELETE)
-
-**Rules of thumb**
-
-- Avoid high-cardinality attributes like full URLs with IDs, raw SQL text, emails, or filenames.
-- For routes, prefer templated routes: `/assets/{id}` rather than `/assets/123`.
-
-### Metrics
-
-At minimum, publish these **request-level** metrics:
-
-- **Request count**: `http.server.requests` (by route, method, status class)
-- **Latency**: `http.server.duration` (histogram preferred; by route, method, status class)
-- **Error rate**: derived from request count (4xx/5xx)
-
-For database migration / Postgres validation, also publish:
-
-- **DB latency**: `db.client.duration` (by operation + table where feasible)
-- **DB errors**: count of exceptions/timeouts
-- **Connection pool**: in-use, idle, wait time (if your driver/pool exposes it)
-
-### Logs
-
-Logs should be **structured** (JSON if possible) and contain:
-
-- **correlation**: `correlation_id`, `trace_id`, `span_id`
-- **request**: method, route, status, duration_ms
-- **error**: message, type, stack (for server-side errors)
-
-**Do not log** secrets or personal data:
-
-- passwords/tokens/credentials
-- full request bodies by default
-- raw SQL with parameters that may contain sensitive fields
-
-## App-proxy → Loki → Grafana (logs pipeline)
-
-This section explains a common setup where the application sends logs to an **app-proxy** (sidecar / gateway / reverse proxy) which forwards them to **Loki**, and you view/search them in **Grafana**.
+### Server Request Flow
 
 ```mermaid
-flowchart LR
-  A[Asset Manager API\n(app container/process)] -->|stdout/stderr\nor HTTP log shipper| P[app-proxy\n(log gateway)]
-  P -->|push API| L[(Loki)]
-  L --> G[Grafana Explore / Dashboards]
+sequenceDiagram
+    participant Browser
+    participant FastAPI
+    participant Supabase
+    participant Prometheus
+    participant LogFile
 
-  subgraph Metadata
-    CID[X-Correlation-Id]
-    TID[trace_id/span_id]
-    LAB[labels: app, env, instance, route, level]
-  end
-
-  A -.-> CID
-  A -.-> TID
-  P -.-> LAB
+    Browser->>FastAPI: POST /assets (Bearer token)
+    FastAPI->>FastAPI: Validate JWT
+    FastAPI->>FastAPI: Check role (admin/it_ops)
+    FastAPI->>Supabase: RPC fn_create_asset_with_log()
+    Supabase->>FastAPI: Return asset_id
+    FastAPI->>LogFile: Write log line
+    FastAPI->>Browser: Return asset details
+    Prometheus->>FastAPI: Scrape /metrics
 ```
 
-### What the app-proxy is responsible for
+## IT Ops Log Viewer
 
-- **Accept logs**: from app `stdout/stderr` (common in containers) or via an HTTP endpoint (if you ship logs over HTTP).
-- **Parse/normalize**: ensure each log record is structured (JSON preferred) and has consistent fields.
-- **Enrich**: attach or map metadata into Loki labels (keep labels low-cardinality).
-- **Forward to Loki**: push batches to Loki with retry/backoff.
+**Component**: `Client/src/components/pages/LogViewer.tsx`
 
-### Recommended Loki labels (keep them low-cardinality)
+**Route**: `/analysis` (Logs tab, IT Ops only)
 
-Good labels:
+**How It Works**:
+1. Browser calls FastAPI: `GET /observability/logs?query={...}&limit=100`
+2. FastAPI validates IT Ops role via `fn_is_it_ops()` RPC
+3. FastAPI proxies request to Loki: `http://localhost:3100/loki/api/v1/query_range`
+4. Loki returns log entries
+5. FastAPI returns to browser
+6. Browser displays logs in UI
 
-- **service/app**: `assetmanager-api`
-- **env**: `dev` / `stage` / `prod`
-- **instance**: pod/container name (bounded)
-- **level**: `info`/`warn`/`error`
+**Authentication**: Requires `Authorization: Bearer <Supabase JWT>` with IT Ops role
 
-Avoid labels like:
+**Query Examples**:
+```logql
+# All AMS server logs
+{service="ams-server"}
 
-- user id, correlation id, trace id
-- request path with ids
-- exception messages
+# Error logs only
+{service="ams-server"} |= "ERROR"
 
-Instead, keep those as **log fields** (JSON properties) so you can still search them without exploding label cardinality.
+# Logs from last hour
+{service="ams-server"} [1h]
+```
 
-### How logs “appear” in Grafana
+## Request Correlation
 
-- The proxy writes logs to Loki streams identified by labels.
-- Grafana connects to Loki as a datasource.
-- In **Grafana Explore**, you query logs using LogQL, typically starting with labels, then filtering on fields.
+**Implemented**: `X-Request-Id` header (via `RequestIdMiddleware`)
 
-Example query patterns (conceptual):
+**File**: `Server/core/middleware.py`
 
-- **By service + environment**: `{service="assetmanager-api", env="prod"}`
-- **Only errors**: `{service="assetmanager-api", env="prod"} |= "error"`
-- **By correlation id (as a field, not a label)**: `{service="assetmanager-api", env="prod"} |= "correlation_id=..."`
+**How It Works**:
+1. Client sends request (optionally with `X-Request-Id` header)
+2. Middleware generates or accepts request ID
+3. Middleware adds `x-request-id` to response headers
+4. Middleware logs request with request_id
 
-### Correlation between Loki logs and traces
+**Usage**:
+```python
+# In middleware
+request_id = request.headers.get("X-Request-Id") or str(uuid.uuid4())
+response.headers["x-request-id"] = request_id
+```
 
-To jump from a log line to a trace, ensure each log includes:
+## Starting the Observability Stack
 
-- **`correlation_id`** (returned to clients as `X-Correlation-Id`)
-- **`trace_id`** and **`span_id`** (from OpenTelemetry)
+### 1. Start Grafana Stack
 
-Then in Grafana you can:
+```bash
+cd Observability
+docker compose up -d
+```
 
-- Search logs by `correlation_id`
-- Open a log line and use `trace_id` to pivot to the tracing datasource (Tempo/Jaeger/vendor APM) if configured
+**Services Started**:
+- Loki (port 3100)
+- Tempo (internal only, accessed via Alloy)
+- Prometheus (port 9090)
+- Grafana (port 3000)
+- Alloy (ports 12345, 4317, 4318)
 
-## Correlation IDs (critical for debugging)
+### 2. Configure Client
 
-We use two related concepts:
+```bash
+# Client/.env
+VITE_OTEL_GRAFANA_ENABLED=true
+VITE_OTEL_EXPORTER_ENDPOINT=http://localhost:4318
+VITE_GRAFANA_DASHBOARD_URL_FOR_ITOPS=http://localhost:3000/dashboards
+```
 
-- **trace_id/span_id**: generated by tracing SDKs and exported to the trace backend.
-- **correlation_id**: an application-level request id we can pass to clients and logs.
+### 3. Configure Server
 
-### Recommended behavior
+```bash
+# Server/.env
+OTEL_GRAFANA_ENABLED=true
+LOKI_BASE_URL=http://localhost:3100
+```
 
-- On request entry:
-  - If client provides `X-Correlation-Id`, **accept** it (validate length/charset).
-  - Otherwise **generate** one.
-- Return it in response header: `X-Correlation-Id`.
-- Include it in every log line and as an attribute on the root span.
+### 4. Run Server with Log Redirection
 
-## Recommended instrumentation points
+```bash
+cd Server
+uvicorn main:app --host 0.0.0.0 --port 8000 >> ../logs/ams_server.log 2>&1
+```
 
-### Inbound HTTP (middleware)
+Or use the PowerShell script:
+```powershell
+cd Server
+.\launch-otel-server.ps1
+```
 
-- Start the root span.
-- Attach/derive route name.
-- Capture duration and status code.
-- Ensure `correlation_id` is present and propagated.
+### 5. Run Client
 
-### Database layer (repository/DAO)
+```bash
+cd Client
+npm run dev
+```
 
-- Wrap calls in spans (or rely on auto-instrumentation if enabled).
-- Add safe attributes:
-  - operation (SELECT/INSERT/UPDATE/DELETE)
-  - entity/table name (avoid dynamic values)
-- Record failures with exception details (without leaking parameters).
+## Verification Checklist
 
-### External calls
+### ✅ Metrics Working
 
-- Inject trace context headers so downstream services can join the trace.
-- Record dependency name and status.
+1. Open `http://localhost:8000/metrics`
+2. Should see Prometheus metrics:
+   ```
+   http_requests_total{method="GET",path="/health",status="200"} 5
+   http_request_duration_seconds_bucket{...} 0.045
+   ```
 
-## Useful dashboards (suggested)
+### ✅ Logs Working
 
-- **API Overview**: RPS, p95/p99 latency, error rate by route.
-- **Top slow routes**: sorted by p95 latency.
-- **DB performance**: query latency distribution + error counts.
-- **Dependency health**: external call latency + failure rate.
+1. Make a request to FastAPI
+2. Check `logs/ams_server.log` - should have new log lines
+3. Open Grafana → Explore → Loki
+4. Query: `{service="ams-server"}`
+5. Should see log entries
 
-## Troubleshooting checklist
+### ✅ Traces Working (Browser)
 
-- **Have a `correlation_id`?**
-  - Search logs by `correlation_id`.
-  - Jump to the trace using `trace_id` found in the log line.
-- **Seeing high latency?**
-  - Check trace waterfall: DB span vs external call span vs app logic.
-  - Compare route p95 vs DB p95.
-- **Seeing errors?**
-  - Verify status class distribution (4xx vs 5xx).
-  - Check exception types and failing dependency spans.
+1. Open browser DevTools → Network
+2. Navigate to `/assets` in the app
+3. Open Grafana → Explore → Tempo
+4. Search for recent traces
+5. Should see `ams-client` spans with `fetch()` calls
 
-## Quick verification (smoke test)
+### ✅ IT Ops Log Viewer Working
 
-- Make a request to any endpoint.
-- Confirm response includes `X-Correlation-Id`.
-- Confirm logs include `correlation_id` and `trace_id`.
-- Confirm a trace exists with child spans for DB calls.
-- Confirm request metrics show up for the route.
+1. Sign in as IT Ops user
+2. Navigate to `/analysis` → Logs tab
+3. Should see live logs from Loki
+4. Try filtering by log level or time range
+
+## Troubleshooting
+
+### Logs Not Appearing in Loki
+
+**Check**:
+1. Is Alloy running? `docker ps | grep alloy`
+2. Does log file exist? `ls -la logs/ams_server.log`
+3. Is Alloy tailing the file? Check Alloy UI at `http://localhost:12345`
+4. Is Loki healthy? `curl http://localhost:3100/ready`
+
+**Fix**:
+```bash
+# Restart Alloy
+docker compose restart alloy
+
+# Check Alloy logs
+docker logs alloy
+```
+
+### Traces Not Appearing in Tempo
+
+**Check**:
+1. Is `VITE_OTEL_GRAFANA_ENABLED=true` in client `.env`?
+2. Is Alloy receiving traces? Check Alloy UI
+3. Is Tempo healthy? `docker ps | grep tempo`
+
+**Fix**:
+```bash
+# Restart client with correct env
+cd Client
+npm run dev
+
+# Check browser console for OTel errors
+# Should see: "[OTel] OpenTelemetry Web SDK initialized"
+```
+
+### Metrics Not Appearing
+
+**Check**:
+1. Is `OTEL_GRAFANA_ENABLED=true` in server `.env`?
+2. Is `/metrics` endpoint accessible? `curl http://localhost:8000/metrics`
+3. Is Prometheus scraping? Check `http://localhost:9090/targets`
+
+**Fix**:
+```bash
+# Restart server with correct env
+cd Server
+uvicorn main:app --reload --host 0.0.0.0 --port 8000
+```
+
+### IT Ops Log Viewer Shows "Forbidden"
+
+**Check**:
+1. Is user signed in?
+2. Does user have `it_ops` role in `employees` table?
+3. Is `LOKI_BASE_URL` correct in server `.env`?
+
+**Fix**:
+```sql
+-- Promote user to IT Ops
+UPDATE employees
+SET role = 'it_ops'
+WHERE email = 'user@company.com';
+```
+
+## Production Considerations
+
+### Log Rotation
+
+**Problem**: Log files grow unbounded
+
+**Solution**: Use log rotation (logrotate on Linux, or Python RotatingFileHandler)
+
+```python
+# Server logging config
+import logging.handlers
+
+handler = logging.handlers.RotatingFileHandler(
+    'logs/ams_server.log',
+    maxBytes=100*1024*1024,  # 100 MB
+    backupCount=30  # Keep 30 files
+)
+```
+
+### Grafana Authentication
+
+**Problem**: Default admin/admin credentials
+
+**Solution**: Change in `.env.observability`:
+```bash
+GRAFANA_DASHBOARD_ADMIN_USERNAME=admin
+GRAFANA_DASHBOARD_ADMIN_PASSWORD=your-secure-password
+```
+
+### Data Retention
+
+**Current Settings**:
+- Loki: 30 days (`loki-config.yaml`)
+- Tempo: 30 days (`tempo-config.yaml`)
+- Prometheus: 30 days (`prometheus.yml`)
+
+**Adjust** in respective config files before starting stack.
+
+## Summary
+
+The Asset Manager observability stack is **fully implemented** with:
+
+- ✅ Browser traces via OpenTelemetry Web SDK
+- ✅ Server metrics via Prometheus
+- ✅ Server logs via file tailing (Alloy → Loki)
+- ✅ IT Ops log viewer in UI (FastAPI → Loki proxy)
+- ✅ Grafana dashboards with auto-provisioned data sources
+- ✅ Request correlation via `X-Request-Id` headers
+
+All components are containerized and can be started with `docker compose up -d`.
+

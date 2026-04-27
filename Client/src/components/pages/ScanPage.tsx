@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { getPublicScanAsset, scanAsset, type PublicScanAsset } from '../../api'
+import type { PublicScanAsset } from '../../api'
+import { useProtectedAssetScanQuery, usePublicAssetScanQuery } from '../../queries/assets'
 import { getUserFacingMessage, logDevError } from '../../utils/errors'
 import { formatDisplay } from '../../utils/formatDisplay'
 import InventoryStatusBadge from '../common/InventoryStatusBadge'
@@ -36,50 +37,41 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
   const [manualTag, setManualTag] = useState('')
   const [scannerActive, setScannerActive] = useState(false)
   const [scannerError, setScannerError] = useState('')
-  const [asset, setAsset] = useState<PublicScanAsset | AuthenticatedScanAsset | null>(null)
-  const [error, setError] = useState('')
+  const ref = (id || '').trim()
+  const publicScan = usePublicAssetScanQuery(ref)
+  const protectedScan = useProtectedAssetScanQuery(ref)
+  const activeScan = protectedRoute ? protectedScan : publicScan
 
   useEffect(() => {
-    if (!id) {
-      setAsset(null)
-      setError('')
-      return
+    if (activeScan.error) {
+      logDevError('scan.asset', activeScan.error)
     }
+  }, [activeScan.error])
 
-    let cancelled = false
+  useEffect(() => {
+    if (!protectedRoute) return
 
-    void (async () => {
-      try {
-        if (!protectedRoute) {
-          // Public / unauthenticated path
-          const data = await getPublicScanAsset(id)
-          if (!cancelled) setAsset(data)
-          return
-        }
+    const data = protectedScan.data
+    if (!data || typeof data !== 'object') return
 
-        // Authenticated path: check role + ownership in one round-trip
-        const data = await scanAsset(id)
-        if (cancelled) return
+    if ('redirect' in data && (data as { redirect?: unknown }).redirect === true) {
+      const tag =
+        typeof (data as { asset_tag?: unknown }).asset_tag === 'string'
+          ? (data as { asset_tag: string }).asset_tag
+          : ref
+      void navigate(`/assets/${encodeURIComponent(tag || ref)}`, { replace: true })
+    }
+  }, [navigate, protectedRoute, protectedScan.data, ref])
 
-        if (data.is_privileged || data.is_own_asset) {
-          // Admin/IT Ops or employee viewing their own asset → go straight to asset detail
-          void navigate(`/assets/${encodeURIComponent(data.asset_tag ?? id)}`, { replace: true })
-          return
-        }
-
-        // Employee viewing an asset not assigned to them → show limited public-style view
-        const publicData = await getPublicScanAsset(id)
-        if (!cancelled) setAsset(publicData)
-      } catch (err) {
-        if (!cancelled) {
-          logDevError('scan.asset', err)
-          setError(getUserFacingMessage(err, 'Asset not found'))
-        }
-      }
-    })()
-
-    return () => { cancelled = true }
-  }, [id, protectedRoute, navigate])
+  const error = activeScan.error ? getUserFacingMessage(activeScan.error, 'Asset not found') : ''
+  const asset = (() => {
+    const data = activeScan.data
+    if (!data) return null
+    if (protectedRoute && typeof data === 'object' && 'redirect' in data && (data as { redirect?: unknown }).redirect === true) {
+      return null
+    }
+    return data as PublicScanAsset | AuthenticatedScanAsset
+  })()
 
   const handleLookup = (e: React.FormEvent) => {
     e.preventDefault()
@@ -264,7 +256,7 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
   // Signed-in users (admin/IT Ops and employees viewing their own asset) are always
   // redirected to /assets/:tag by the resolver effect above. The only time we render
   // here is for public (unauthenticated) scans OR employees viewing an asset not
-  // assigned to them — both cases use the PublicScanAsset shape.
+  // assigned to them â€” both cases use the PublicScanAsset shape.
   const publicAsset = asset as PublicScanAsset
   const heading = formatDisplay(publicAsset.category_name) || formatDisplay(publicAsset.asset_tag) || '-'
 
@@ -282,7 +274,7 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
             <Field label="Category" value={formatDisplay(publicAsset.category_name)} />
             <Field label="User" value={formatDisplay(publicAsset.holder_name)} />
             <Field label="Department" value={formatDisplay(publicAsset.holder_department)} />
-            <Field label="Email" value={formatDisplay(publicAsset.holder_email)} />
+            <Field label="Employee ID" value={formatDisplay(publicAsset.holder_employee_business_id)} />
           </>
         ) : (
           <>

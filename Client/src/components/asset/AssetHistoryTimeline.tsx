@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { AssetLifecycleEvent } from '../../api'
-import { formatDateTime } from '../../utils/formatDisplay'
+import { formatDateTime, formatEnumLabel } from '../../utils/formatDisplay'
 import {
   formatChangeValue,
   formatHistoryActor,
@@ -116,7 +116,7 @@ function getEventLabel(eventType: string): string {
   if (normalized === 'assigned') return 'Assigned'
   if (normalized === 'unassigned') return 'Returned'
   if (normalized === 'qr_scanned') return 'QR Scanned'
-  return eventType.replace(/_/g, ' ')
+  return formatEnumLabel(eventType)
 }
 
 function getEventAccentClass(eventType: string): string {

@@ -4,7 +4,7 @@ import StoryCard from './StoryCard'
 type FeatureChip = { label: string; icon: IconName; filled?: boolean }
 
 const featureChips: FeatureChip[] = [
-  { label: 'Google Sign-In', icon: 'log-in', filled: true },
+  { label: 'authNexus SSO', icon: 'log-in', filled: true },
   { label: 'Asset Listing', icon: 'boxes' },
   { label: 'QR Scan', icon: 'scan', filled: true },
   { label: 'Asset Tracking', icon: 'users' },
@@ -20,7 +20,7 @@ export default function ShipAnythingBox({ className = '' }: { className?: string
       tone="accent"
       eyebrow="Current Features"
       title="Ship Anything"
-      description="From secure Google Workspace sign-in to QR-based lookup, every feature is built to replace spreadsheets with one reliable system."
+      description="From secure Enterprise SSO via authNexus to QR-based lookup, every feature is built to replace spreadsheets with one reliable, sovereign system."
       className={className}
     >
       <>

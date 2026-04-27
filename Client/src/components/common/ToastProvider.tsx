@@ -1,7 +1,5 @@
 import {
-  createContext,
   useCallback,
-  useContext,
   useEffect,
   useMemo,
   useRef,
@@ -9,26 +7,17 @@ import {
   type ReactNode,
 } from 'react'
 
-type ToastVariant = 'success' | 'error' | 'warning' | 'info'
-
-type ToastInput = {
-  title?: string
+type ToastRecord = {
+  id: number
   message: string
-  variant?: ToastVariant
+  title?: string
+  variant: ToastVariant
   durationMs?: number
 }
 
-type ToastRecord = ToastInput & {
-  id: number
-  variant: ToastVariant
-}
 
-type ToastContextValue = {
-  showToast: (input: ToastInput) => number
-  dismissToast: (id: number) => void
-}
+import { ToastContext, type ToastInput, type ToastVariant } from '../../hooks/useToast'
 
-const ToastContext = createContext<ToastContextValue | null>(null)
 
 const DEFAULT_DURATION_MS = 4200
 
@@ -154,11 +143,12 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   }, [dismissToast])
 
   useEffect(() => {
+    const currentTimers = timersRef.current
     return () => {
-      for (const timer of timersRef.current.values()) {
+      for (const timer of currentTimers.values()) {
         clearTimeout(timer)
       }
-      timersRef.current.clear()
+      currentTimers.clear()
     }
   }, [])
 
@@ -212,10 +202,4 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   )
 }
 
-export function useToast() {
-  const context = useContext(ToastContext)
-  if (!context) {
-    throw new Error('useToast must be used within ToastProvider')
-  }
-  return context
-}
+

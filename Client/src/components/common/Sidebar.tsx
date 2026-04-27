@@ -119,7 +119,7 @@ function filterSidebarSections(
 }
 
 const isLinkActive = (item: SidebarNavLink, pathname: string, search: URLSearchParams) => {
-  if (item.id === 'home' && (pathname === '/' || pathname === '/dashboard/home')) return true
+  if (item.id === 'home' && (pathname === '/' || pathname === '/dashboard')) return true
   if (item.id === 'all-assets' && pathname === '/assets/new') return false
   if (item.id === 'all-assets' && pathname.startsWith('/assets/scan')) return false
   if (item.id === 'all-employees' && pathname === '/employee/new') return false

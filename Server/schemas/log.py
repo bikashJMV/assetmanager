@@ -21,7 +21,7 @@ class AssetLogCreate(BaseModel):
     asset_ref: Optional[str] = None
     asset_tag: Optional[str] = None
     asset_id: Optional[str] = None
-    actor_employee_code: Optional[str] = None
+    actor_employee_business_id: Optional[str] = None
     note: Optional[str] = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -38,7 +38,7 @@ class AssetLogCreate(BaseModel):
 class AssetLogOut(AssetLogBase):
     id: uuid.UUID
     actor_employee_id: Optional[uuid.UUID] = None
-    actor_employee_code: Optional[str] = None
+    actor_employee_business_id: Optional[str] = None
     actor_employee_name: Optional[str] = None
     qr_code: Optional[str] = None
     created_at: Optional[datetime] = None

@@ -23,8 +23,8 @@ class AssignmentRPCResult(BaseModel):
     assignment_id: Optional[str] = None
     asset_id: Optional[str] = None
     asset_tag: Optional[str] = None
+    id: Optional[str] = None
     employee_id: Optional[str] = None
-    employee_code: Optional[str] = None
     status: Optional[str] = None
     message: Optional[str] = None
     metadata: Optional[dict[str, Any]] = None

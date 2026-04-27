@@ -1,5 +1,9 @@
 # Asset Manager Email Microservice
 
+> **Scope:** This document describes a **separate, standalone** email notification service that the AMS **server** can call over HTTP when `NOTIFICATIONS_ENABLED=true` and `EMAIL_SERVICE_URL` is set. It is **not** source code in the `assetmanager/Server` tree; the integration point in this repo is `Server/services/notifications/`. For AMS-side configuration, use `Server/SERVER_README.md` and `Server/services/notifications/README.md`.
+
+---
+
 A production-grade, standalone microservice built with FastAPI that handles all automated email notifications for the Asset Manager ecosystem. This service acts as a plug-and-play internal system that maps application events directly to beautifully designed HTML templates with built-in retry logic, audit logging, and secure authentication.
 
 ---

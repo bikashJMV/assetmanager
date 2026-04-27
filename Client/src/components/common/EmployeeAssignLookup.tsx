@@ -1,6 +1,8 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { searchAssignableEmployees, type EmployeeRecord } from '../../api'
+import type { EmployeeRecord } from '../../types/api'
+
+import { searchAssignableEmployees } from '../../services/employeeService'
 
 type FloatingMenuPosition = {
   left: number

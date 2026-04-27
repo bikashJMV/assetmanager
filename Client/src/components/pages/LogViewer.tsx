@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { fetchLokiLogs, type LogEntry } from '../../api/logsApi'
-import { useToast } from '../common/ToastProvider'
+import { useToast } from '../../hooks/useToast'
 import DataPagination from '../common/DataPagination'
 
 type TimeRange = '1h' | '6h' | '24h' | 'custom'

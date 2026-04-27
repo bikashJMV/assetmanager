@@ -43,7 +43,7 @@ from core.settings import settings  # noqa: E402
 
 
 ALIASES: dict[str, list[str]] = {
-    "employee_code": ["employee_id", "employee_code", "emp_id", "employee"],
+    "employee_business_id": ["employee_id", "emp_id", "employee", "employee_business_id"],
     "employee_name": ["employee_name", "employee", "name", "employee_full_name"],
     "employee_email": ["email", "employee_email", "mail", "official_email"],
     "department": ["department", "dept", "function"],
@@ -298,7 +298,7 @@ class V2Importer:
         self.category_cache: dict[str, str] = {}
         self.custom_fields_by_category: dict[str, set[str]] = {}
 
-        self.import_employee_codes: set[str] = set()
+        self.import_employee_business_ids: set[str] = set()
         self.import_asset_keys: set[str] = set()
 
     def run(self, rows: list[dict[str, str | None]]) -> dict[str, Any]:
@@ -316,7 +316,7 @@ class V2Importer:
         return {
             "summary": self.summary.__dict__,
             "import_distinct": {
-                "employees_in_sheet": len(self.import_employee_codes),
+                "employees_in_sheet": len(self.import_employee_business_ids),
                 "assets_in_sheet": len(self.import_asset_keys),
             },
             "checks": checks,
@@ -366,16 +366,16 @@ class V2Importer:
         return None
 
     def _upsert_employee(self, row: dict[str, str | None]) -> tuple[str | None, str | None]:
-        employee_code = self._value(row, "employee_code")
+        business_employee_id = self._value(row, "employee_business_id")
         employee_name = self._value(row, "employee_name") or self._value(row, "assigned_to")
         email = self._value(row, "employee_email")
 
-        if not employee_code and not employee_name and not email:
+        if not business_employee_id and not employee_name and not email:
             return None, None
 
-        if employee_code is None:
+        if business_employee_id is None:
             seed = email or employee_name or str(uuid.uuid4())
-            employee_code = deterministic_code("AUTO", seed)
+            business_employee_id = deterministic_code("AUTO", seed)
 
         department_name = self._value(row, "department")
         department_id = self._get_department_id(department_name)
@@ -391,12 +391,12 @@ class V2Importer:
         if has_erp_access is not None:
             metadata["has_erp_access"] = has_erp_access
 
-        if employee_code:
-            self.import_employee_codes.add(employee_code)
+        if business_employee_id:
+            self.import_employee_business_ids.add(business_employee_id)
 
         payload = {
-            "employee_code": employee_code,
-            "name": employee_name or employee_code,
+            "employee_id": business_employee_id,
+            "name": employee_name or business_employee_id,
             "email": email,
             "department_id": department_id,
             "is_active": is_active,
@@ -405,19 +405,19 @@ class V2Importer:
 
         if self.validate_only:
             self.summary.employees_upserted += 1
-            return deterministic_code("EMP", employee_code), payload["name"]
+            return deterministic_code("EMP", business_employee_id), payload["name"]
 
-        self.client.table("employees").upsert(payload, on_conflict="employee_code").execute()
+        self.client.table("employees").upsert(payload, on_conflict="employee_id").execute()
         row_data = (
             self.client.table("employees")
             .select("id,name")
-            .eq("employee_code", employee_code)
+            .eq("employee_id", business_employee_id)
             .limit(1)
             .execute()
             .data
         )
         if not row_data:
-            raise ImportErrorWithContext(f"Unable to fetch employee after upsert: {employee_code}")
+            raise ImportErrorWithContext(f"Unable to fetch employee after upsert: {business_employee_id}")
 
         self.summary.employees_upserted += 1
         return row_data[0]["id"], row_data[0]["name"]
@@ -534,7 +534,7 @@ class V2Importer:
         for idx, name in enumerate(filtered_names):
             hist_code = deterministic_code("HIST", name)
             hist_payload = {
-                "employee_code": hist_code,
+                "employee_id": hist_code,
                 "name": name,
                 "is_active": False,
                 "metadata": {"source": "sim_history"},
@@ -543,11 +543,11 @@ class V2Importer:
             if self.validate_only:
                 hist_employee_id = deterministic_code("EMP", hist_code)
             else:
-                self.client.table("employees").upsert(hist_payload, on_conflict="employee_code").execute()
+                self.client.table("employees").upsert(hist_payload, on_conflict="employee_id").execute()
                 emp_data = (
                     self.client.table("employees")
                     .select("id")
-                    .eq("employee_code", hist_code)
+                    .eq("employee_id", hist_code)
                     .limit(1)
                     .execute()
                     .data
@@ -779,7 +779,7 @@ class V2Importer:
         assets_count = self.client.table("assets").select("id", count="exact").execute().count
 
         checks["sheet_vs_db"] = {
-            "employees_in_sheet_distinct": len(self.import_employee_codes),
+            "employees_in_sheet_distinct": len(self.import_employee_business_ids),
             "assets_in_sheet_distinct": len(self.import_asset_keys),
             "employees_total_in_db": employees_count,
             "assets_total_in_db": assets_count,
@@ -788,7 +788,7 @@ class V2Importer:
         inventory_rows = (
             self.client.table("v_asset_inventory")
             .select(
-                "id,asset_tag,status,assignment_id,current_employee_code,current_employee_is_active,current_employee_erp_active"
+                "id,asset_tag,status,assignment_id,current_employee_business_id,current_employee_is_active,current_employee_erp_active"
             )
             .execute()
             .data
@@ -812,7 +812,7 @@ class V2Importer:
                 inactive_holders.append(
                     {
                         "asset": asset_label,
-                        "employee_code": row.get("current_employee_code"),
+                        "employee_business_id": row.get("current_employee_business_id"),
                     }
                 )
 

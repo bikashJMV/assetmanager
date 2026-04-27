@@ -1,6 +1,8 @@
-# Observality & Telemetry (Asset Manager)
+# Observability & Telemetry (Asset Manager)
 
-This document describes **how API requests flow through the system** and **what telemetry we emit** (logs, metrics, traces) so you can quickly diagnose failures, latency, and behavior changes—especially during the DB migration to PostgreSQL.
+This document describes **how API requests flow through the system** and **what telemetry we emit** (logs, metrics, traces) for debugging—especially in the context of PostgreSQL as the system of record. For the AMS application repository layout, see [`../README.md`](../README.md) and [`../Server/SERVER_README.md`](../Server/SERVER_README.md).
+
+---
 
 ## Tech stack (observability-related)
 

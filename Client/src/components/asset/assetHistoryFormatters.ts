@@ -1,5 +1,5 @@
 import type { AssetFieldChangeEntry, AssetLifecycleEvent } from '../../api'
-import { formatDisplay } from '../../utils/formatDisplay'
+import { formatEnumLabel } from '../../utils/formatDisplay'
 
 export type AssetHistoryActor = {
   primary: string
@@ -51,9 +51,9 @@ export function groupEventsByDay(events: AssetLifecycleEvent[]): AssetHistoryDay
 
 export function formatHistoryActor(event: AssetLifecycleEvent): AssetHistoryActor {
   const dept = event.actor_department_name?.trim()
-  if (event.actor_name || event.actor_employee_code) {
+  if (event.actor_name || event.actor_employee_id) {
     const name = event.actor_name?.trim() || '—'
-    const code = event.actor_employee_code?.trim()
+    const code = event.actor_employee_id?.trim()
     const parts = [code ? `${name} · ${code}` : name]
     if (dept) parts.push(dept)
     return { primary: parts.join(' · ') }
@@ -88,18 +88,20 @@ export function getEventSummary(event: AssetLifecycleEvent): string {
       return tag ? `Moved to recycle bin · ${tag}` : 'Asset deleted'
     case 'asset_restored':
       return tag ? `Restored from recycle bin · ${tag}` : 'Asset restored'
-    case 'assigned': {
-      const code = payloadString(p, 'employee_code')
+    case 'asset_assigned': {
+      const code = payloadString(p, 'employee_id')
+      const prevCode = payloadString(p, 'previous_employee_id')
+      if (code && prevCode) return `Reassigned to employee ${code} from ${prevCode}`
       if (code && tag) return `Assigned to employee ${code} · asset ${tag}`
       if (code) return `Assigned to employee ${code}`
       return tag ? `Assigned · ${tag}` : 'Assigned to employee'
     }
-    case 'unassigned':
+    case 'asset_returned':
       return tag ? `Returned / unassigned · ${tag}` : 'Returned / unassigned'
     case 'qr_scanned':
       return tag ? `QR code scanned · ${tag}` : 'QR code scanned (public)'
     default:
-      return formatDisplay(event.event_type)
+      return formatEnumLabel(event.event_type)
   }
 }
 

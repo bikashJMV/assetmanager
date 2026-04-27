@@ -167,6 +167,10 @@ class QRLabelPDFService:
         pdf.restoreState()
 
     def _fit_font_size(self, asset_tag: str, max_width: float) -> float:
+        """
+        Largest font size (in points) that fits asset_tag within max_width.
+        Both max_width and stringWidth() use ReportLab points.
+        """
         font_size = self.max_font_size
         while font_size > self.min_font_size:
             width = stringWidth(asset_tag, "Helvetica-Bold", font_size)
@@ -176,7 +180,8 @@ class QRLabelPDFService:
         return self.min_font_size
 
     def _tag_area_height(self) -> float:
-        return self.max_font_size + 1.6
+        """Height reserved for the asset tag text line, in ReportLab points (via mm)."""
+        return 3.5 * mm
 
 
 qr_label_pdf_service = QRLabelPDFService()

@@ -14,19 +14,19 @@ type StoryCardProps = {
 export default function StoryCard({ tone, eyebrow, title, description, className = '', children }: StoryCardProps) {
   const cardTone =
     tone === 'dark'
-      ? 'border border-[#1B1B1B] bg-[#0A0A0A] text-white shadow-[0_24px_44px_rgba(10,10,10,0.2)]'
+      ? 'border border-base bg-surface-3 text-primary shadow-xl'
       : tone === 'accent'
         ? 'border border-accent-soft bg-accent text-white shadow-accent'
-        : 'border border-[#E8E4DC] bg-white text-[#0A0A0A] shadow-[0_24px_44px_rgba(10,10,10,0.08)]'
+        : 'border border-base bg-surface-2 text-primary shadow-lg'
 
   const eyebrowTone =
     tone === 'light'
-      ? 'text-[#888]'
+      ? 'text-muted'
       : tone === 'accent'
         ? 'text-white/65'
-        : 'text-white/40'
+        : 'text-muted'
 
-  const bodyTone = tone === 'light' ? 'text-[#666]' : tone === 'accent' ? 'text-white/82' : 'text-white/58'
+  const bodyTone = tone === 'light' ? 'text-subtle' : tone === 'accent' ? 'text-white/82' : 'text-subtle'
 
   return (
     <article className={`rounded-[28px] p-6 sm:p-8 ${cardTone} ${className}`}>

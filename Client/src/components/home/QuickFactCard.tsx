@@ -14,7 +14,7 @@ export default function QuickFactCard({ fact, className = '' }: QuickFactCardPro
         </span>
         <span className="h-2 w-2 rounded-full bg-[color:var(--accent-soft)]" />
       </div>
-      <p className="mt-3 text-[10px] font-medium text-[#252525] sm:text-[12px] ">{fact}</p>
+      <p className="mt-3 text-[10px] font-medium text-primary sm:text-[12px] ">{fact}</p>
     </aside>
   )
 }

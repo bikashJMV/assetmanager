@@ -19,9 +19,9 @@ export default function ActBeforeItBreaksBox({ className = '' }: { className?: s
     >
       <div className="space-y-2">
         {operationalAlerts.map((msg, idx) => (
-          <div key={msg} className="flex items-center gap-3 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2.5">
-            <span className={`h-2 w-2 rounded-full ${idx < 3 ? 'bg-[#F04E0F]' : 'bg-white/30'}`} />
-            <span className="text-xs text-white/70">{msg}</span>
+          <div key={msg} className="flex items-center gap-3 rounded-lg border border-base bg-surface-2 px-3 py-2.5">
+            <span className={`h-2 w-2 rounded-full ${idx < 3 ? 'bg-accent' : 'bg-muted'}`} />
+            <span className="text-xs text-muted">{msg}</span>
           </div>
         ))}
       </div>

@@ -399,6 +399,26 @@ export default function AssetForm({
                 onChange={(v) => setForm((c) => ({ ...c, model: v }))}
               />
 
+              <div>
+                <label htmlFor="asset-form-status" className="block text-muted text-xs mb-0.5">
+                  Inventory Status{' '}
+                  <span className="text-accent" aria-hidden="true">*</span>
+                </label>
+                <FilterSelect
+                  label="Inventory Status"
+                  ariaLabel="Select inventory status"
+                  value={form.status}
+                  options={inventoryStatusOptions}
+                  onChange={(v) => setForm((c) => ({ ...c, status: v }))}
+                  hideLabel
+                  dense
+                  triggerId="asset-form-status"
+                />
+                <p className="text-[11px] text-muted mt-0.5 leading-snug">
+                  Status changes in edit mode are logged in asset history.
+                </p>
+              </div>
+
               <div className="md:col-span-2">
                 <label htmlFor="asset-form-location-name" className="block text-muted text-xs mb-0.5">
                   Location name
@@ -434,25 +454,6 @@ export default function AssetForm({
                 onChange={(v) => setForm((c) => ({ ...c, warranty_expiry: v }))}
               />
 
-              <div>
-                <label htmlFor="asset-form-status" className="block text-muted text-xs mb-0.5">
-                  Inventory Status{' '}
-                  <span className="text-accent" aria-hidden="true">*</span>
-                </label>
-                <FilterSelect
-                  label="Inventory Status"
-                  ariaLabel="Select inventory status"
-                  value={form.status}
-                  options={inventoryStatusOptions}
-                  onChange={(v) => setForm((c) => ({ ...c, status: v }))}
-                  hideLabel
-                  dense
-                  triggerId="asset-form-status"
-                />
-                <p className="text-[11px] text-muted mt-0.5 leading-snug">
-                  Status changes in edit mode are logged in asset history.
-                </p>
-              </div>
             </div>
           </div>
 
@@ -484,7 +485,7 @@ export default function AssetForm({
               <button
                 type="button"
                 onClick={addExtraPair}
-                className="text-accent text-sm font-semibold hover:underline"
+                className="text-accent bg-orange-500 text-white px-2 text-md font-semibold hover:underline hover:decoration-black transition rounded"
                 aria-label="Add additional detail"
               >
                 + Add

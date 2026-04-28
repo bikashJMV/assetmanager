@@ -41,7 +41,6 @@ export default function Analysis() {
                   : 'Real-time application logs from Loki.'}
               </p>
             </div>
-
             <div className="flex flex-col gap-1 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between lg:justify-end">
               {canViewLogs && (
                 <div
@@ -89,7 +88,6 @@ export default function Analysis() {
             </div>
           </div>
         </header>
-
         <div style={{ display: activeSection === 'overview' ? 'block' : 'none' }}>
           {canViewOverview && <OverviewAnalysis />}
         </div>

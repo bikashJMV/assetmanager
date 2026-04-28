@@ -30,8 +30,8 @@ def _normalize_role(role: Optional[str]) -> str:
 
 
 def _dedupe_cc(admin_emails: list[str], admin_email: str, primary_email: str) -> list[str]:
-    """Avoid duplicate inbox lines: drop assigner + primary from CC list."""
-    skip = {e.strip().lower() for e in (admin_email, primary_email) if e and e.strip()}
+    """Avoid duplicate inbox lines: drop primary from CC list (keep assigner)."""
+    skip = {e.strip().lower() for e in [primary_email] if e and e.strip()}
     out: list[str] = []
     seen: set[str] = set()
     for raw in admin_emails:

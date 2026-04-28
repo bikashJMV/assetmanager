@@ -28,29 +28,6 @@ loki.process "add_ams_labels" {
   forward_to = [loki.write.local.receiver]
 }
 
-// ─── Phase 1: Tail TelemetryServer log file → Loki ────────────────────────
-// Requires: ../logs/telemetry_server.log to exist
-local.file_match "telemetry_server" {
-  path_targets = [{"__path__" = "/app/logs/telemetry_server.log"}]
-}
-
-loki.source.file "telemetry_server" {
-  targets    = local.file_match.telemetry_server.targets
-  forward_to = [loki.process.add_telemetry_labels.receiver]
-}
-
-loki.process "add_telemetry_labels" {
-  stage.static_labels {
-    values = { service = "telemetry-server", env = "local" }
-  }
-  stage.regex {
-    expression = "^(?P<level>INFO|ERROR|WARNING|DEBUG|CRITICAL):"
-  }
-  stage.labels {
-    values = { level = "" }
-  }
-  forward_to = [loki.write.local.receiver]
-}
 
 // ─── Phase 2: OTLP receiver (gRPC + HTTP with CORS) ───────────────────────
 // gRPC  :4317 — AMS Server OTel auto-instrument
@@ -91,12 +68,7 @@ prometheus.scrape "ams_server" {
   forward_to   = [prometheus.remote_write.local.receiver]
 }
 
-// ─── Phase 3: Scrape TelemetryServer /telemetry/metrics-prom ──────────────
-prometheus.scrape "telemetry_server" {
-  targets      = [{"__address__" = "host.docker.internal:8010"}]
-  metrics_path = "/telemetry/metrics-prom"
-  forward_to   = [prometheus.remote_write.local.receiver]
-}
+
 
 // ─── Remote write → Prometheus ────────────────────────────────────────────
 prometheus.remote_write "local" {

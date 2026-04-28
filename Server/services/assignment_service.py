@@ -15,7 +15,6 @@ from services.hooks import HookContext, service_hooks
 from services.notifications.orchestrator import (
     notify_asset_assigned,
     notify_asset_returned,
-    notify_force_recall,
 )
 
 logger = logging.getLogger(__name__)
@@ -244,20 +243,30 @@ class AssignmentService:
                 )
 
                 if previous_holder is not None:
-                    # Reassignment: old employee had the asset → force recall flow
-                    await notify_force_recall(
-                        old_employee_email=previous_holder.get("email"),
-                        old_employee_name=str(previous_holder.get("name") or ""),
-                        old_employee_role="employee",
-                        new_employee_email=employee_row.get("email"),
-                        new_employee_name=str(employee_row.get("name") or ""),
-                        new_employee_role=str(employee_row.get("role") or "employee"),
-                        admin_email=actor_email or "",
-                        admin_name=actor.name,
-                        all_admin_emails=all_admin_emails,
-                        asset_category=str(asset_row.get("category_name") or ""),
-                        model_no=str(asset_row.get("model") or ""),
-                        asset_id=str(asset_row.get("asset_tag") or ""),
+                    # Reassignment: old employee had the asset
+                    await asyncio.gather(
+                        notify_asset_returned(
+                            primary_email=previous_holder.get("email"),
+                            primary_name=str(previous_holder.get("name") or ""),
+                            primary_role="employee",
+                            admin_email=actor_email or "",
+                            admin_name=actor.name,
+                            all_admin_emails=all_admin_emails,
+                            asset_category=str(asset_row.get("category_name") or ""),
+                            model_no=str(asset_row.get("model") or ""),
+                            asset_id=str(asset_row.get("asset_tag") or ""),
+                        ),
+                        notify_asset_assigned(
+                            primary_email=employee_row.get("email"),
+                            primary_name=str(employee_row.get("name") or ""),
+                            primary_role=str(employee_row.get("role") or "employee"),
+                            admin_email=actor_email or "",
+                            admin_name=actor.name,
+                            all_admin_emails=all_admin_emails,
+                            asset_category=str(asset_row.get("category_name") or ""),
+                            model_no=str(asset_row.get("model") or ""),
+                            asset_id=str(asset_row.get("asset_tag") or ""),
+                        )
                     )
                 else:
                     # Fresh assignment: no previous holder

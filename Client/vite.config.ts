@@ -14,6 +14,19 @@ export default defineConfig({
         manualChunks: {
           react: ['react', 'react-dom', 'react-router-dom'],
           qr: ['qrcode'],
+          xlsx: ['@e965/xlsx'],
+          vendor: ['axios', '@tanstack/react-query', 'oidc-client-ts'],
+          otel: [
+            '@opentelemetry/api',
+            '@opentelemetry/context-zone',
+            '@opentelemetry/exporter-trace-otlp-http',
+            '@opentelemetry/instrumentation',
+            '@opentelemetry/instrumentation-fetch',
+            '@opentelemetry/instrumentation-xml-http-request',
+            '@opentelemetry/resources',
+            '@opentelemetry/sdk-trace-web',
+            '@opentelemetry/semantic-conventions'
+          ]
         },
       },
     },

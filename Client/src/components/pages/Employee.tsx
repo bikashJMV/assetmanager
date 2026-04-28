@@ -160,7 +160,7 @@ export default function Employee() {
   const [departments, setDepartments] = useState<string[]>([])
 
   const searchParam = searchParams.get('search') || ''
-  const statusParam = searchParams.get('status') || FILTER_STATUS_ALL
+  const statusParam = (searchParams.get('status') as 'all' | 'active' | 'inactive') || FILTER_STATUS_ALL
   const departmentParam = searchParams.get('department') || ''
   const roleParam = searchParams.get('role') || ROLE_ALL
 

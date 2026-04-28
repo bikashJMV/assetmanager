@@ -10,3 +10,11 @@ __pycache__/
 debug.txt
 server_log.txt
 import_report*.json
+
+# Smoke tests
+*smoke*.py
+
+# Test files
+*test*.py
+tests/
+

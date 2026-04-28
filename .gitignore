@@ -23,3 +23,11 @@ logs/
 logs/**
 logs/ams_server.log
 logs/telemetry_server.log
+
+# Smoke Tests
+*smoke*.py
+
+# Test files
+*test*.py
+tests/
+

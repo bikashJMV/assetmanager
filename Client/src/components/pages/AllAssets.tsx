@@ -348,7 +348,7 @@ export default function AllAssets() {
     const shouldFilterOther = filters.category_slug === OTHER_CATEGORY_FILTER_VALUE
     const category = shouldFilterOther ? undefined : filters.category_slug?.trim() || undefined
     const exclude_category_slugs = shouldFilterOther ? [...DEFAULT_ASSET_CATEGORY_SLUGS] : undefined
-    const search = debouncedSearch.trim() ? debouncedSearch.trim() : undefined
+    const search = searchParam?.trim() ? searchParam.trim() : undefined
     const status = filters.status?.trim() || undefined
 
     do {

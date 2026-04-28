@@ -11,7 +11,7 @@ import {
 } from '../../utils/assetBulkImport'
 import { useModalScrollLock } from '../../hooks/useModalScrollLock'
 import { ModalPortal } from '../common/ModalPortal'
-import { useToast } from '../common/ToastProvider'
+import { useToast } from '../../hooks/useToast'
 import AnimatedNavIcon from '../common/AnimatedNavIcon'
 
 const ACCEPT =
@@ -117,6 +117,13 @@ export default function AssetBulkImportModal({ open, onClose, onSuccess, default
       const inputs = rows.map((r) => r.input)
       const result = await bulkInsertAssets(inputs)
       if (!mountedRef.current) return
+
+      if (result.inserted === 0) {
+        setPhase({ name: 'error', errors: ['No assets were saved. All rows failed on the server.'] })
+        showToast({ variant: 'error', title: 'Import failed', message: 'No assets were saved.', durationMs: 0 })
+        return
+      }
+
       setPhase({ name: 'success', inserted: result.inserted })
       showToast({ variant: 'success', message: `Imported ${result.inserted} new asset${result.inserted === 1 ? '' : 's'}.` })
       onSuccess()

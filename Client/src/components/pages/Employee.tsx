@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import EmployeeForm from '../form/EmployeeForm'
 import Error from '../common/Error'
 import RefreshButton from '../common/RefreshButton'
@@ -8,29 +8,23 @@ import FilterPopup from '../common/FilterPopup'
 import FilterSelect, { type FilterSelectOption } from '../common/FilterSelect'
 import DataPagination from '../common/DataPagination'
 import PageHeaderActions from '../common/PageHeaderActions'
-import { useToast } from '../common/ToastProvider'
+import { useToast } from '../../hooks/useToast'
 import Loader from '../common/Loader'
 import InfoHint from '../common/InfoHint'
 import IconActionButton from '../common/IconActionButton'
 import AnimatedNavIcon, { type IconName } from '../common/AnimatedNavIcon'
 import RowActionMenu from '../common/RowActionMenu'
+import type { EmployeeRecord, EmployeeRole, EmployeeUpsertInput } from '../../types/api'
 import {
-  getAssignedAssetCountsForEmployees,
-  getCurrentEmployeeAssets,
-  getAssets,
-  getQrDataUriForAssetTag,
-  hasActiveAdminAccess,
-  listDepartments,
-  listEmployeesPage,
-  setEmployeeAdminStatus,
-  setEmployeeRole,
-  softDeleteEmployeeById,
-  type EmployeeRole,
-  type EmployeeListFilters,
-  type EmployeeRecord,
-  type EmployeeUpsertInput,
-  upsertEmployee,
-} from '../../api'
+  listEmployees,
+  createEmployee,
+  updateEmployee,
+  changeEmployeeRole,
+  softDeleteEmployee,
+  getSessionEmployeeProfile,
+} from '../../services/employeeService'
+import { hasAdminAccess } from '../../services/authzService'
+import { listDepartments } from '../../services/metaService'
 import { getErrorDebugDetail, getUserFacingMessage, logDevError } from '../../utils/errors'
 import { formatDisplay, formatRoleLabel } from '../../utils/formatDisplay'
 import employeeInfoHint from '../../data/employeeInfoHint.json'
@@ -43,6 +37,13 @@ type EmployeePageInfoHint = {
 }
 
 const EMPLOYEE_PAGE_INFO_HINT = employeeInfoHint as EmployeePageInfoHint
+
+type EmployeeListFilters = {
+  search?: string
+  is_active?: boolean | 'all'
+  department?: string
+  role?: string
+}
 
 const SEARCH_DEBOUNCE_MS = 300
 const DEFAULT_PAGE_SIZE = 10
@@ -148,20 +149,33 @@ function toApiFilters(input: EmployeeFiltersInput): EmployeeListFilters {
 
 export default function Employee() {
   const navigate = useNavigate()
-  const [employees, setEmployees] = useState<EmployeeRecord[]>([])
-  const [assignedAssetCounts, setAssignedAssetCounts] = useState<Record<string, number>>({})
-  const [totalEmployees, setTotalEmployees] = useState(0)
-  const [currentPage, setCurrentPage] = useState(1)
+  const [searchParams, setSearchParams] = useSearchParams()
+  const currentPage = parseInt(searchParams.get('page') || '1', 10)
   const [pageSize, setPageSize] = useState(() =>
     getStoredPageSize({ storageKey: 'employees', defaultValue: DEFAULT_PAGE_SIZE, allowed: PAGE_SIZE_OPTIONS }),
   )
+  const [employees, setEmployees] = useState<EmployeeRecord[]>([])
+  const [assignedAssetCounts, setAssignedAssetCounts] = useState<Record<string, number>>({})
+  const [totalEmployees, setTotalEmployees] = useState(0)
   const [departments, setDepartments] = useState<string[]>([])
-  const [filtersInput, setFiltersInput] = useState<EmployeeFiltersInput>({
-    search: '',
-    employeeStatus: FILTER_STATUS_ALL,
-    department: '',
-    role: ROLE_ALL,
-  })
+
+  const searchParam = searchParams.get('search') || ''
+  const statusParam = (searchParams.get('status') as 'all' | 'active' | 'inactive') || FILTER_STATUS_ALL
+  const departmentParam = searchParams.get('department') || ''
+  const roleParam = searchParams.get('role') || ROLE_ALL
+
+  const filtersInput: EmployeeFiltersInput = {
+    search: searchParam,
+    employeeStatus: statusParam,
+    department: departmentParam,
+    role: roleParam,
+  }
+
+  const [searchInput, setSearchInput] = useState(searchParam)
+
+  useEffect(() => {
+    setSearchInput(searchParam)
+  }, [searchParam])
   const [draftFiltersInput, setDraftFiltersInput] = useState<EmployeeFiltersInput>({
     search: '',
     employeeStatus: FILTER_STATUS_ALL,
@@ -180,24 +194,16 @@ export default function Employee() {
   const [roleChangeTarget, setRoleChangeTarget] = useState<EmployeeRecord | null>(null)
   const [roleChangeTargetRole, setRoleChangeTargetRole] = useState<EmployeeRole | null>(null)
   const [roleChangeLoading, setRoleChangeLoading] = useState(false)
-  const [bulkQrEmployeeId, setBulkQrEmployeeId] = useState<string | null>(null)
   const [filtersOpen, setFiltersOpen] = useState(false)
   const [viewMode, setViewMode] = useState<EmployeeViewMode>(getInitialEmployeeViewMode)
   const [actionMenuEmployeeId, setActionMenuEmployeeId] = useState<string | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<EmployeeRecord | null>(null)
+  const [deleteLoading, setDeleteLoading] = useState(false)
   const [grantAdminTarget, setGrantAdminTarget] = useState<EmployeeRecord | null>(null)
   const [revokeAdminTarget, setRevokeAdminTarget] = useState<EmployeeRecord | null>(null)
   const [adminPrivilegeLoading, setAdminPrivilegeLoading] = useState(false)
   const { showToast } = useToast()
 
-  const requestIdRef = useRef(0)
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const filtersRef = useRef<EmployeeListFilters>(toApiFilters({
-    search: '',
-    employeeStatus: FILTER_STATUS_ALL,
-    department: '',
-    role: ROLE_ALL,
-  }))
   const canManageEmployees = accessResolved && isAdmin
   const canManageAdminRole = isAdmin || isItOps
   const activeAdvancedFilterCount = getActiveAdvancedFilterCount(filtersInput)
@@ -212,6 +218,7 @@ export default function Employee() {
       ]
     : []
   const tableBusy = loading && employees.length > 0
+  const requestIdRef = useRef(0)
 
   const fetchEmployees = async (
     filters: EmployeeListFilters,
@@ -219,28 +226,44 @@ export default function Employee() {
   ) => {
     const targetPage = Math.max(1, options.page ?? currentPage)
     const targetPageSize = Math.max(1, options.pageSize ?? pageSize)
-    const offset = (targetPage - 1) * targetPageSize
     const requestId = ++requestIdRef.current
     setLoading(true)
     setError('')
     setErrorDebug(undefined)
 
     try {
-      const result = await listEmployeesPage(filters, { offset, limit: targetPageSize })
-      const nextAssignedAssetCounts = await getAssignedAssetCountsForEmployees(result.rows.map((employee) => employee.id))
+      const activeStatusParam =
+        filters.is_active === true ? 'true' :
+        filters.is_active === false ? 'false' : 'all'
+
+      const result = await listEmployees({
+        page: targetPage,
+        limit: targetPageSize,
+        search: filters.search,
+        status: activeStatusParam as 'true' | 'false' | 'all',
+        department: filters.department,
+        role: filters.role,
+      })
       if (requestId !== requestIdRef.current) return
 
-      const totalPages = Math.max(1, Math.ceil(result.total / targetPageSize))
-      if (result.total > 0 && targetPage > totalPages) {
+      const total = result.total ?? 0
+      const totalPages = Math.max(1, Math.ceil(total / targetPageSize))
+      if (total > 0 && targetPage > totalPages) {
         await fetchEmployees(filters, { page: totalPages, pageSize: targetPageSize })
         return
       }
 
-      setEmployees(result.rows)
-      setAssignedAssetCounts(nextAssignedAssetCounts)
-      setTotalEmployees(result.total)
-      setCurrentPage(targetPage)
-      setPageSize(targetPageSize)
+      const items = result.items ?? []
+      setEmployees(items)
+      
+      const counts: Record<string, number> = {}
+      items.forEach(emp => {
+        if (emp.assigned_asset_count !== undefined) {
+          counts[emp.id] = emp.assigned_asset_count
+        }
+      })
+      setAssignedAssetCounts(counts)
+      setTotalEmployees(total)
     } catch (err) {
       if (requestId !== requestIdRef.current) return
       logDevError('employees.fetch', err)
@@ -259,76 +282,78 @@ export default function Employee() {
 
   const loadPassportAndDepartments = async () => {
     try {
-      const [passport, departmentRows, adminAccess] = await Promise.all([
-        getCurrentEmployeeAssets(),
+      const [adminCheck, departmentRows, sessionEmp] = await Promise.all([
+        hasAdminAccess(),
         listDepartments(),
-        hasActiveAdminAccess(),
+        getSessionEmployeeProfile().catch(() => null),
       ])
 
-      const profileAdmin = Boolean(
-        passport.sessionEmployee?.is_active && passport.sessionEmployee?.role !== 'employee'
-      )
-      setIsItOps(Boolean(passport.sessionEmployee?.is_active && passport.sessionEmployee?.role === 'it_ops'))
-      const effectiveAdmin = adminAccess || profileAdmin
-
-      setIsAdmin(effectiveAdmin)
-      setSessionEmployeeId(passport.sessionEmployee?.id || null)
+      setIsAdmin(adminCheck.allowed)
+      setIsItOps(adminCheck.role === 'it_ops')
+      setSessionEmployeeId(sessionEmp?.id ?? null)
       setDepartments(departmentRows)
-
-      if (profileAdmin && !adminAccess) {
-        setAccessWarning(
-          'Privileged profile detected, but DB access policy check is failing. Employee list may be scoped to your own row until RLS policies are re-applied.'
-        )
-      } else {
-        setAccessWarning('')
-      }
+      setAccessWarning('')
     } catch (err) {
       logDevError('employees.passport_or_departments', err)
-      setAccessWarning('Unable to verify admin visibility scope right now. Reload after confirming session and RLS policies.')
+      setAccessWarning('Unable to verify admin visibility scope right now.')
     } finally {
       setAccessResolved(true)
     }
   }
-
   useEffect(() => {
     void loadPassportAndDepartments()
-    void fetchEmployees(filtersRef.current, { page: 1, pageSize })
-
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current)
-    }
   }, [])
+
+  useEffect(() => {
+    if (!accessResolved) return
+    const apiFilters = toApiFilters(filtersInput)
+    void fetchEmployees(apiFilters, { page: currentPage, pageSize })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accessResolved, currentPage, pageSize, searchParam, statusParam, departmentParam, roleParam])
+
+  useEffect(() => {
+    if (!accessResolved) return
+
+    const timer = setTimeout(() => {
+      if (searchInput !== searchParam) {
+        setSearchParams(prev => {
+          if (searchInput.trim()) prev.set('search', searchInput.trim())
+          else prev.delete('search')
+          prev.set('page', '1')
+          return prev
+        }, { replace: true })
+      }
+    }, SEARCH_DEBOUNCE_MS)
+
+    return () => clearTimeout(timer)
+  }, [accessResolved, searchInput, searchParam, setSearchParams])
 
   useEffect(() => {
     window.localStorage.setItem(EMPLOYEE_VIEW_MODE_STORAGE_KEY, viewMode)
   }, [viewMode])
 
   const handleSearchChange = (value: string) => {
-    setFiltersInput((current) => {
-      const nextInput = { ...current, search: value }
-      const nextFilters = toApiFilters(nextInput)
-      filtersRef.current = nextFilters
-
-      if (debounceRef.current) clearTimeout(debounceRef.current)
-      debounceRef.current = setTimeout(() => {
-        void fetchEmployees(nextFilters, { page: 1, pageSize })
-      }, SEARCH_DEBOUNCE_MS)
-
-      return nextInput
-    })
+    setSearchInput(value)
   }
 
   const handleFilterChange = (
     partial: Partial<Pick<EmployeeFiltersInput, 'employeeStatus' | 'department' | 'role'>>,
   ) => {
-    if (debounceRef.current) clearTimeout(debounceRef.current)
-
-    setFiltersInput((current) => {
-      const nextInput = { ...current, ...partial }
-      const nextFilters = toApiFilters(nextInput)
-      filtersRef.current = nextFilters
-      void fetchEmployees(nextFilters, { page: 1, pageSize })
-      return nextInput
+    setSearchParams(prev => {
+      if (partial.employeeStatus !== undefined) {
+        if (partial.employeeStatus !== FILTER_STATUS_ALL) prev.set('status', partial.employeeStatus)
+        else prev.delete('status')
+      }
+      if (partial.department !== undefined) {
+        if (partial.department.trim()) prev.set('department', partial.department.trim())
+        else prev.delete('department')
+      }
+      if (partial.role !== undefined) {
+        if (partial.role !== ROLE_ALL) prev.set('role', partial.role)
+        else prev.delete('role')
+      }
+      prev.set('page', '1')
+      return prev
     })
   }
 
@@ -376,30 +401,52 @@ export default function Employee() {
     ...departments.map((department) => ({ value: department, label: department })),
   ]
   const handleRefresh = () => {
-    if (debounceRef.current) clearTimeout(debounceRef.current)
-    void fetchEmployees(filtersRef.current, { page: currentPage, pageSize })
+    const apiFilters = toApiFilters(filtersInput)
+    void fetchEmployees(apiFilters, { page: currentPage, pageSize })
   }
 
   const handlePageChange = (page: number) => {
     if (loading || page === currentPage) return
-    void fetchEmployees(filtersRef.current, { page, pageSize })
+    setSearchParams(prev => {
+      prev.set('page', page.toString())
+      return prev
+    })
   }
 
   const handlePageSizeChange = (nextPageSize: number) => {
     if (loading || nextPageSize === pageSize) return
     setStoredPageSize('employees', nextPageSize)
-    void fetchEmployees(filtersRef.current, { page: 1, pageSize: nextPageSize })
+    setPageSize(nextPageSize)
+    setSearchParams(prev => {
+      prev.set('page', '1')
+      return prev
+    })
   }
 
   const handleUpsertEmployee = async (employee: EmployeeUpsertInput) => {
     try {
-      await upsertEmployee({
-        ...employee,
-        id: editEmployee?.id,
-      })
+      if (editEmployee?.id) {
+        await updateEmployee(editEmployee.id, {
+          employee_id: employee.employee_id,
+          name: employee.name,
+          email: employee.email,
+          department: employee.department,
+          role: employee.role,
+          is_active: employee.is_active,
+        })
+      } else {
+        await createEmployee({
+          employee_id: employee.employee_id,
+          name: employee.name,
+          email: employee.email,
+          department: employee.department,
+          role: employee.role,
+          is_active: employee.is_active,
+        })
+      }
       setEditEmployee(null)
       showToast({ message: 'Employee saved successfully.', variant: 'success' })
-      await fetchEmployees(filtersRef.current, { page: currentPage, pageSize })
+      await fetchEmployees(toApiFilters(filtersInput), { page: currentPage, pageSize })
     } catch (err) {
       logDevError('employees.upsert', err)
       setError(getUserFacingMessage(err, 'Unable to save employee right now.'))
@@ -436,10 +483,10 @@ export default function Employee() {
     setError('')
     setErrorDebug(undefined)
     try {
-      await setEmployeeAdminStatus(grantAdminTarget, true)
+      await changeEmployeeRole(grantAdminTarget.id, 'admin')
       showToast({ message: `${grantAdminTarget.name} is now an admin.`, variant: 'success' })
       setGrantAdminTarget(null)
-      await fetchEmployees(filtersRef.current, { page: currentPage, pageSize })
+      await fetchEmployees(toApiFilters(filtersInput), { page: currentPage, pageSize })
     } catch (err) {
       logDevError('employees.grant_admin', err)
       setError(getUserFacingMessage(err, 'Unable to update admin privileges right now.'))
@@ -455,10 +502,10 @@ export default function Employee() {
     setError('')
     setErrorDebug(undefined)
     try {
-      await setEmployeeAdminStatus(revokeAdminTarget, false)
+      await changeEmployeeRole(revokeAdminTarget.id, 'employee')
       showToast({ message: `${revokeAdminTarget.name} is now an employee.`, variant: 'success' })
       setRevokeAdminTarget(null)
-      await fetchEmployees(filtersRef.current, { page: currentPage, pageSize })
+      await fetchEmployees(toApiFilters(filtersInput), { page: currentPage, pageSize })
     } catch (err) {
       logDevError('employees.revoke_admin', err)
       setError(getUserFacingMessage(err, 'Unable to update admin privileges right now.'))
@@ -488,14 +535,14 @@ export default function Employee() {
     setError('')
     setErrorDebug(undefined)
     try {
-      await setEmployeeRole(roleChangeTarget, roleChangeTargetRole)
+      await changeEmployeeRole(roleChangeTarget.id, roleChangeTargetRole)
       showToast({
         message: `${roleChangeTarget.name} role updated to ${roleChangeTargetRole.replace('_', ' ')}.`,
         variant: 'success',
       })
       setRoleChangeTarget(null)
       setRoleChangeTargetRole(null)
-      await fetchEmployees(filtersRef.current, { page: currentPage, pageSize })
+      await fetchEmployees(toApiFilters(filtersInput), { page: currentPage, pageSize })
     } catch (err) {
       logDevError('employees.set_role', err)
       setError(getUserFacingMessage(err, 'Unable to update role right now.'))
@@ -505,54 +552,19 @@ export default function Employee() {
     }
   }
 
-  const triggerQrDownload = (assetTag: string, qrCode: string) => {
-    const link = document.createElement('a')
-    link.href = qrCode
-    link.download = `${assetTag}-qr.png`
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-  }
-
-  const handleDownloadEmployeeQrs = async (employee: EmployeeRecord) => {
-    if (!SHOW_EMPLOYEE_ROW_QR_DOWNLOAD) return
-    setBulkQrEmployeeId(employee.id)
-    setError('')
-    setErrorDebug(undefined)
-    try {
-      const assets = await getAssets({ current_employee_id: employee.id })
-      const tags = assets
-        .map((asset) => asset.asset_tag?.trim() || '')
-        .filter((tag) => Boolean(tag))
-
-      if (!tags.length) {
-        showToast({ message: `No assigned assets found for ${employee.name}.`, variant: 'info' })
-        return
-      }
-
-      for (const tag of tags) {
-        const qrCode = await getQrDataUriForAssetTag(tag)
-        triggerQrDownload(tag, qrCode)
-      }
-
-      showToast({ message: `Downloaded ${tags.length} QR code(s) for ${employee.name}.`, variant: 'success' })
-    } catch (err) {
-      logDevError('employees.bulk_qr_download', err)
-      setError(getUserFacingMessage(err, 'Unable to download employee QR codes right now.'))
-      setErrorDebug(getErrorDebugDetail(err))
-    } finally {
-      setBulkQrEmployeeId(null)
-    }
-  }
-
   const handleSoftDeleteEmployee = async (employee: EmployeeRecord) => {
+    setDeleteLoading(true)
     try {
-      await softDeleteEmployeeById(employee.id)
+      await softDeleteEmployee(employee.id)
+      // Immediately remove from local state so the row disappears without waiting for refetch
+      setEmployees(prev => prev.filter(e => e.id !== employee.id))
+      setTotalEmployees(prev => Math.max(0, prev - 1))
       setDeleteTarget(null)
       showToast({ message: `${employee.name} moved to Recycle Bin.`, variant: 'success' })
+      // Background refetch to sync pagination totals and any server-side changes
       const nextTotal = Math.max(0, totalEmployees - 1)
       const lastPage = Math.max(1, Math.ceil(nextTotal / pageSize))
-      await fetchEmployees(filtersRef.current, {
+      await fetchEmployees(toApiFilters(filtersInput), {
         page: Math.min(currentPage, lastPage),
         pageSize,
       })
@@ -560,6 +572,8 @@ export default function Employee() {
       logDevError('employees.soft_delete', err)
       setError(getUserFacingMessage(err, 'Unable to delete employee right now.'))
       setErrorDebug(getErrorDebugDetail(err))
+    } finally {
+      setDeleteLoading(false)
     }
   }
 
@@ -589,7 +603,7 @@ export default function Employee() {
             <input
               type="text"
               aria-label="Search employees"
-              value={filtersInput.search}
+              value={searchInput}
               onChange={(e) => handleSearchChange(e.target.value)}
               placeholder="Search by ID, name, email..."
               className="w-full bg-surface border border-base text-primary placeholder:text-subtle rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[color:var(--accent)] transition"
@@ -769,7 +783,7 @@ export default function Employee() {
                           isItOps={isItOps}
                           sessionEmployeeId={sessionEmployeeId}
                           showQrDownload={SHOW_EMPLOYEE_ROW_QR_DOWNLOAD}
-                          bulkQrEmployeeId={bulkQrEmployeeId}
+                          bulkQrEmployeeId={null}
                           display="menu"
                           menuOpen={actionMenuEmployeeId === employee.id}
                           onMenuToggle={() =>
@@ -782,7 +796,7 @@ export default function Employee() {
                           onSetRole={openRoleChange}
                           onGrantAdmin={openGrantAdminConfirm}
                           onRevokeAdmin={openRevokeAdminConfirm}
-                          onDownloadQrs={handleDownloadEmployeeQrs}
+                          onDownloadQrs={async () => {}}
                           onDelete={setDeleteTarget}
                         />
                       </td>
@@ -878,12 +892,12 @@ export default function Employee() {
                       isItOps={isItOps}
                       sessionEmployeeId={sessionEmployeeId}
                       showQrDownload={SHOW_EMPLOYEE_ROW_QR_DOWNLOAD}
-                      bulkQrEmployeeId={bulkQrEmployeeId}
+                      bulkQrEmployeeId={null}
                       onEdit={setEditEmployee}
                       onSetRole={openRoleChange}
                       onGrantAdmin={openGrantAdminConfirm}
                       onRevokeAdmin={openRevokeAdminConfirm}
-                      onDownloadQrs={handleDownloadEmployeeQrs}
+                      onDownloadQrs={async () => {}}
                       onDelete={setDeleteTarget}
                     />
                   </div>
@@ -1042,14 +1056,16 @@ export default function Employee() {
             : 'Move employee to Recycle Bin?'
         }
         confirmLabel="Delete"
-        onClose={() => setDeleteTarget(null)}
+        loading={deleteLoading}
+        showDismissIcon
+        onClose={() => { if (!deleteLoading) setDeleteTarget(null) }}
         onConfirm={() => {
           if (deleteTarget) void handleSoftDeleteEmployee(deleteTarget)
         }}
       />
     </main>
   )
-}
+} 
 
 type EmployeeActionsProps = {
   employee: EmployeeRecord

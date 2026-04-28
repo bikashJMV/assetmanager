@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { createAsset, listCategories, slugifyCategoryLabel } from '../../api'
 import { getUserFacingMessage, logDevError } from '../../utils/errors'
-import { useToast } from '../common/ToastProvider'
+import { useToast } from '../../hooks/useToast'
 
 type KvRow = { key: string; value: string }
 

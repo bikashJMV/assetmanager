@@ -35,7 +35,7 @@ const ASSET_STATUSES = new Set([
 
 /** Reject assignment-related columns so imports stay create-only. */
 const FORBIDDEN_HEADERS = new Set([
-  'employee_code',
+  'employee_id',
   'assign',
   'assigned_to',
   'assignment',

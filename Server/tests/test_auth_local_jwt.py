@@ -1,7 +1,7 @@
 """
 Unit tests for local JWT verification in get_auth_user_id_from_bearer.
 
-Uses a generated RSA key pair — no network calls to Supabase.
+Uses a generated RSA key pair — no network calls to AuthNexus.
 The JWKS client is patched at module level so tests are fully offline.
 
 Run with: python -m pytest tests/test_auth_local_jwt.py -v
@@ -20,14 +20,14 @@ from core.auth import get_auth_user_id_from_bearer
 
 _TEST_USER_ID = "a1b2c3d4-0000-0000-0000-000000000001"
 
-# Generate an EC P-256 key pair once for the entire test session (matches Supabase ES256).
+# Generate an EC P-256 key pair once for the entire test session (matches AuthNexus ES256).
 _private_key = generate_private_key(SECP256R1())
 _public_key = _private_key.public_key()
 _ALGORITHM = "ES256"
 
 
 def _mint(sub: str = _TEST_USER_ID, exp_offset: int = 300, **extra) -> str:
-    """Mint an ES256 JWT signed with the test private key, mirroring Supabase output."""
+    """Mint an ES256 JWT signed with the test private key, mirroring AuthNexus output."""
     payload = {
         "sub": sub,
         "aud": "authenticated",

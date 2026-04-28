@@ -226,7 +226,7 @@ function EmployeeLoadSection({ rows }: { rows: OverviewAnalysisEmployeeLoad[] })
   return (
     <section className="rounded-xl border border-base bg-surface-2 p-5">
       <div>
-        <h3 className="text-lg font-semibold text-primary">Employee Assignment Load</h3>
+        <h3 className="text-lg font-semibold text-primary">Most Inventory Holders</h3>
         <p className="mt-1 text-sm text-muted">Top current holders by assigned asset count.</p>
       </div>
 

@@ -1,7 +1,6 @@
 try:
     import fastapi
     import dotenv
-    import supabase
     import pydantic
     import qrcode
     print("All third-party libraries imported successfully")

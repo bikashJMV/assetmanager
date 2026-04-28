@@ -1,20 +1,25 @@
 import { useEffect, useState } from 'react'
-import { hasActiveItOpsAccess } from '../../api'
+import { hasActiveAdminAccess, hasActiveItOpsAccess } from '../../api'
 import OverviewAnalysis from './Overview.Analysis'
 import LogViewer from './LogViewer'
 
 type AnalysisSection = 'overview' | 'logs'
 
 export default function Analysis() {
-  const [canViewTelemetry, setCanViewTelemetry] = useState(false)
+  const [canViewOverview, setCanViewOverview] = useState(false)
+  const [canViewLogs, setCanViewLogs] = useState(false)
   const [activeSection, setActiveSection] = useState<AnalysisSection>('overview')
 
   useEffect(() => {
     let mounted = true
     void (async () => {
-      const allowed = await hasActiveItOpsAccess()
+      const [overview, logs] = await Promise.all([
+        hasActiveAdminAccess(),
+        hasActiveItOpsAccess(),
+      ])
       if (!mounted) return
-      setCanViewTelemetry(allowed)
+      setCanViewOverview(overview)
+      setCanViewLogs(logs)
     })()
     return () => {
       mounted = false
@@ -32,13 +37,13 @@ export default function Analysis() {
               </h1>
               <p className="max-w-2xl text-sm text-muted sm:text-base">
                 {activeSection === 'overview'
-                  ? 'Operational asset and employee metrics for admins and IT Ops.'
+                  ? 'Operational asset and employee metrics.'
                   : 'Real-time application logs from Loki.'}
               </p>
             </div>
 
             <div className="flex flex-col gap-1 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between lg:justify-end">
-              {canViewTelemetry && (
+              {canViewLogs && (
                 <div
                   className="inline-flex w-fit flex-wrap gap-2 rounded-xl border border-base bg-surface sm:w-auto"
                   role="tablist"
@@ -58,7 +63,7 @@ export default function Analysis() {
                 </div>
               )}
 
-              {canViewTelemetry && (
+              {canViewLogs && (
                 <div className="flex items-center">
                   <a
                     href={import.meta.env.VITE_GRAFANA_DASHBOARD_URL_FOR_ITOPS}
@@ -86,10 +91,10 @@ export default function Analysis() {
         </header>
 
         <div style={{ display: activeSection === 'overview' ? 'block' : 'none' }}>
-          <OverviewAnalysis />
+          {canViewOverview && <OverviewAnalysis />}
         </div>
         <div style={{ display: activeSection === 'logs' ? 'block' : 'none' }}>
-          <LogViewer />
+          {canViewLogs && <LogViewer />}
         </div>
       </div>
     </main>

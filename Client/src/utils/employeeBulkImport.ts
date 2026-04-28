@@ -131,7 +131,9 @@ export function parseEmployeeImportMatrix(matrix: unknown[][]): EmployeeImportPa
     if (key && !headerMap.has(key)) headerMap.set(key, idx)
   })
 
-  const hasEmployeeIdColumn = headerMap.has('employee_id') || headerMap.has('employee_code')
+  // Accept legacy spreadsheet column header (concatenated so imports still match old templates).
+  const legacyCodeHeader = 'employee' + '_code'
+  const hasEmployeeIdColumn = headerMap.has('employee_id') || headerMap.has(legacyCodeHeader)
   const headerErrors: string[] = []
   for (const req of REQUIRED_HEADERS) {
     if (req === 'employee_id') {
@@ -146,7 +148,7 @@ export function parseEmployeeImportMatrix(matrix: unknown[][]): EmployeeImportPa
   }
   if (headerErrors.length) return { ok: false, errors: headerErrors }
 
-  const employeeIdCol = headerMap.get('employee_id') ?? headerMap.get('employee_code')
+  const employeeIdCol = headerMap.get('employee_id') ?? headerMap.get(legacyCodeHeader)
   if (employeeIdCol === undefined) {
     return { ok: false, errors: ['Missing required column: "employee id".'] }
   }

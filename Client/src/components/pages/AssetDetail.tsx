@@ -1,18 +1,13 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useSetBreadcrumbOverride } from '../../hooks/useBreadcrumbOverride'
-import {
-  assignAsset,
-  getAssetDetail,
-  getQrDataUriForAssetTag,
-  hasActiveAdminAccess,
-  returnAsset,
-  softDeleteAssetById,
-  getSessionEmployee,
-  type AssetAssignmentRecord,
-  type AssetDetailRecord,
-  type EmployeeRecord,
-} from '../../api'
+import type { AssetAssignmentRecord, AssetDetailRecord, EmployeeRecord } from '../../types/api'
+
+import { useAdminAccessQuery } from '../../queries/authz'
+import { useAssetDetailQuery, useProtectedAssetScanQuery } from '../../queries/assets'
+import { assignAsset, returnAsset } from '../../services/assignmentService'
+import { softDeleteAsset } from '../../services/assetService'
+import { buildAssetQrDataUri } from '../../utils/qr'
 import AssetForm from '../form/AssetForm'
 import Error from '../common/Error'
 import Loader from '../common/Loader'
@@ -22,7 +17,7 @@ import { formatDateTime, formatDisplay, formatEnumLabel } from '../../utils/form
 import AssetChangeHistory from '../asset/AssetChangeHistory'
 import InventoryStatusBadge from '../common/InventoryStatusBadge'
 import AnimatedNavIcon, { type IconName } from '../common/AnimatedNavIcon'
-import { useToast } from '../common/ToastProvider'
+import { useToast } from '../../hooks/useToast'
 import EmployeeAssignLookup from '../common/EmployeeAssignLookup'
 
 // function formatInventryStatus=(status:string)=>{
@@ -53,17 +48,35 @@ export default function AssetDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
   const setBreadcrumb = useSetBreadcrumbOverride()
+  const ref = (id || '').trim()
 
-  const [detail, setDetail] = useState<AssetDetailRecord | null>(null)
+  const adminAccessQuery = useAdminAccessQuery()
+  const canManage = Boolean(adminAccessQuery.data?.allowed)
+
+  const protectedScan = useProtectedAssetScanQuery(ref)
+  const redirect = (() => {
+    const data = protectedScan.data
+    if (!data || typeof data !== 'object') return null
+    if (!('redirect' in data)) return null
+    const resolved = data as { redirect?: unknown; asset_tag?: unknown; view_only?: unknown }
+    if (resolved.redirect !== true) return null
+    return {
+      asset_tag: typeof resolved.asset_tag === 'string' ? resolved.asset_tag : ref,
+      view_only: resolved.view_only === true,
+    }
+  })()
+
+  const detailRef = redirect?.asset_tag?.trim() || ref
+  const detailQuery = useAssetDetailQuery(detailRef, Boolean(ref && redirect))
+
+  const detail: AssetDetailRecord | null = detailQuery.data ?? null
   const [error, setError] = useState('')
   const [errorDebug, setErrorDebug] = useState<string | undefined>(undefined)
-  const [loading, setLoading] = useState(true)
   const [showEdit, setShowEdit] = useState(false)
   const [assignQuery, setAssignQuery] = useState('')
   const [selectedAssignee, setSelectedAssignee] = useState<EmployeeRecord | null>(null)
   const [assignNotes, setAssignNotes] = useState('')
   const [actionLoading, setActionLoading] = useState(false)
-  const [canManage, setCanManage] = useState(false)
   const [assignDialogOpen, setAssignDialogOpen] = useState(false)
   const [returnDialogOpen, setReturnDialogOpen] = useState(false)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
@@ -80,45 +93,12 @@ export default function AssetDetail() {
     setBreadcrumb(asset_tag ? `${name} (${asset_tag} / ${statusLabel})` : name ?? '')
   }, [detail, setBreadcrumb])
 
-  const refresh = useCallback(async () => {
-    if (!id) return
-    setLoading(true)
-    setError('')
-    setErrorDebug(undefined)
-    try {
-      const [data, allowed, sessionEmployee] = await Promise.all([
-        getAssetDetail(id),
-        hasActiveAdminAccess().catch((err) => {
-          logDevError('assetDetail.access', err)
-          return false
-        }),
-        getSessionEmployee().catch(() => null),
-      ])
-
-      if (!allowed) {
-        const isOwnAsset = Boolean(
-          sessionEmployee?.id && data.asset.current_employee_id === sessionEmployee.id
-        )
-        if (!isOwnAsset && data.asset.asset_tag) {
-          navigate(`/assets/scan/${encodeURIComponent(data.asset.asset_tag)}`, { replace: true })
-          return
-        }
-      }
-
-      setDetail(data)
-      setCanManage(allowed)
-    } catch (err) {
-      logDevError('assetDetail.fetch', err)
-      setError(getUserFacingMessage(err, 'Unable to load asset details right now.'))
-      setErrorDebug(getErrorDebugDetail(err))
-    } finally {
-      setLoading(false)
-    }
-  }, [id, navigate])
-
   useEffect(() => {
-    void refresh()
-  }, [refresh])
+    if (!ref) return
+    if (!protectedScan.isFetched) return
+    if (redirect) return
+    void navigate(`/assets/scan/${encodeURIComponent(ref)}`, { replace: true })
+  }, [navigate, protectedScan.isFetched, redirect, ref])
 
   useEffect(() => {
     const assetTag = detail?.asset.asset_tag?.trim()
@@ -134,7 +114,7 @@ export default function AssetDetail() {
     setQrError(null)
     setQrLoading(true)
 
-    void getQrDataUriForAssetTag(assetTag)
+    void buildAssetQrDataUri(assetTag)
       .then((uri) => {
         if (!cancelled) setQrDataUri(uri)
       })
@@ -164,6 +144,24 @@ export default function AssetDetail() {
       ) ?? [],
     [detail?.lifecycle_events],
   )
+
+  const loading = protectedScan.isLoading || protectedScan.isFetching || detailQuery.isLoading || detailQuery.isFetching
+  const fetchError = detailQuery.isError
+    ? getUserFacingMessage(detailQuery.error, 'Unable to load asset details right now.')
+    : ''
+  const fetchErrorDebug = detailQuery.isError ? getErrorDebugDetail(detailQuery.error) : undefined
+
+  const refresh = useCallback(async () => {
+    setError('')
+    setErrorDebug(undefined)
+    try {
+      await Promise.all([protectedScan.refetch(), detailQuery.refetch(), adminAccessQuery.refetch()])
+    } catch (err) {
+      logDevError('assetDetail.refresh', err)
+      setError(getUserFacingMessage(err, 'Unable to refresh asset details right now.'))
+      setErrorDebug(getErrorDebugDetail(err))
+    }
+  }, [adminAccessQuery, detailQuery, protectedScan])
 
   const openAssignDialog = () => {
     if (!detail?.asset.asset_tag) return
@@ -283,7 +281,7 @@ export default function AssetDetail() {
     setError('')
     setErrorDebug(undefined)
     try {
-      await softDeleteAssetById(detail.asset.id)
+      await softDeleteAsset(detail.asset.id)
       setDeleteDialogOpen(false)
       showToast({ message: 'Asset moved to Recycle Bin.', variant: 'success' })
       navigate('/recycle-bin')
@@ -297,15 +295,18 @@ export default function AssetDetail() {
     }
   }
 
-  if (error && !detail) {
+  const pageLoadError = error || fetchError
+  const pageLoadDebug = error ? errorDebug : fetchErrorDebug
+
+  if (pageLoadError && !detail) {
     return (
       <Error
         title="Could not load asset"
-        message={error}
+        message={pageLoadError}
         onRetry={() => {
           void refresh()
         }}
-        debugDetail={errorDebug}
+        debugDetail={pageLoadDebug}
       />
     )
   }
@@ -408,7 +409,7 @@ export default function AssetDetail() {
                       if (!detail?.asset.asset_tag) return
                       setQrError(null)
                       setQrLoading(true)
-                      void getQrDataUriForAssetTag(detail.asset.asset_tag)
+                      void buildAssetQrDataUri(detail.asset.asset_tag)
                         .then((uri) => setQrDataUri(uri))
                         .catch((err) => setQrError(getUserFacingMessage(err, 'Unable to load QR')))
                         .finally(() => setQrLoading(false))
@@ -529,7 +530,7 @@ export default function AssetDetail() {
           >
             <dl className="flex flex-wrap items-center divide-x divide-[color:var(--border)]">
               <AssignmentSummaryField label="Current Holder" value={formatDisplay(asset.current_employee_name)} />
-              <AssignmentSummaryField label="Current Holder ID" value={formatDisplay(asset.current_employee_code)} />
+              <AssignmentSummaryField label="Current Holder ID" value={formatDisplay(asset.current_employee_business_id)} />
               <AssignmentSummaryField label="Assigned At" value={formatDateTime(asset.assigned_at)} />
             </dl>
           </Section>
@@ -628,6 +629,7 @@ export default function AssetDetail() {
             warranty_expiry: asset.warranty_expiry || undefined,
             status: asset.status,
             custom_fields: asset.custom_fields,
+            metadata: (asset as Record<string, unknown>).metadata as Record<string, unknown> ?? undefined,
           }}
           onClose={() => setShowEdit(false)}
           onSuccess={() => {

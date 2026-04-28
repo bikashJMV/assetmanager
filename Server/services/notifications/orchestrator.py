@@ -65,7 +65,7 @@ async def notify_asset_assigned(
     No-op if primary_email is empty or admin_email is empty (required by API).
     """
     if not primary_email or not primary_email.strip():
-        logger.debug("notify_asset_assigned skipped — no primary email for asset_id=%s", asset_id)
+        logger.warning("notify_asset_assigned skipped — no primary_email for asset_id=%s", asset_id)
         return
     if not admin_email or not admin_email.strip():
         logger.warning(
@@ -119,7 +119,7 @@ async def notify_asset_returned(
     Fire asset.returned (same envelope as assigned; templates differ by event_name).
     """
     if not primary_email or not primary_email.strip():
-        logger.debug("notify_asset_returned skipped — no primary email for asset_id=%s", asset_id)
+        logger.warning("notify_asset_returned skipped — no primary_email for asset_id=%s", asset_id)
         return
     if not admin_email or not admin_email.strip():
         logger.warning(
@@ -176,3 +176,81 @@ async def notify_user_created(
         recipient_email=recipient_email.strip(),
         data={"name": recipient_name},
     )
+
+
+async def notify_force_recall(
+    *,
+    old_employee_email: Optional[str],
+    old_employee_name: str,
+    old_employee_role: Optional[str],
+    new_employee_email: Optional[str],
+    new_employee_name: str,
+    new_employee_role: Optional[str],
+    admin_email: str,
+    admin_name: str,
+    all_admin_emails: list[str],
+    asset_category: str,
+    model_no: str,
+    asset_id: str,
+) -> None:
+    """
+    Fire force.recall.old to the old holder and force.recall.new to the new holder.
+
+    Both calls are fire-and-forget. Either is silently skipped if the
+    corresponding email is missing — the domain operation is never affected.
+    """
+    adapter = get_adapter()
+
+    # ── Event 1: old employee loses the asset ────────────────────────────────
+    if old_employee_email and old_employee_email.strip():
+        cc_old = _dedupe_cc(all_admin_emails, admin_email.strip(), old_employee_email.strip())
+        payload_old: dict[str, Any] = {
+            "event_name": "force.recall.old",
+            "primary_recipient": {
+                "email": old_employee_email.strip(),
+                "name": old_employee_name or "",
+                "role": _normalize_role(old_employee_role),
+            },
+            "admin_email": admin_email.strip(),
+            "admin_name": admin_name or "",
+            "all_admin_emails": cc_old,
+            "asset_data": {
+                "category": (asset_category or "").strip() or "—",
+                "model_no": (model_no or "").strip() or "—",
+                "asset_id": (asset_id or "").strip() or "—",
+            },
+            "previous_employee_email": old_employee_email.strip(),
+        }
+        await adapter.send_structured_event(payload_old)
+    else:
+        logger.debug(
+            "notify_force_recall: no old_employee_email — force.recall.old skipped for asset=%s",
+            asset_id,
+        )
+
+    # ── Event 2: new employee receives the asset ──────────────────────────────
+    if new_employee_email and new_employee_email.strip():
+        cc_new = _dedupe_cc(all_admin_emails, admin_email.strip(), new_employee_email.strip())
+        payload_new: dict[str, Any] = {
+            "event_name": "force.recall.new",
+            "primary_recipient": {
+                "email": new_employee_email.strip(),
+                "name": new_employee_name or "",
+                "role": _normalize_role(new_employee_role),
+            },
+            "admin_email": admin_email.strip(),
+            "admin_name": admin_name or "",
+            "all_admin_emails": cc_new,
+            "asset_data": {
+                "category": (asset_category or "").strip() or "—",
+                "model_no": (model_no or "").strip() or "—",
+                "asset_id": (asset_id or "").strip() or "—",
+            },
+            "new_employee_email": new_employee_email.strip(),
+        }
+        await adapter.send_structured_event(payload_new)
+    else:
+        logger.debug(
+            "notify_force_recall: no new_employee_email — force.recall.new skipped for asset=%s",
+            asset_id,
+        )

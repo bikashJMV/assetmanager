@@ -1,19 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import {
-  fetchAssetQrLabelsPdf,
-  getAssetsPage,
-  getQrDataUriForAssetTag,
-  getSessionEmployee,
-  hasActiveAdminAccess,
-  listCategories,
-  softDeleteAssetById,
-  type AssetFilters,
-  type AssetInventoryRecord,
-  type CategoryRecord,
-} from '../../api'
+import { useNavigate, useSearchParams } from 'react-router-dom'
+import type { AssetFilters, AssetInventoryRecord, CategoryRecord } from '../../types/api'
+
+import { useAssetsListQueryEnabled } from '../../queries/assets'
+import { useAdminAccessQuery } from '../../queries/authz'
+import { useCategoriesQuery } from '../../queries/meta'
+import { exportAssetQrLabelsPdf, listAssets, softDeleteAsset } from '../../services/assetService'
+import { buildAssetQrDataUri } from '../../utils/qr'
 import Error from '../common/Error'
-import { useToast } from '../common/ToastProvider'
+import { useToast } from '../../hooks/useToast'
 import RefreshButton from '../common/RefreshButton'
 import ConfirmDialog from '../common/ConfirmDialog'
 import FilterPopup from '../common/FilterPopup'
@@ -22,7 +17,8 @@ import InfoHint from '../common/InfoHint'
 import DataPagination from '../common/DataPagination'
 import PageHeaderActions from '../common/PageHeaderActions'
 import AnimatedNavIcon, { type IconName } from '../common/AnimatedNavIcon'
-import InventoryStatusBadge, { getInventoryStatusTone } from '../common/InventoryStatusBadge'
+import InventoryStatusBadge from '../common/InventoryStatusBadge'
+import { getInventoryStatusTone } from '../../utils/formatDisplay'
 import RowActionMenu from '../common/RowActionMenu'
 import assetInfoHint from '../../data/assetInfoHint.json'
 import { getErrorDebugDetail, getUserFacingMessage, logDevError } from '../../utils/errors'
@@ -34,11 +30,10 @@ const SEARCH_DEBOUNCE_MS = 300
 const DEFAULT_PAGE_SIZE = 10
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100]
 const statusFilters = ['assigned', 'in_stock', 'in_repair', 'retired', 'lost', 'disposed']
-const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const OTHER_CATEGORY_FILTER_VALUE = '__other__'
 const DEFAULT_ASSET_CATEGORY_SLUGS = new Set(['laptop', 'desktop', 'monitor', 'pen-drive', 'mouse', 'keyboard', 'wifi-dongle'])
 const STATUS_ALL = '__all__'
-const QR_EXPORT_BATCH_SIZE = 500
+const QR_EXPORT_BATCH_SIZE = 200
 
 type AssetAdvancedFiltersInput = {
   status: string
@@ -75,14 +70,21 @@ type AssetsPageInfoHint = {
 const ASSETS_PAGE_INFO_HINT = assetInfoHint as AssetsPageInfoHint
 
 export default function AllAssets() {
-  const [assets, setAssets] = useState<AssetInventoryRecord[]>([])
-  const [totalAssets, setTotalAssets] = useState(0)
-  const [currentPage, setCurrentPage] = useState(1)
+  const [searchParams, setSearchParams] = useSearchParams()
+  const currentPage = parseInt(searchParams.get('page') || '1', 10)
   const [pageSize, setPageSize] = useState(() =>
     getStoredPageSize({ storageKey: 'assets', defaultValue: DEFAULT_PAGE_SIZE, allowed: PAGE_SIZE_OPTIONS }),
   )
-  const [filters, setFilters] = useState<AssetFilters>({})
-  const [loading, setLoading] = useState(true)
+  
+  const statusParam = searchParams.get('status') || undefined
+  const categoryParam = searchParams.get('category') || undefined
+  const searchParam = searchParams.get('search') || undefined
+
+  const filters: AssetFilters = {
+    search: searchParam,
+    status: statusParam,
+    category_slug: categoryParam,
+  }
   const [error, setError] = useState('')
   const [errorDebug, setErrorDebug] = useState<string | undefined>(undefined)
   const [qrModal, setQrModal] = useState<AssetQrModalState | null>(null)
@@ -90,11 +92,7 @@ export default function AllAssets() {
   const [bulkQrExporting, setBulkQrExporting] = useState(false)
   const [qrPdfTabFallback, setQrPdfTabFallback] = useState<AssetQrPdfTabFallbackState | null>(null)
   const qrPdfTabFallbackRef = useRef<AssetQrPdfTabFallbackState | null>(null)
-  const [categories, setCategories] = useState<CategoryRecord[]>([])
-  const [isAdmin, setIsAdmin] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<AssetInventoryRecord | null>(null)
-  const [scopeEmployeeId, setScopeEmployeeId] = useState<string | null>(null)
-  const [accessResolved, setAccessResolved] = useState(false)
   const [actionMenuId, setActionMenuId] = useState<string | null>(null)
   const [filtersOpen, setFiltersOpen] = useState(false)
   const [bulkUpdateOpen, setBulkUpdateOpen] = useState(false)
@@ -102,131 +100,94 @@ export default function AllAssets() {
     status: STATUS_ALL,
     categorySlug: '',
   })
+  const [dismissedListError, setDismissedListError] = useState(false)
   /** False until session scope is known and the first asset list request has finished (success or error). */
   const [initialListReady, setInitialListReady] = useState(false)
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const requestIdRef = useRef(0)
-  const filtersRef = useRef<AssetFilters>({})
+
   const navigate = useNavigate()
   const { showToast } = useToast()
-  const currentAdvancedFilters: AssetAdvancedFiltersInput = {
-    status: filters.status || STATUS_ALL,
-    categorySlug: filters.category_slug || '',
-  }
-  const activeAdvancedFilterCount = getActiveAdvancedFilterCount(currentAdvancedFilters)
-  const applyScopeFilters = (base: AssetFilters): AssetFilters => {
-    if (isAdmin) return { ...base, current_employee_id: undefined }
-    return { ...base, current_employee_id: scopeEmployeeId || undefined }
-  }
-  const buildAssetListFilters = (base: AssetFilters): AssetFilters => {
-    const shouldFilterOtherCategories = base.category_slug === OTHER_CATEGORY_FILTER_VALUE
-    return applyScopeFilters({
-      ...base,
-      exclude_category_slugs: shouldFilterOtherCategories ? [...DEFAULT_ASSET_CATEGORY_SLUGS] : undefined,
-      category_slug: shouldFilterOtherCategories ? undefined : base.category_slug,
-    })
-  }
 
-  const fetchAssets = async (
-    currentFilters: AssetFilters,
-    options: { page?: number; pageSize?: number } = {}
-  ) => {
-    const targetPage = Math.max(1, options.page ?? currentPage)
-    const targetPageSize = Math.max(1, options.pageSize ?? pageSize)
-    const offset = (targetPage - 1) * targetPageSize
-    const requestId = ++requestIdRef.current
-    setLoading(true)
-    setError('')
-    setErrorDebug(undefined)
+  const adminAccessQuery = useAdminAccessQuery()
+  const isAdmin = adminAccessQuery.data?.allowed ?? false
+  const accessResolved = adminAccessQuery.isFetched
 
-    try {
-      // Never query with a non-UUID placeholder; show no rows when user scope is unresolved.
-      if (!isAdmin && (!scopeEmployeeId || !UUID_REGEX.test(scopeEmployeeId))) {
-        if (requestId === requestIdRef.current) {
-          setAssets([])
-          setTotalAssets(0)
-          setCurrentPage(targetPage)
-          setPageSize(targetPageSize)
-          setLoading(false)
-        }
-        return
-      }
+  const categoriesQuery = useCategoriesQuery()
+  const categories: CategoryRecord[] = categoriesQuery.data ?? []
 
-      const result = await getAssetsPage(
-        buildAssetListFilters(currentFilters),
-        { offset, limit: targetPageSize }
-      )
-      if (requestId !== requestIdRef.current) return
-
-      const totalPages = Math.max(1, Math.ceil(result.total / targetPageSize))
-      if (result.total > 0 && targetPage > totalPages) {
-        await fetchAssets(currentFilters, {
-          page: totalPages,
-          pageSize: targetPageSize,
-        })
-        return
-      }
-
-      setAssets(result.rows)
-      setTotalAssets(result.total)
-      setCurrentPage(targetPage)
-      setPageSize(targetPageSize)
-    } catch (err) {
-      if (requestId !== requestIdRef.current) return
-      logDevError('assets.fetch', err)
-      setError(getUserFacingMessage(err, 'Unable to load assets right now.'))
-      setErrorDebug(getErrorDebugDetail(err))
-    } finally {
-      if (requestId === requestIdRef.current) {
-        setLoading(false)
-      }
-    }
-  }
+  const [searchInput, setSearchInput] = useState(searchParam || '')
 
   useEffect(() => {
-    let mounted = true
-    void (async () => {
-      try {
-        const [rows, profile] = await Promise.all([
-          listCategories().catch(() => [] as CategoryRecord[]),
-          getSessionEmployee(),
-        ])
-        if (!mounted) return
-        const profileAdmin = Boolean(profile?.is_active && profile?.role !== 'employee')
-        const effectiveAdmin = profileAdmin || await hasActiveAdminAccess()
-        if (!mounted) return
-        setCategories(rows)
-        setIsAdmin(effectiveAdmin)
-        setScopeEmployeeId(effectiveAdmin ? null : (profile?.id || null))
-      } catch {
-        // Keep UI usable even if categories fail.
-      } finally {
-        if (mounted) setAccessResolved(true)
-      }
-    })()
-    return () => {
-      mounted = false
-    }
-  }, [])
+    setSearchInput(searchParam || '')
+  }, [searchParam])
+
+  const currentAdvancedFilters: AssetAdvancedFiltersInput = {
+    status: statusParam || STATUS_ALL,
+    categorySlug: categoryParam || '',
+  }
+  const activeAdvancedFilterCount = getActiveAdvancedFilterCount(currentAdvancedFilters)
+
+  const shouldFilterOtherCategories = filters.category_slug === OTHER_CATEGORY_FILTER_VALUE
+  const assetsQuery = useAssetsListQueryEnabled(
+    {
+      page: currentPage,
+      limit: pageSize,
+      search: searchParam?.trim() || undefined,
+      status: statusParam?.trim() || undefined,
+      category: shouldFilterOtherCategories ? undefined : categoryParam?.trim() || undefined,
+      exclude_category_slugs: shouldFilterOtherCategories ? [...DEFAULT_ASSET_CATEGORY_SLUGS] : undefined,
+    },
+    accessResolved,
+  )
+
+  const assets = assetsQuery.data?.items ?? []
+  const totalAssets = assetsQuery.data?.total ?? 0
+  const loading = assetsQuery.isLoading || assetsQuery.isFetching
+  const listErrorMessage = assetsQuery.isError ? getUserFacingMessage(assetsQuery.error, 'Unable to load assets right now.') : ''
+  const listErrorDebug = assetsQuery.isError ? getErrorDebugDetail(assetsQuery.error) : undefined
+
+  const pageErrorMessage = error || (!dismissedListError ? listErrorMessage : '')
+  const pageErrorDebug = error ? errorDebug : listErrorDebug
+
+  useEffect(() => {
+    if (!listErrorMessage) return
+    setDismissedListError(false)
+  }, [listErrorMessage])
 
   useEffect(() => {
     if (!accessResolved) return
-    void fetchAssets(filtersRef.current, { page: 1, pageSize })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [accessResolved, isAdmin, scopeEmployeeId])
+    if (!initialListReady && assetsQuery.isFetched) {
+      setInitialListReady(true)
+    }
+  }, [accessResolved, assetsQuery.isFetched, initialListReady])
 
   useEffect(() => {
-    if (!accessResolved || loading) return
-    setInitialListReady(true)
-  }, [accessResolved, loading])
+    if (!accessResolved) return
+
+    const timer = setTimeout(() => {
+      if (searchInput !== (searchParam || '')) {
+        setSearchParams(prev => {
+          if (searchInput.trim()) prev.set('search', searchInput.trim())
+          else prev.delete('search')
+          prev.set('page', '1')
+          return prev
+        }, { replace: true })
+      }
+    }, SEARCH_DEBOUNCE_MS)
+
+    return () => clearTimeout(timer)
+  }, [accessResolved, searchInput, searchParam, setSearchParams])
 
   useEffect(() => {
-    filtersRef.current = filters
-  }, [filters])
-
-  useEffect(() => () => {
-    if (debounceRef.current) clearTimeout(debounceRef.current)
-  }, [])
+    if (!assetsQuery.data) return
+    if (totalAssets <= 0) return
+    const totalPages = Math.max(1, Math.ceil(totalAssets / pageSize))
+    if (currentPage > totalPages) {
+      setSearchParams(prev => {
+        prev.set('page', totalPages.toString())
+        return prev
+      }, { replace: true })
+    }
+  }, [assetsQuery.data, currentPage, pageSize, totalAssets, setSearchParams])
 
   useEffect(() => {
     qrPdfTabFallbackRef.current = qrPdfTabFallback
@@ -238,24 +199,25 @@ export default function AllAssets() {
   }, [])
 
   const handleSearchChange = (value: string) => {
-    if (debounceRef.current) clearTimeout(debounceRef.current)
-    setFilters((current) => {
-      const next = { ...current, search: value || undefined }
-      filtersRef.current = next
-      debounceRef.current = setTimeout(() => {
-        void fetchAssets(next, { page: 1, pageSize })
-      }, SEARCH_DEBOUNCE_MS)
-      return next
-    })
+    setSearchInput(value)
   }
 
   const handleFilterChange = (partial: Partial<AssetFilters>) => {
-    if (debounceRef.current) clearTimeout(debounceRef.current)
-    setFilters((current) => {
-      const next = { ...current, ...partial }
-      filtersRef.current = next
-      void fetchAssets(next, { page: 1, pageSize })
-      return next
+    setSearchParams(prev => {
+      if (partial.status !== undefined) {
+        if (partial.status) prev.set('status', partial.status)
+        else prev.delete('status')
+      }
+      if (partial.category_slug !== undefined) {
+        if (partial.category_slug) prev.set('category', partial.category_slug)
+        else prev.delete('category')
+      }
+      if (partial.search !== undefined) {
+        if (partial.search) prev.set('search', partial.search)
+        else prev.delete('search')
+      }
+      prev.set('page', '1')
+      return prev
     })
   }
 
@@ -289,19 +251,27 @@ export default function AllAssets() {
   }
 
   const handleRefresh = () => {
-    if (debounceRef.current) clearTimeout(debounceRef.current)
-    void fetchAssets(filtersRef.current, { page: currentPage, pageSize })
+    setError('')
+    setErrorDebug(undefined)
+    void assetsQuery.refetch()
   }
 
   const handlePageChange = (page: number) => {
     if (loading || page === currentPage) return
-    void fetchAssets(filtersRef.current, { page, pageSize })
+    setSearchParams(prev => {
+      prev.set('page', page.toString())
+      return prev
+    })
   }
 
   const handlePageSizeChange = (nextPageSize: number) => {
     if (loading || nextPageSize === pageSize) return
     setStoredPageSize('assets', nextPageSize)
-    void fetchAssets(filtersRef.current, { page: 1, pageSize: nextPageSize })
+    setPageSize(nextPageSize)
+    setSearchParams(prev => {
+      prev.set('page', '1')
+      return prev
+    })
   }
 
   const handleViewQR = async (e: React.MouseEvent, asset: AssetInventoryRecord) => {
@@ -314,7 +284,7 @@ export default function AllAssets() {
 
     setQrLoading(true)
     try {
-      const qrCode = await getQrDataUriForAssetTag(assetTag)
+      const qrCode = await buildAssetQrDataUri(assetTag)
       setQrModal({
         assetTag,
         assetLabel: getAssetQrLabel(asset),
@@ -357,7 +327,7 @@ export default function AllAssets() {
 
     setQrLoading(true)
     try {
-      const qrCode = await getQrDataUriForAssetTag(assetTag)
+      const qrCode = await buildAssetQrDataUri(assetTag)
       triggerQrDownload(assetTag, qrCode)
     } catch (err) {
       logDevError('assets.qr.download', err)
@@ -368,25 +338,60 @@ export default function AllAssets() {
     }
   }
 
-  const collectAssetTagsForQrExport = async (currentFilters: AssetFilters): Promise<string[]> => {
-    const resolvedFilters = buildAssetListFilters(currentFilters)
+  const collectAssetTagsForQrExport = async (): Promise<string[]> => {
     const collectedTags: string[] = []
-    let offset = 0
+    const MAX_TAGS = 10_000
+    let page = 1
     let total = 0
+    let totalVerified = false
+
+    const shouldFilterOther = filters.category_slug === OTHER_CATEGORY_FILTER_VALUE
+    const category = shouldFilterOther ? undefined : filters.category_slug?.trim() || undefined
+    const exclude_category_slugs = shouldFilterOther ? [...DEFAULT_ASSET_CATEGORY_SLUGS] : undefined
+    const search = searchParam?.trim() ? searchParam.trim() : undefined
+    const status = filters.status?.trim() || undefined
 
     do {
-      const result = await getAssetsPage(resolvedFilters, { offset, limit: QR_EXPORT_BATCH_SIZE })
-      if (offset === 0) total = result.total
+      const result = await listAssets({
+        page,
+        limit: QR_EXPORT_BATCH_SIZE,
+        search,
+        status,
+        category,
+        exclude_category_slugs,
+      })
 
-      const pageTags = result.rows
+      if (page === 1) {
+        total = result.total
+        if (
+          typeof total !== 'number' ||
+          (result.items.length > 0 && total < result.items.length)
+        ) {
+          console.warn(
+            '[QR Export] result.total looks incorrect — expected global total, got:',
+            total,
+            '(items on page:',
+            result.items.length,
+            ') — falling back to exhaustive pagination.',
+          )
+          total = Number.MAX_SAFE_INTEGER
+        }
+        totalVerified = true
+      }
+
+      const pageTags = result.items
         .map((asset) => asset.asset_tag?.trim() || '')
         .filter(Boolean)
 
       collectedTags.push(...pageTags)
-      offset += result.rows.length
+      page += 1
 
-      if (result.rows.length === 0) break
-    } while (offset < total)
+      if (result.items.length === 0) break
+      if (collectedTags.length >= MAX_TAGS) {
+        console.warn(`[QR Export] Safety cap reached (${MAX_TAGS} tags). Stopping pagination.`)
+        break
+      }
+    } while (totalVerified && (page - 1) * QR_EXPORT_BATCH_SIZE < total)
 
     return [...new Set(collectedTags)]
   }
@@ -432,8 +437,8 @@ export default function AllAssets() {
     setErrorDebug(undefined)
 
     try {
-      const assetTags = await collectAssetTagsForQrExport(filtersRef.current)
-      const { pdfBlob, fileName, emptyExport } = await fetchAssetQrLabelsPdf(assetTags)
+      const assetTags = await collectAssetTagsForQrExport()
+      const { pdfBlob, fileName, emptyExport } = await exportAssetQrLabelsPdf(assetTags)
       const blobUrl = URL.createObjectURL(pdfBlob)
       const viewer = window.open(blobUrl, '_blank', 'noopener,noreferrer')
       if (viewer) {
@@ -459,14 +464,16 @@ export default function AllAssets() {
   const handleSoftDeleteAsset = async (asset: AssetInventoryRecord) => {
     if (!isAdmin) return
     try {
-      await softDeleteAssetById(asset.id)
+      await softDeleteAsset(asset.id)
       setDeleteTarget(null)
       const nextTotal = Math.max(0, totalAssets - 1)
       const lastPage = Math.max(1, Math.ceil(nextTotal / pageSize))
-      await fetchAssets(filtersRef.current, {
-        page: Math.min(currentPage, lastPage),
-        pageSize,
-      })
+      const nextPage = Math.min(currentPage, lastPage)
+      setSearchParams(prev => {
+        prev.set('page', nextPage.toString())
+        return prev
+      }, { replace: true })
+      await assetsQuery.refetch()
     } catch (err) {
       logDevError('assets.soft_delete', err)
       setError(getUserFacingMessage(err, 'Unable to delete asset right now.'))
@@ -585,7 +592,7 @@ export default function AllAssets() {
               type="text"
               aria-label="Search assets"
               placeholder={isAdmin ? 'Search by tag, model, manufacturer, holder...' : 'Search by tag, model, serial number...'}
-              value={filters.search || ''}
+              value={searchInput}
               onChange={(e) => handleSearchChange(e.target.value)}
               className="w-full rounded-lg border border-base bg-surface px-3 py-2.5 text-sm text-primary outline-none transition placeholder:text-subtle focus:border-[color:var(--accent)]"
             />
@@ -713,17 +720,21 @@ export default function AllAssets() {
         </p>
       )}
 
-      {error ? (
+      {pageErrorMessage ? (
         <div className="mb-3">
           <Error
             title="Could not load assets"
-            message={error}
+            message={pageErrorMessage}
             onRetry={handleRefresh}
             onDismiss={() => {
-              setError('')
-              setErrorDebug(undefined)
+              if (error) {
+                setError('')
+                setErrorDebug(undefined)
+              } else {
+                setDismissedListError(true)
+              }
             }}
-            debugDetail={errorDebug}
+            debugDetail={pageErrorDebug}
             fullScreen={false}
           />
         </div>
@@ -1031,7 +1042,7 @@ export default function AllAssets() {
         <InventoryBulkUpdateModal
           open={bulkUpdateOpen}
           onClose={() => setBulkUpdateOpen(false)}
-          onSuccess={() => void fetchAssets(filtersRef.current, { page: currentPage, pageSize })}
+          onSuccess={() => void assetsQuery.refetch()}
         />
       )}
     </main>

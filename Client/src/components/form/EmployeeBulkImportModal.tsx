@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react'
 import * as XLSX from '@e965/xlsx'
 import {
-  bulkInsertEmployeesNew,
+  bulkInsertEmployees,
   getActiveEmployeeIdsInUse,
   getEmailsAlreadyInUse,
   getSoftDeletedEmployeeIds,
@@ -14,7 +14,7 @@ import {
 } from '../../utils/employeeBulkImport'
 import { useModalScrollLock } from '../../hooks/useModalScrollLock'
 import { ModalPortal } from '../common/ModalPortal'
-import { useToast } from '../common/ToastProvider'
+import { useToast } from '../../hooks/useToast'
 import AnimatedNavIcon from '../common/AnimatedNavIcon'
 
 const ACCEPT =
@@ -225,7 +225,7 @@ export default function EmployeeBulkImportModal({ open, onClose, onSuccess }: Pr
         const total = parsed.rows.length
 
         try {
-          await bulkInsertEmployeesNew(parsed.rows.map((r) => r.input))
+          await bulkInsertEmployees(parsed.rows.map((r) => r.input))
         } catch (err) {
           logDevError('employeeBulkImport.bulk', err)
           const lines = humanizeBulkImportSaveError(err)

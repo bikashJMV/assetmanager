@@ -32,6 +32,13 @@ async def get_logs(
     cursor: str = Query("", description="For forward pagination"),
     _=Depends(require_it_ops_access)
 ):
+    """
+    Purpose: Query Loki and return recent logs for IT Ops troubleshooting.
+    Method/Route: GET /observability/logs
+    Request: Query `limit`, `start`, `end`, `service`(ams-server|telemetry-server|all), `level`, `cursor`.
+    Response: 200 `LogsResponse`; Errors: 503 on Loki connectivity issues, 500 on unexpected failures.
+    Notes: IT Ops only (`require_it_ops_access`); `cursor` is a nanosecond timestamp for pagination.
+    """
     # Default to last 1 hour if no time bounds are provided
     if not cursor and not start:
         start = int((time.time() - 3600) * 1_000_000_000)

@@ -27,6 +27,7 @@ export type IconName =
   | 'moon'
   | 'user-circle'
   | 'chevron-up'
+  | 'alert-triangle'
 
 function BaseIcon({
   children,
@@ -295,6 +296,16 @@ export default function AnimatedNavIcon({ name, className = '' }: { name: IconNa
         <circle className="ai-user-ring" cx="12" cy="12" r="9" />
         <circle className="ai-user-head" cx="12" cy="9" r="2.6" />
         <path className="ai-user-shoulders" d="M6.5 18a5.5 5.5 0 0 1 11 0" />
+      </BaseIcon>
+    )
+  }
+
+  if (name === 'alert-triangle') {
+    return (
+      <BaseIcon className={className}>
+        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+        <line x1="12" y1="9" x2="12" y2="13" />
+        <line x1="12" y1="17" x2="12.01" y2="17" />
       </BaseIcon>
     )
   }

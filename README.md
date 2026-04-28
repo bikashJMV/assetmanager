@@ -1,48 +1,43 @@
 # Asset Manager
 
-Asset Manager is a Supabase-centered asset tracking platform for physical and digital assets. It provides end-to-end lifecycle management with role-based access control, event-driven email notifications, and comprehensive telemetry.
+Asset Manager (AMS) is a **Postgres-backed** platform for physical and digital assets. The UI is a **React 19** single-page app (**Vite 7**); **authNexus** (OIDC) handles sign-in; a **FastAPI** backend serves **`/api/v1/*`** (and `GET /api/health`, `GET /observability/logs`) with JWT validation when auth is enabled, role checks, and audit-friendly mutations. Optional email notifications call an external microservice, and a local **Grafana** stack (under `Observability/`) can aggregate logs and traces.
 
-The repo currently contains:
+This repository contains:
 
-- `Client/` - React 19 + Vite 7 + TypeScript SPA
-- `Server/` - FastAPI backend for trusted HTTP operations and email notification orchestration
-- `Server/db/migrations/v2/` - canonical AMS schema, RLS, views, RPCs, and audit logic
-- `Observability/` - Grafana stack (Loki + Tempo + Prometheus + Alloy) for logs, traces, and metrics in local/dev
-- `Context.md` - working context and safety rules for AI/code changes
+- `Client/` — React + Vite + TypeScript SPA (`Client/package.json`)
+- `Server/` — FastAPI app (`Server/main.py`, `Server/app.py` re-exports `main.app`), asyncpg pool (`Server/core/postgres.py`), versioned API routers under `Server/routers/`
+- `Observability/` — Docker Compose stack for Loki, Tempo, Prometheus, Grafana, Alloy (see `Observability/OBSERVABILITY_TELEMETRY.md`)
 
 ## Architecture
 
-- The browser talks directly to Supabase for most runtime reads and writes.
-- Business rules live primarily in SQL, RLS, views, and RPC functions under `Server/db/migrations/v2/`.
-- `Server/` is a secondary trusted layer that uses the Supabase service-role key. It also acts as an orchestrator proxying event payloads to the Email Notification Microservice.
-- The external `Email Notification Microservice` acts as a dedicated dispatch system handling automated CC-enabled receipts.
-- Observability is implemented with a Grafana stack:
-  - Logs: server stdout → `logs/ams_server.log` → Alloy tails → Loki → `Server/observability/logs` → Client log viewer
-  - Traces: browser OpenTelemetry (OTLP/HTTP) → Alloy → Tempo
+- The **browser calls the FastAPI server** for application data. Base URL: `VITE_API_URL` (default `http://localhost:8000` in `Client/src/utils/authNexus.api.ts`). Integration layers: `Client/src/api.ts`, `Client/src/api/apiClient.ts` + `Client/src/utils/authNexus.api.ts`, `Client/src/services/*`, `Client/src/queries/*`.
+- **Sign-in** uses OIDC via `oidc-client-ts` (`Client/src/utils/authService.ts`, callback `Client/src/components/pages/AuthCallback.tsx`). The server validates access tokens (JWKS) when `AUTH_ENABLED=true` (`Server/core/auth_middleware.py`, `Server/core/authnexus.py`, `Server/core/settings.py`).
+- **Postgres** holds application data. The pool is created from `DATABASE_URL` or from `POSTGRES_*` in `Server/core/postgres.py`. Business rules live in `Server/repositories/` and `Server/services/`.
+- **SQL in this repo:** `Server/db/` contains optional, targeted scripts (for example `fn_next_asset_tag.sql`, `add_assets_qr_code.sql`, `v_warranty_notifications.sql`). They are **not** a full ordered migration history; your database must match the schema the repositories expect.
+- The **email notification** microservice is external: the AMS server can POST to it when `NOTIFICATIONS_ENABLED=true` and URL/API key are set (`Server/core/settings.py`, `Server/services/notifications/`).
+- **Observability:** `RequestIdMiddleware` logs `request_completed` with path and status (`Server/core/middleware.py`). The client can send OpenTelemetry browser traces when `VITE_OTEL_GRAFANA_ENABLED=true` (`Client/src/otel-telemetry.ts`). Loki is queried from the server at **`GET /observability/logs`** (IT Ops only; `Server/routers/observability.py`), not from the browser directly.
 
 ## Core domain rules
 
-- **Nomenclature**: The platform standardizes labels across the UI and data to **Asset Tag** (identifier), **Category**, and **User** (assignment holder).
-- **Roles**: Canonical employee role is `employees.role`: `employee`, `admin`, `it_ops`. `it_ops` holds the highest tier.
-- **Flags**: `employees.is_active` and `employees.erp_active` are distinct flags requiring disparate handling.
-- **Assignments**: Assignment and return streams are exclusively powered by DB RPCs: `fn_assign_asset` and `fn_return_asset`.
-- **Lifecycle**: Post-assignment lifecycle states (`in_stock`, `in_repair`, `retired`, `lost`, `disposed`) are governed by `fn_set_asset_lifecycle_status`.
-- **Public Scan**: QR-based scans utilize `fn_public_scan_asset` fetching tightly-scoped anonymous records without leaking internal status logs.
-- **Recycle Bin**: Asset Manager delegates deletions to soft-delete mechanisms. The `v_employee_directory` dynamically conceals binned employees. Permanent purge necessitates validation on bin history (`fn_delete_employee_permanent_requires_recycle_bin`).
+- **Nomenclature (UI):** **Asset Tag**, **Category**, **User** / employee context where the product uses those labels.
+- **Roles (API):** `employee`, `admin`, `it_ops` (used in `Server/core/authz.py` and `Client/src/App.tsx` `RequirePrivileged`: any role other than `employee` is treated as privileged when `is_active` is true).
+- **Flags:** `employees.is_active` and `employees.erp_active` are distinct; semantics are defined in the service/repository layer.
+- **Public scan:** paths `/scan/:id` and authenticated `/assets/scan` / `/assets/scan/:id` use `Client/src/components/pages/ScanPage.tsx` with server routes under `/api/v1/assets` (see OpenAPI for exact contracts).
+- **Recycle bin:** HTTP API is **`/api/v1/recycle-bin`** (`Server/routers/api_v1_recycle_bin.py`), not nested under the assets path prefix.
 
 ## Repository guides
 
-- [`Client/CLIENT_README.md`](./Client/CLIENT_README.md)
-- [`Server/SERVER_README.md`](./Server/SERVER_README.md)
-- [`Server/services/README.md`](./Server/services/README.md)
-- [`Server/db/migrations/v2/README.md`](./Server/db/migrations/v2/README.md)
-- `Observability/` stack docs live alongside the docker compose files
+- [`Client/CLIENT_README.md`](./Client/CLIENT_README.md) — client routes, env vars, file map
+- [`Server/SERVER_README.md`](./Server/SERVER_README.md) — API modules, env vars, local run, DB scripts
+- [`Server/services/README.md`](./Server/services/README.md) — service-layer modules
+- [`Server/services/notifications/README.md`](./Server/services/notifications/README.md) — email adapter + orchestrator
+- [`Observability/OBSERVABILITY_TELEMETRY.md`](./Observability/OBSERVABILITY_TELEMETRY.md) — local observability stack
 
 ## Local development
 
 ### Client
 
-Create `Client/.env` (start from `Client/.env.example`), then run:
+Create `Client/.env` (start from `Client/.env.example`), then:
 
 ```bash
 cd Client
@@ -52,7 +47,7 @@ npm run dev
 
 ### Server
 
-Create `Server/.env` (start from `Server/.env.example`), then run:
+Create `Server/.env` (start from `Server/.env.example`), then:
 
 ```bash
 cd Server
@@ -60,9 +55,9 @@ pip install -r requirements.txt
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-### Observability (Grafana stack, optional)
+`Server/app.py` re-exports `main.app` for older `uvicorn app:app` style commands.
 
-Start the local Grafana stack (Loki + Tempo + Prometheus + Alloy + Grafana) from:
+### Observability (optional)
 
 ```bash
 cd Observability
@@ -71,17 +66,36 @@ docker compose up -d
 
 ## Setup order
 
-1. Configure the client Supabase variables in `Client/.env`.
-2. Create `Server/.env` ensuring all environment properties including email and observability settings are provisioned.
-3. Apply AMS migrations in the order listed in [`Server/db/migrations/v2/README.md`](./Server/db/migrations/v2/README.md) (through **`52_*`** for bulk-import audit actors and BFF assign/return identity).
-4. Start the client and server.
-5. If you want Grafana dashboards + log viewer, start `Observability/` and run the server with the stdout redirect script so Alloy can tail `logs/ams_server.log`.
+1. Provision **Postgres** and align schema with the code (use `Server/db/` helpers only as needed; apply any external migrations your team owns).
+2. Configure **Client** `VITE_*` variables: API URL, authNexus, optional QR/telemetry (see `Client/CLIENT_README.md` and `Client/.env.example`).
+3. Configure **Server** `POSTGRES_*` or `DATABASE_URL`, and auth per `Server/.env.example` if `AUTH_ENABLED=true`.
+4. Start the server, then the client. Set **`FRONTEND_URL`** (server) to match the SPA origin used in server-generated links (e.g. PDF QR labels in `Server/services/qr_label_pdf_service.py`).
+
+### Sign-in flow (high level)
+
+```mermaid
+flowchart TD
+  subgraph client["Client — SPA"]
+    A([User starts sign-in]) --> B[Redirect to authNexus OIDC]
+    B --> C([User authenticates])
+    C --> D[Callback with authorization code]
+    D --> E[Exchange for access token]
+  end
+  subgraph backend["Server — FastAPI"]
+    F["GET /api/v1/employees/me\nAuthorization: Bearer …"]
+    F --> G[JWKS verify JWT when AUTH_ENABLED]
+    G --> H[Resolve employee from token / DB]
+    H --> I{Provisioned?}
+    I -- Yes --> J[Return employee context]
+    I -- No --> K([403 — not provisioned])
+  end
+  E --> F
+  J --> L([200 — session profile])
+```
 
 ## Notes
 
-- The Client currently assumes `https://web-assetmanager.vercel.app` natively for QR scaffolding unless overridden by `VITE_PUBLIC_APP_ORIGIN`.
-- The FastAPI server must have `FRONTEND_URL` corresponding with the Client host for accurate code deployments.
-- Anonymous QR scan limits expose strictly to:
-  - assigned assets: `asset_name`, `holder_name`, `holder_employee_code`, `holder_department`
-  - unassigned assets: `asset_name`, `status`, `asset_tag`
-- Treat the PostgreSQL (`Server/db/migrations/v2/`) RPC schema as your single source of truth when architecture assumptions or documents differ.
+- **QR link origin (client):** `Client/src/utils/qr.ts` builds scan URLs with `VITE_FRONTEND_URL` or `VITE_PUBLIC_APP_ORIGIN`, then a production default. A separate `getScanPageBaseUrl` in `Client/src/api.ts` only checks `VITE_PUBLIC_APP_ORIGIN` for some API-layer QR helpers; keep env values consistent to avoid mismatch.
+- **CORS / origins:** `Server/main.py` uses `settings.ALLOWED_ORIGINS` and may append `http://localhost:5174` if missing. Align with your Vite dev port.
+- **Response header:** `x-request-id` is set on responses (`RequestIdMiddleware` in `Server/core/middleware.py`); you may send `X-Request-Id` to correlate.
+- **Metrics:** when `OTEL_GRAFANA_ENABLED=true` on the server, Prometheus instrumentation exposes **`/metrics`** (`Server/main.py`).

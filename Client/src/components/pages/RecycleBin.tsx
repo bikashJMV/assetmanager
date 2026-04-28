@@ -1,7 +1,6 @@
-﻿import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import {
-  deleteAssetPermanently,
-  deleteEmployeePermanently,
+  deleteRecycleBinEntryPermanently,
   listRecycleBinEntries,
   restoreRecycleBinEntry,
   type RecycleBinEntry,
@@ -12,7 +11,7 @@ import InfoHint from "../common/InfoHint"
 import recycleBinInfoHint from "../../data/recyclebin.json"
 import { getErrorDebugDetail, getUserFacingMessage, logDevError } from "../../utils/errors"
 import { useRefreshableLoader } from "../../hooks/useRefreshableLoader"
-import { useToast } from "../common/ToastProvider"
+import { useToast } from "../../hooks/useToast"
 
 type RecycleBinPageInfoHint = {
   panelTitle: string
@@ -111,11 +110,7 @@ export default function RecycleBin() {
     setPurgingId(entry.entry_id)
     setError("")
     try {
-      if (entry.entity_type === "employee") {
-        await deleteEmployeePermanently(entry.entity_id)
-      } else {
-        await deleteAssetPermanently(entry.entity_id)
-      }
+      await deleteRecycleBinEntryPermanently(entry.entry_id)
       setPurgeTarget(null)
       await load()
       showToast({ message: "Item permanently removed.", variant: "success" })
@@ -134,7 +129,7 @@ export default function RecycleBin() {
         <header className=" p-5 sm:p-6">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <h1 className="mt-1 text-2xl font-bold tracking-tight sm:text-3xl">Soft Deleted Records</h1>
+              <h1 className="mt-1 text-2xl font-bold tracking-tight sm:text-3xl">Soft Deleted Records</h1> 
               <p className=" text-sm text-muted">
                 Entries do not expire automatically. You can restore at any time for more info look at the help icon.
               </p>

@@ -2,17 +2,33 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import time
+
+# Configure application-level logging before uvicorn starts.
+# Without this, Python root logger defaults to WARNING and all
+# logger.info / logger.warning calls in app code are silently suppressed.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)-8s %(name)s — %(message)s",
+)
 
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from core.auth import require_backend_api_key, _resolve_request_role, get_auth_user_id_from_bearer
+from core.auth_middleware import AuthMiddleware
 from core.middleware import EnvelopeMiddleware, RequestIdMiddleware
 from core.settings import settings
 from core.errors import custom_http_exception_handler, generic_exception_handler
-from core.deps import get_db
-from routers import assets, logs, health, assignments, employees, bootstrap
+from routers.api_v1_assets import router as api_v1_assets_router
+from routers.api_v1_employees import router as api_v1_employees_router
+from routers.api_v1_assignments import router as api_v1_assignments_router
+from routers.api_v1_meta import router as api_v1_meta_router
+from routers.api_v1_authz import router as api_v1_authz_router
+from routers.api_v1_recycle_bin import router as api_v1_recycle_bin_router
+from routers import health
 from prometheus_fastapi_instrumentator import Instrumentator
+from core.postgres import init_pg_pool, close_pg_pool
 
 def create_app() -> FastAPI:
     app = FastAPI(
@@ -22,16 +38,34 @@ def create_app() -> FastAPI:
     )
 
     # Middleware stack (last added = outermost = runs first)
-    # Execution order: CORS → Envelope → RequestId → route handler
+    # Execution order: CORS → Envelope → Auth → RequestId → route handler
     app.add_middleware(RequestIdMiddleware)
+    app.add_middleware(AuthMiddleware)
     app.add_middleware(EnvelopeMiddleware)
+    _cors_origins = list(settings.ALLOWED_ORIGINS)
+    if "http://localhost:5174" not in _cors_origins:
+        _cors_origins.append("http://localhost:5174")
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.ALLOWED_ORIGINS,
+        allow_origins=_cors_origins,
         allow_credentials=False,
-        allow_methods=["*"],
-        allow_headers=["*"],
-        expose_headers=["Content-Disposition", "X-Exported-Asset-Count"],
+        allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
+        allow_headers=[
+            "Authorization",
+            "Content-Type",
+            "Accept",
+            "Accept-Language",
+            "X-API-Key",
+            "X-Request-ID",
+            "X-Request-Id",
+            "DNT",
+            "If-None-Match",
+            "Range",
+            "If-Modified-Since",
+            "Cache-Control",
+            "Pragma",
+        ],
+        expose_headers=["Content-Disposition", "X-Export-Empty", "X-Exported-Asset-Count"],
     )
 
     # Exception Handlers
@@ -39,41 +73,43 @@ def create_app() -> FastAPI:
     app.add_exception_handler(Exception, generic_exception_handler)
 
     # Register Routers
-    app.include_router(health.router)
+
+    app.include_router(health.api_router)
+    app.include_router(api_v1_assets_router)
+    app.include_router(api_v1_recycle_bin_router)
+    app.include_router(api_v1_employees_router)
+    app.include_router(api_v1_assignments_router)
+    app.include_router(api_v1_meta_router)
+    app.include_router(api_v1_authz_router)
     protected_dependencies = [Depends(require_backend_api_key)]
-    app.include_router(assets.router, dependencies=protected_dependencies)
-    app.include_router(assets.browser_router)
-    app.include_router(logs.router, dependencies=protected_dependencies)
-    # Assignments / employees: authenticated via Supabase JWT (require_manage_platform_access
-    # on routes). Requiring BACKEND_API_KEY here breaks browser flows — the client sends
-    # Bearer <session JWT>, not the backend API key.
-    app.include_router(assignments.router)
-    app.include_router(employees.router)
-    # Break-glass role promotion: X-Bootstrap-Secret + ROLE_BOOTSTRAP_SECRET only (no BACKEND_API_KEY).
-    app.include_router(bootstrap.router)
 
     # ── Observability ──
     from routers import observability
     app.include_router(observability.router)
 
-    # Root-level scan endpoint kept for direct QR navigation compatibility.
-    @app.get("/scan/{asset_ref}", tags=["Assets"], response_model=assets.AssetOut)
-    def scan_asset_root(
-        asset_ref: str,
-        db=Depends(get_db),
-        _=Depends(require_backend_api_key),
-    ):
-        """Top-level scan shortcut for QR routes."""
-        return assets.get_asset(asset_ref, db)
-
     @app.get("/", tags=["System"])
     def root():
+        """
+        Purpose: Root liveness endpoint.
+        Method/Route: GET /
+        Request: None
+        Response: 200 JSON `{message, env}`.
+        Notes: Public; does not hit the database.
+        """
         return {"message": "AMS API is running", "env": settings.ENV}
 
 
     # Prometheus metrics endpoint (non-invasive; does not affect existing routes)
     if settings.OTEL_GRAFANA_ENABLED:
         Instrumentator().instrument(app).expose(app, endpoint="/metrics")
+
+    @app.on_event("startup")
+    async def _startup():
+        await init_pg_pool()
+
+    @app.on_event("shutdown")
+    async def _shutdown():
+        await close_pg_pool()
 
     return app
 

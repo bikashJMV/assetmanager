@@ -4,7 +4,7 @@ import EmployeeForm from '../form/EmployeeForm'
 import EmployeeBulkImportModal from '../form/EmployeeBulkImportModal'
 import AnimatedNavIcon from '../common/AnimatedNavIcon'
 import InfoHint from '../common/InfoHint'
-import { useToast } from '../common/ToastProvider'
+import { useToast } from '../../hooks/useToast'
 import { hasActiveAdminAccess, upsertEmployee, type EmployeeUpsertInput } from '../../api'
 import {
   EMPLOYEE_IMPORT_MAX_ROWS,
@@ -90,7 +90,7 @@ export default function NewEmployee() {
               <p>
                 <span className="text-primary font-medium">Required:</span>{' '}
                 <code className="text-[0.8rem] text-primary">employee_id</code> (or alias{' '}
-                <code className="text-[0.8rem] text-primary">employee_code</code>),{' '}
+                <code className="text-[0.8rem] text-primary">employee_id</code>),{' '}
                 <code className="text-[0.8rem] text-primary">name</code>,{' '}
                 <code className="text-[0.8rem] text-primary">department</code>. Optional:{' '}
                 <code className="text-[0.8rem] text-primary">email</code>,{' '}

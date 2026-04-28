@@ -16,7 +16,7 @@ import {
 } from '../../utils/inventoryBulkUpdate'
 import { useModalScrollLock } from '../../hooks/useModalScrollLock'
 import { ModalPortal } from '../common/ModalPortal'
-import { useToast } from '../common/ToastProvider'
+import { useToast } from '../../hooks/useToast'
 import AnimatedNavIcon from '../common/AnimatedNavIcon'
 
 const ACCEPT =

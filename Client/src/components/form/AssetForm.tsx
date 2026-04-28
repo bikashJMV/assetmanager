@@ -13,7 +13,7 @@ import { getUserFacingMessage, logDevError } from '../../utils/errors'
 import { formatEnumLabel } from '../../utils/formatDisplay'
 import { getCatalogLocationLabels } from '../../utils/locationAddressCatalog'
 import FilterSelect, { type FilterSelectOption } from '../common/FilterSelect'
-import { useToast } from '../common/ToastProvider'
+import { useToast } from '../../hooks/useToast'
 
 type Props = {
   prefill?: Partial<AssetWriteInput>

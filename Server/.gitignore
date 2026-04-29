@@ -18,3 +18,7 @@ import_report*.json
 *test*.py
 tests/
 
+test_loki_logic.py
+test_imports.py
+test_endpoint.py
+test_qr_pdf.py

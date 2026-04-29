@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react'
-import * as XLSX from '@e965/xlsx'
+
 import {
   bulkInsertEmployees,
   getActiveEmployeeIdsInUse,
@@ -78,6 +78,7 @@ export default function EmployeeBulkImportModal({ open, onClose, onSuccess }: Pr
 
       try {
         const buf = await file.arrayBuffer()
+        const XLSX = await import('@e965/xlsx')
         const workbook = XLSX.read(buf, { type: 'array' })
         const firstName = workbook.SheetNames[0]
         if (!firstName) {

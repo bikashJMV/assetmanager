@@ -1,0 +1,98 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: ams-postgres-docker
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-assetmanager_db}
+      POSTGRES_USER: ${POSTGRES_USER:-assetmanager_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+    volumes:
+      - ${POSTGRES_DATA_PATH:-./DB/postgres}:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-assetmanager_user}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  server:
+    build:
+      context: ./Server
+      dockerfile: Dockerfile
+    container_name: ams-server
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-assetmanager_db}
+      POSTGRES_USER: ${POSTGRES_USER:-assetmanager_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:11000}
+      VITE_FRONTEND_URL: ${FRONTEND_URL:-http://localhost:11000}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:11000,http://localhost:5174,http://localhost:5173}
+      AUTH_ENABLED: ${AUTH_ENABLED:-false}
+      AUTH_JWKS_URL: ${AUTH_JWKS_URL:-}
+      AUTH_ISSUER: ${AUTH_ISSUER:-}
+      AUTH_PROJECT_ID: ${AUTH_PROJECT_ID:-}
+      AUTH_AUDIENCE: ${AUTH_AUDIENCE:-}
+      AUTH_CLOCK_SKEW_SECONDS: 30
+      ENV: ${ENV:-local}
+      VITE_ENV: ${ENV:-local}
+      OTEL_GRAFANA_ENABLED: ${OTEL_GRAFANA_ENABLED:-true}
+      LOKI_BASE_URL: ${LOKI_BASE_URL:-http://loki:3100}
+      EMAIL_SERVICE_URL: ${EMAIL_SERVICE_URL:-}
+      BACKEND_API_KEY_EMAIL_NOTIFICATION: ${BACKEND_API_KEY_EMAIL_NOTIFICATION:-}
+      NOTIFICATIONS_ENABLED: ${NOTIFICATIONS_ENABLED:-false}
+      BACKEND_API_KEY: ${BACKEND_API_KEY:-}
+      VITE_BACKEND_API_KEY: ${BACKEND_API_KEY:-}
+      ROLE_BOOTSTRAP_SECRET: ${ROLE_BOOTSTRAP_SECRET:-}
+    ports:
+      - "${SERVER_PUBLISH_PORT:-11100}:8000"
+    networks:
+      - default
+      - observability
+    restart: unless-stopped
+
+  client:
+    build:
+      context: ./Client
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:11100}
+        VITE_BACKEND_API_KEY: ${BACKEND_API_KEY:-}
+        VITE_AUTH_AUTHORITY: ${VITE_AUTH_AUTHORITY:-}
+        VITE_CLIENT_ID: ${VITE_CLIENT_ID:-}
+        VITE_ORG_ID: ${VITE_ORG_ID:-}
+        VITE_PROJECT_ID: ${VITE_PROJECT_ID:-}
+        VITE_CALLBACK_PATH: ${VITE_CALLBACK_PATH:-/callback}
+        VITE_LOGOUT_PATH: ${VITE_LOGOUT_PATH:-/login}
+        VITE_FRONTEND_URL: ${FRONTEND_URL:-http://localhost:11000}
+        VITE_PUBLIC_APP_ORIGIN: ${VITE_PUBLIC_APP_ORIGIN:-http://localhost:11000}
+        VITE_OTEL_GRAFANA_ENABLED: ${VITE_OTEL_GRAFANA_ENABLED:-false}
+        VITE_OTEL_EXPORTER_ENDPOINT: ${VITE_OTEL_EXPORTER_ENDPOINT:-http://localhost:4318/v1/traces}
+        VITE_GRAFANA_DASHBOARD_URL_FOR_ITOPS: ${VITE_GRAFANA_DASHBOARD_URL_FOR_ITOPS:-}
+    container_name: ams-client
+    depends_on:
+      - server
+    ports:
+      - "${CLIENT_PUBLISH_PORT:-11000}:80"
+    restart: unless-stopped
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: ams-pgadmin
+    depends_on:
+      - postgres
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@example.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-change-me}
+    ports:
+      - "${PGADMIN_PUBLISH_PORT:-11300}:80"
+    restart: unless-stopped
+
+networks:
+  observability:
+    name: ams-observability
+    external: true

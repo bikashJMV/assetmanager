@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react'
-import * as XLSX from '@e965/xlsx'
+
 import {
   assignAsset,
   resolveEmployeeIdForAssign,
@@ -108,6 +108,7 @@ export default function InventoryBulkUpdateModal({ open, onClose, onSuccess }: P
 
       try {
         const buf = await file.arrayBuffer()
+        const XLSX = await import('@e965/xlsx')
         const workbook = XLSX.read(buf, { type: 'array' })
         const sheetName = pickSheetName(workbook.SheetNames)
         if (!sheetName) {

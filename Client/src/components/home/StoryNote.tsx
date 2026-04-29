@@ -11,18 +11,18 @@ export default function StoryNote({ label, className = '', tone = 'neutral', chi
   const noteTone =
     tone === 'accent'
       ? {
-          shell: 'border-[#F1B28F] bg-[linear-gradient(180deg,#FFF7F1_0%,#FFF2E8_100%)]',
-          chip: 'bg-[#F04E0F] text-white',
-          dot: 'bg-[#F7A16B]',
-          body: 'text-[#2E2019]',
-          edge: 'border-l-[#F04E0F]',
+          shell: 'border-accent-soft bg-surface-2',
+          chip: 'bg-accent text-white',
+          dot: 'bg-accent',
+          body: 'text-primary',
+          edge: 'border-l-accent',
         }
       : {
-          shell: 'border-[#D9D0C4] bg-[linear-gradient(180deg,rgba(255,255,255,0.98)_0%,rgba(252,249,245,0.98)_100%)]',
-          chip: 'bg-[#0A0A0A] text-white',
-          dot: 'bg-[#F04E0F]',
-          body: 'text-[#252525]',
-          edge: 'border-l-[#0A0A0A]',
+          shell: 'border-base bg-surface-3',
+          chip: 'bg-surface-2 text-primary',
+          dot: 'bg-accent',
+          body: 'text-primary',
+          edge: 'border-l-primary',
         }
 
   return (

@@ -36,43 +36,42 @@ export default function OverviewKpisBox({ isAuthenticated, publicSummary, classN
           {overviewMetrics.map((item) => (
             <div
               key={item.label}
-              className={`rounded-xl border p-4 text-center ${item.accent ? 'border-[#0A0A0A] bg-[#0A0A0A]' : 'border-[#F0ECE5] bg-[#FAFAF8]'}`}
+              className={`rounded-xl border p-4 text-center ${item.accent ? 'border-base bg-surface' : 'border-base bg-surface-2'}`}
             >
-              <div className={`mx-auto mb-2 flex h-8 w-8 items-center justify-center ${item.accent ? 'text-white' : 'text-[#222]'}`}>
+              <div className={`mx-auto mb-2 flex h-8 w-8 items-center justify-center ${item.accent ? 'text-primary' : 'text-primary'}`}>
                 <AnimatedNavIcon name={item.icon} />
               </div>
               <div className="flex justify-center">
                 <span
-                  className={`inline-flex rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-[0.08em] ${
-                    item.accent ? 'bg-white/14 text-white' : 'bg-[#ECE7DE] text-[#333]'
-                  }`}
+                  className={`inline-flex rounded-full px-3 text-[11px] font-bold uppercase tracking-[0.08em] ${item.accent ? 'bg-accent-soft text-primary' : 'bg-surface-3 text-primary'
+                    }`}
                 >
                   {item.status}
                 </span>
               </div>
-              <p className={`mt-1 text-xs font-semibold ${item.accent ? 'text-white/70' : 'text-[#777]'}`}>{item.label}</p>
+              <p className={`mt-1 text-xs font-semibold ${item.accent ? 'text-primary' : 'text-primary'}`}>{item.label}</p>
             </div>
           ))}
         </div>
 
         {!isAuthenticated && publicSummary?.categoryBreakdown?.length ? (
-          <div className="rounded-2xl border border-[#E8E4DC] bg-[#FAFAF8] px-4 py-4">
+          <div className="rounded-2xl border border-base bg-surface-2 px-4 py-4">
             <div className="mb-3 flex items-center justify-between">
-              <p className="text-[11px] font-bold uppercase tracking-[0.06em] text-[#888]">Top Categories</p>
-              <span className="text-[11px] font-semibold text-[#666]">Protected mix</span>
+              <p className="text-[11px] font-bold uppercase tracking-[0.06em] text-muted">Top Categories</p>
+              <span className="text-[11px] font-semibold text-subtle">Protected mix</span>
             </div>
             <div className="space-y-2">
               {publicSummary.categoryBreakdown.slice(0, 3).map((item) => (
                 <div key={item.category}>
-                  <div className="mb-1 flex items-center justify-between text-xs text-[#666]">
+                  <div className="mb-1 flex items-center justify-between text-xs text-subtle">
                     <span>{item.category}</span>
-                    <span className="rounded-full bg-[#EEE7DD] px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.06em] text-[#6F685F]">
+                    <span className="rounded-full bg-surface-3 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.06em] text-muted">
                       tracked
                     </span>
                   </div>
-                  <div className="h-2 rounded-full bg-[#EEE7DD]">
+                  <div className="h-2 rounded-full bg-surface-3">
                     <div
-                      className="h-2 rounded-full bg-[#F04E0F]"
+                      className="h-2 rounded-full bg-accent"
                       style={{
                         width: `${38 + ((item.category.length * 7) % 37)}%`,
                       }}
@@ -84,7 +83,7 @@ export default function OverviewKpisBox({ isAuthenticated, publicSummary, classN
           </div>
         ) : null}
 
-        <p className="text-xs leading-6 text-[#666]">
+        <p className="text-xs leading-6 text-subtle">
           {isAuthenticated
             ? 'Realtime dashboard signals refresh as assignments and inventory records change.'
             : 'Sign in to unlock protected operational insights, deeper category analysis, and asset detail views.'}

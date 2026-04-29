@@ -32,6 +32,7 @@ This repository contains:
 - [`Server/services/README.md`](./Server/services/README.md) — service-layer modules
 - [`Server/services/notifications/README.md`](./Server/services/notifications/README.md) — email adapter + orchestrator
 - [`Observability/OBSERVABILITY_TELEMETRY.md`](./Observability/OBSERVABILITY_TELEMETRY.md) — local observability stack
+- [`DOCKER_DEPLOYMENT.md`](./DOCKER_DEPLOYMENT.md) — Docker Compose for **server + client only**; Postgres is separate (e.g. `DB/DBassetManager.yml`)
 
 ## Local development
 
@@ -63,6 +64,18 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 cd Observability
 docker compose up -d
 ```
+
+### Docker (optional — app containers only)
+
+Postgres stays **outside** this stack (for example `DB/DBassetManager.yml`). From repo root:
+
+```bash
+cd assetmanager
+cp .env.docker .env   # then edit POSTGRES_* and VITE_*
+docker compose up --build -d
+```
+
+See [`DOCKER_DEPLOYMENT.md`](./DOCKER_DEPLOYMENT.md) for `POSTGRES_HOST`, `VITE_API_URL`, and rebuild notes.
 
 ## Setup order
 

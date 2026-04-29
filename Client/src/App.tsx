@@ -305,10 +305,10 @@ function TopBar({
           )}
           <div className="relative" ref={userMenuRef}>
             <button type="button" onClick={() => { setUserMenuOpen(!userMenuOpen); setNotifOpen(false) }} className={`icon-btn ${userMenuOpen ? 'icon-btn-active' : ''}`}>
-              <AnimatedNavIcon name="user-circle" className="h-7 w-7" />
+              <AnimatedNavIcon name="user-circle" className="h-8 w-8" />
             </button>
             {userMenuOpen && (
-              <div className="absolute right-[-3rem] mt-3 w-56 rounded-xl border border-base bg-app shadow-2xl p-3 space-y-2">
+              <div className="absolute right-[-3rem] mt-3 mr-10 w-56 rounded-xl border border-base bg-app shadow-2xl p-3 space-y-2">
                 <div className="space-y-1">
                   <div className="flex items-center gap-2">
                     <AnimatedNavIcon name="users" />

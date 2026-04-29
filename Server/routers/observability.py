@@ -67,7 +67,7 @@ async def get_logs(
     if level:
         loki_level = LEVEL_MAP.get(level.lower())
         if loki_level:
-            level_selector = f', level="{loki_level}"'
+            level_selector = f', level=~"(?i){loki_level}"'
 
     # Build LogQL query using label selectors (faster than line filtering)
     if service == "ams-server":

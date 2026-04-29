@@ -33,7 +33,7 @@ export default function ShipAnythingBox({ className = '' }: { className?: string
           {featureChips.map((chip) => (
             <div
               key={chip.label}
-              className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-[11px] ${chip.filled ? 'border-[#0A0A0A] bg-[#0A0A0A]' : 'border-white/40 bg-black/10'}`}
+              className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-[11px] ${chip.filled ? 'border-base bg-surface-3' : 'border-white/20 bg-white/10'}`}
             >
               <AnimatedNavIcon name={chip.icon} />
               {chip.label}

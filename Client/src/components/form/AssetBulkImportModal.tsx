@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react'
-import * as XLSX from '@e965/xlsx'
+
 import { bulkInsertAssets } from '../../api'
 import { getUserFacingMessage, logDevError } from '../../utils/errors'
 import {
@@ -66,6 +66,7 @@ export default function AssetBulkImportModal({ open, onClose, onSuccess, default
       if (inputRef.current) inputRef.current.value = ''
       try {
         const buf = await file.arrayBuffer()
+        const XLSX = await import('@e965/xlsx')
         const workbook = XLSX.read(buf, { type: 'array' })
         const sheetName = pickSheetName(workbook.SheetNames)
         if (!sheetName) {

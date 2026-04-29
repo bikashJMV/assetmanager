@@ -879,7 +879,7 @@ export default function Sidebar({
 
   const sidebarShellBackground =
     theme === 'dark'
-      ? 'linear-gradient(180deg, rgba(15,23,42,0.96), rgba(15,23,42,0.92))'
+      ? 'linear-gradient(180deg, rgba(15,17,23,0.96), rgba(15,17,23,0.92))'
       : 'linear-gradient(180deg, rgba(255,255,255,0.9), rgba(248,245,240,0.94))'
   const expandedSidebarWidth = `${Math.round(230 + Math.max(0, textScale - 1) * 100)}px`
 

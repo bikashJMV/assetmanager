@@ -1,5 +1,4 @@
 .env
-Notes/
 *.pdf
 ./context.md    
 sheet.xlsx
@@ -17,7 +16,8 @@ Telemetry.plan.md
 .cursorignore
 EVALUATION_SCORECARD.md
 ./email.service.implementation.md
-
+.env.docker
+docker-compose.override.yml
 logs/
 *.log
 logs/**
@@ -31,3 +31,8 @@ logs/telemetry_server.log
 *test*.py
 tests/
 
+__pycache__/
+*.pyc
+.pytest_cache/
+tests/
+*test*.py

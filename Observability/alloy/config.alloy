@@ -37,7 +37,7 @@ otelcol.receiver.otlp "default" {
   http {
     endpoint = "0.0.0.0:4318"
     cors {
-      allowed_origins = ["http://localhost:5173", "http://localhost:3000"]
+      allowed_origins = [env("OTEL_ALLOWED_ORIGIN"), "http://localhost:1100", "http://localhost:5174", "http://localhost:5173"]
       allowed_headers = ["*"]
       max_age         = 7200
     }
@@ -63,7 +63,7 @@ otelcol.exporter.prometheus "default" {
 
 // ─── Phase 3: Scrape AMS Server /metrics (added after Phase 3 setup) ──────
 prometheus.scrape "ams_server" {
-  targets      = [{"__address__" = "host.docker.internal:8000"}]
+  targets      = [{"__address__" = env("AMS_SERVER_METRICS_TARGET")}]
   metrics_path = "/metrics"
   forward_to   = [prometheus.remote_write.local.receiver]
 }

@@ -4,14 +4,14 @@ import { fetchLokiLogs, type LogEntry } from '../../api/logsApi'
 import { useToast } from '../../hooks/useToast'
 import DataPagination from '../common/DataPagination'
 
-type TimeRange = '1h' | '6h' | '24h' | 'custom'
+type TimeRange = '1h' | '6h' | '24h' | '48h' | '72h' | 'custom'
 
 export default function LogViewer() {
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [level, setLevel] = useState<string>('')
   const [search, setSearch] = useState('')
-  const [timeRange, setTimeRange] = useState<TimeRange>('1h')
+  const [timeRange, setTimeRange] = useState<TimeRange>('24h')
   const [customStart, setCustomStart] = useState('')
   const [customEnd, setCustomEnd] = useState('')
 
@@ -132,7 +132,7 @@ export default function LogViewer() {
             </select>
 
             <div className="flex flex-wrap items-center gap-1 rounded-lg border border-base bg-surface-2 p-1">
-              {(['1h', '6h', '24h', 'custom'] as TimeRange[]).map((range) => (
+              {(['1h', '6h', '24h', '48h', '72h', 'custom'] as TimeRange[]).map((range) => (
                 <button
                   key={range}
                   onClick={() => setTimeRange(range)}

@@ -20,6 +20,7 @@ import { ToastContext, type ToastInput, type ToastVariant } from '../../hooks/us
 
 
 const DEFAULT_DURATION_MS = 4200
+const PERSISTENT_TOAST_DURATION_MS = 0
 
 function toastTone(variant: ToastVariant) {
   if (variant === 'success') {
@@ -33,20 +34,20 @@ function toastTone(variant: ToastVariant) {
   }
   if (variant === 'error') {
     return {
-      card: 'border-red-200 bg-white',
-      iconWrap: 'bg-red-50 text-red-600',
+      card: 'border-red-200 bg-red-50/40 shadow-[0_20px_52px_rgba(127,29,29,0.14)]',
+      iconWrap: 'bg-white text-red-600 ring-1 ring-red-100',
       title: 'text-red-700',
-      message: 'text-slate-700',
-      close: 'text-slate-400 hover:bg-red-50 hover:text-red-700',
+      message: 'text-slate-800',
+      close: 'text-red-400 hover:bg-white hover:text-red-700',
     }
   }
   if (variant === 'warning') {
     return {
-      card: 'border-amber-200 bg-white',
-      iconWrap: 'bg-amber-50 text-amber-600',
+      card: 'border-amber-200 bg-amber-50/50 shadow-[0_20px_52px_rgba(146,64,14,0.12)]',
+      iconWrap: 'bg-white text-amber-600 ring-1 ring-amber-100',
       title: 'text-amber-700',
-      message: 'text-slate-700',
-      close: 'text-slate-400 hover:bg-amber-50 hover:text-amber-700',
+      message: 'text-slate-800',
+      close: 'text-amber-400 hover:bg-white hover:text-amber-700',
     }
   }
   return {
@@ -129,7 +130,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       typeof input.durationMs === 'number'
         ? input.durationMs
         : variant === 'error' || variant === 'warning'
-          ? 6500
+          ? PERSISTENT_TOAST_DURATION_MS
           : DEFAULT_DURATION_MS
 
     if (durationMs > 0) {
@@ -161,7 +162,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     <ToastContext.Provider value={contextValue}>
       {children}
       <div className="pointer-events-none fixed inset-x-0 bottom-4 z-[160] flex justify-center px-4 sm:inset-x-auto sm:bottom-5 sm:right-5 sm:justify-end">
-        <div className="flex w-full max-w-[22rem] flex-col gap-3 sm:w-[22rem]">
+        <div className="flex w-full max-w-[24rem] flex-col gap-3 sm:w-[24rem]">
           {toasts.map((toast) => {
             const tone = toastTone(toast.variant)
             const title = toast.title?.trim() || defaultTitleForVariant(toast.variant)
@@ -169,8 +170,8 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             return (
               <section
                 key={toast.id}
-                className={`pointer-events-auto relative w-full rounded-2xl border px-4 py-3 shadow-[0_18px_48px_rgba(15,23,42,0.16)] ${tone.card}`}
-                role="status"
+                className={`pointer-events-auto relative w-full rounded-2xl border px-4 py-3.5 ${tone.card}`}
+                role="alert"
                 aria-live={toast.variant === 'error' ? 'assertive' : 'polite'}
               >
                 <div className="flex items-start gap-3">
@@ -179,7 +180,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                   </div>
                   <div className="min-w-0 flex-1 pr-8">
                     <p className={`text-sm font-semibold ${tone.title}`}>{title}</p>
-                    <p className={`mt-1 text-sm leading-6 ${tone.message}`}>{toast.message}</p>
+                    <p className={`mt-1 text-[13px] leading-5 break-words ${tone.message}`}>{toast.message}</p>
                   </div>
                 </div>
                 <button

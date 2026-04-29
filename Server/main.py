@@ -58,6 +58,7 @@ def create_app() -> FastAPI:
             "X-API-Key",
             "X-Request-ID",
             "X-Request-Id",
+            "X-Response-Envelope",
             "DNT",
             "If-None-Match",
             "Range",

@@ -43,8 +43,8 @@ def create_app() -> FastAPI:
     app.add_middleware(AuthMiddleware)
     app.add_middleware(EnvelopeMiddleware)
     _cors_origins = list(settings.ALLOWED_ORIGINS)
-    if "http://localhost:5174" not in _cors_origins:
-        _cors_origins.append("http://localhost:5174")
+    if "http://localhost:11000" not in _cors_origins:
+        _cors_origins.append("http://localhost:11000")
     app.add_middleware(
         CORSMiddleware,
         allow_origins=_cors_origins,

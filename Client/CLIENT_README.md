@@ -8,7 +8,7 @@ React 19 + Vite 7 + TypeScript single-page app for Asset Manager. Dependencies a
 - **Calls the FastAPI BFF** with a bearer access token. Axios is configured in `src/utils/authNexus.api.ts` (base URL from `VITE_API_URL`, default `http://localhost:8000`). Higher-level `apiRequest` lives in `src/api/apiClient.ts`.
 - **TanStack React Query** is used for server state in `src/queries/*` (keys and hooks; imports services from `src/services/*` where applicable).
 - **IT Ops / Analysis logs** use `src/api/logsApi.ts`, which issues `GET` requests to **`/observability/logs`** on the same API origin (no direct Loki URL in the browser).
-- **OpenTelemetry (browser):** `src/otel-telemetry.ts` runs only when `import.meta.env.VITE_OTEL_GRAFANA_ENABLED === 'true'`. Exporter URL defaults to `http://localhost:4318/v1/traces` (see `VITE_OTEL_EXPORTER_ENDPOINT` in `src/vite-env.d.ts`).
+- **OpenTelemetry (browser):** `src/otel-telemetry.ts` runs only when `import.meta.env.VITE_OTEL_GRAFANA_ENABLED === 'true'`. Exporter URL defaults to `http://localhost:14318/v1/traces` (see `VITE_OTEL_EXPORTER_ENDPOINT` in `src/vite-env.d.ts`).
 
 ## Source-of-truth files
 
@@ -88,7 +88,7 @@ Only `VITE_*` keys are exposed to the browser. Create `Client/.env` from `Client
 | `VITE_FRONTEND_URL` | No | Preferred origin for in-app QR codes (`src/utils/qr.ts`); also referenced in `Client/.env.example` for local dev port |
 | `VITE_PUBLIC_APP_ORIGIN` | No | Optional override; used by `src/utils/qr.ts` and by `getScanPageBaseUrl` in `src/api.ts` (that helper only checks this variable) |
 | `VITE_OTEL_GRAFANA_ENABLED` | No | Must be the string `true` to start OTel (`otel-telemetry.ts`) |
-| `VITE_OTEL_EXPORTER_ENDPOINT` | No | OTLP/HTTP traces endpoint; default `http://localhost:4318/v1/traces` |
+| `VITE_OTEL_EXPORTER_ENDPOINT` | No | OTLP/HTTP traces endpoint; default `http://localhost:14318/v1/traces` |
 | `VITE_GRAFANA_DASHBOARD_URL_FOR_ITOPS` | No | Link target on Analysis page |
 | `VITE_TELEMETRY_ENABLED`, `VITE_TELEMETRY_INGEST_URL`, `VITE_TELEMETRY_TOKEN_URL` | No | Optional alternate telemetry paths; declared in `vite-env.d.ts` |
 

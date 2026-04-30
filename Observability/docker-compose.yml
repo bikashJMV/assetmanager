@@ -83,7 +83,7 @@ services:
     image: grafana/alloy:v1.1.0
     container_name: alloy
     ports:
-      - "${OTLP_HTTP_PUBLISH_PORT:-4318}:4318"
+      - "${OTLP_HTTP_PUBLISH_PORT:-14318}:4318"
     expose:
       - "12345"
       - "4317"

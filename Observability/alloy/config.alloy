@@ -31,11 +31,11 @@ loki.process "add_ams_labels" {
 
 // ─── Phase 2: OTLP receiver (gRPC + HTTP with CORS) ───────────────────────
 // gRPC  :4317 — AMS Server OTel auto-instrument
-// HTTP  :4318 — OTel Web SDK from the React browser client
+// HTTP  :14318 — OTel Web SDK from the React browser client
 otelcol.receiver.otlp "default" {
   grpc { endpoint = "0.0.0.0:4317" }
   http {
-    endpoint = "0.0.0.0:4318"
+    endpoint = "0.0.0.0:14318"
     cors {
       allowed_origins = [env("OTEL_ALLOWED_ORIGIN"), "http://localhost:11000","http://localhost:11100","http://115.241.70.253:11000","http://115.241.70.253:11100"]
       allowed_headers = ["*"]

@@ -10,7 +10,7 @@ This deployment uses env-driven ports and keeps raw infrastructure services priv
 | `11100` | Server | FastAPI backend |
 | `11200` | Grafana | Dashboard UI |
 | `11300` | pgAdmin | Database GUI |
-| `4318` | OTLP HTTP | Browser trace export endpoint |
+| `14318` | OTLP HTTP | Browser trace export endpoint |
 
 ## Internal Only
 
@@ -35,7 +35,7 @@ FRONTEND_URL=http://your-org-host:11000
 ALLOWED_ORIGINS=http://your-org-host:11000
 VITE_API_URL=http://your-org-host:11100
 VITE_PUBLIC_APP_ORIGIN=http://your-org-host:11000
-VITE_OTEL_EXPORTER_ENDPOINT=http://your-org-host:4318/v1/traces
+VITE_OTEL_EXPORTER_ENDPOINT=http://your-org-host:14318/v1/traces
 VITE_GRAFANA_DASHBOARD_URL_FOR_ITOPS=http://your-org-host:11200
 LOKI_BASE_URL=http://loki:3100
 ```
@@ -44,7 +44,7 @@ Use `Observability/.env.observability` for the observability stack:
 
 ```env
 GRAFANA_PUBLISH_PORT=11200
-OTLP_HTTP_PUBLISH_PORT=4318
+OTLP_HTTP_PUBLISH_PORT=14318
 OTEL_ALLOWED_ORIGIN=http://your-org-host:11000
 AMS_SERVER_METRICS_TARGET=ams-server:8000
 ```
@@ -77,7 +77,7 @@ http://your-org-host:11000
 http://your-org-host:11100/api/health
 http://your-org-host:11200
 http://your-org-host:11300
-http://your-org-host:4318/v1/traces
+http://your-org-host:14318/v1/traces
 ```
 
 Also check that logs still load through the app via the backend `/observability/logs` endpoint.

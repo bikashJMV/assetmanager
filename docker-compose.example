@@ -31,7 +31,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:11000}
       VITE_FRONTEND_URL: ${FRONTEND_URL:-http://localhost:11000}
-      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:11000,http://localhost:5174,http://localhost:5173}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:11000,http://localhost:11100,http://115.241.70.253:10100/api/v1/auth/jwks}
       AUTH_ENABLED: ${AUTH_ENABLED:-false}
       AUTH_JWKS_URL: ${AUTH_JWKS_URL:-}
       AUTH_ISSUER: ${AUTH_ISSUER:-}

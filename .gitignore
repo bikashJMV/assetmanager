@@ -23,6 +23,7 @@ logs/
 logs/**
 logs/ams_server.log
 logs/telemetry_server.log
+.env.observability
 
 # Smoke Tests
 *smoke*.py

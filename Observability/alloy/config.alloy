@@ -17,7 +17,7 @@ loki.source.file "ams_server" {
 
 loki.process "add_ams_labels" {
   stage.static_labels {
-    values = { service = "ams-server", env = "local" }
+    values = { service = "ams-server", env = "production" }
   }
   stage.regex {
     expression = "^(?P<level>INFO|ERROR|WARNING|DEBUG|CRITICAL):"
@@ -37,7 +37,7 @@ otelcol.receiver.otlp "default" {
   http {
     endpoint = "0.0.0.0:4318"
     cors {
-      allowed_origins = [env("OTEL_ALLOWED_ORIGIN"), "http://localhost:1100", "http://localhost:5174", "http://localhost:5173"]
+      allowed_origins = [env("OTEL_ALLOWED_ORIGIN"), "http://localhost:11000","http://localhost:11100","http://115.241.70.253:11000","http://115.241.70.253:11100"]
       allowed_headers = ["*"]
       max_age         = 7200
     }

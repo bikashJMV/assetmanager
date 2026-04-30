@@ -26,7 +26,7 @@ export function clearAuthNexusAccessToken() {
 
 // Base URLs from ENV
 const authority = import.meta.env.VITE_AUTH_AUTHORITY?.trim().replace(/\/$/, "");
-const clientOrigin = window.location.origin; // Dynamically gets http://localhost:5174
+const clientOrigin = window.location.origin; // 
 const projectId = import.meta.env.VITE_PROJECT_ID?.trim();
 
 const settings = {

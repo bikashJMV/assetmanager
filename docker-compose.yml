@@ -66,8 +66,8 @@ services:
     image: grafana/grafana-oss:10.4.0
     container_name: grafana
     ports:
-      - "${GRAFANA_PUBLISH_PORT:-11200}:3000"
-    env_file: ./Observability/.env.observability
+      - "${GRAFANA_PUBLISH_PORT}:3000"
+    env_file: ./Observability/.env
     environment:
       - GF_AUTH_ANONYMOUS_ENABLED=false
       - GF_INSTALL_PLUGINS=grafana-piechart-panel
@@ -87,12 +87,12 @@ services:
     image: grafana/alloy:v1.1.0
     container_name: alloy
     ports:
-      - "${OTLP_HTTP_PUBLISH_PORT:-14318}:4318"
+      - "${OTLP_HTTP_PUBLISH_PORT}:4318"
     expose:
       - "12345"
       - "4317"
     command: run /etc/alloy/config.alloy
-    env_file: ./Observability/.env.observability
+    env_file: ./Observability/.env
     volumes:
       - ./Observability/alloy/config.alloy:/etc/alloy/config.alloy
       - ./logs:/app/logs:ro
@@ -100,7 +100,7 @@ services:
       loki: { condition: service_healthy }
       tempo: { condition: service_healthy }
       prometheus: { condition: service_healthy }
-    networks:
+    networks: 
       - ams-observability
     restart: unless-stopped
 
@@ -112,16 +112,18 @@ services:
     image: postgres:15-alpine
     container_name: ams-postgres-docker
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-assetmanager_db}
-      POSTGRES_USER: ${POSTGRES_USER:-assetmanager_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-my-password}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
-      - ${POSTGRES_DATA_PATH:-./DB/postgres}:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
+      - ./DB/init.sql:/docker-entrypoint-initdb.d/01-init.sql 
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-assetmanager_user}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 10s
-      timeout: 5s
-      retries: 5
+      timeout: 10s
+      retries: 10
+      start_period: 60s
     networks:
       - ams-observability
     restart: unless-stopped
@@ -144,86 +146,94 @@ services:
       # Database Connection
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
-      POSTGRES_DB: ${POSTGRES_DB:-assetmanager_db}
-      POSTGRES_USER: ${POSTGRES_USER:-assetmanager_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-my-password}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       
       # Frontend URLs
-      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:11000}
-      VITE_FRONTEND_URL: ${FRONTEND_URL:-http://localhost:11000}
-      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:11000,http://localhost:11100,http://115.241.70.253:10100}
+      FRONTEND_URL: ${FRONTEND_URL}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS}
       
       # Authentication
-      AUTH_ENABLED: ${AUTH_ENABLED:-false}
-      AUTH_JWKS_URL: ${AUTH_JWKS_URL:-}
-      AUTH_ISSUER: ${AUTH_ISSUER:-}
-      AUTH_PROJECT_ID: ${AUTH_PROJECT_ID:-}
-      AUTH_AUDIENCE: ${AUTH_AUDIENCE:-}
+      AUTH_ENABLED: ${AUTH_ENABLED}
+      AUTH_JWKS_URL: ${AUTH_JWKS_URL}
+      AUTH_ISSUER: ${AUTH_ISSUER}
+      AUTH_PROJECT_ID: ${AUTH_PROJECT_ID}
+      AUTH_AUDIENCE: ${AUTH_AUDIENCE}
       AUTH_CLOCK_SKEW_SECONDS: 30
       
       # Environment
-      ENV: ${ENV:-local}
-      VITE_ENV: ${ENV:-local}
+      ENV: ${ENV}
+      VITE_ENV: ${ENV}
       
       # Observability
-      OTEL_GRAFANA_ENABLED: ${OTEL_GRAFANA_ENABLED:-true}
-      LOKI_BASE_URL: ${LOKI_BASE_URL:-http://loki:3100}
+      OTEL_GRAFANA_ENABLED: ${OTEL_GRAFANA_ENABLED}
+      LOKI_BASE_URL: ${LOKI_BASE_URL}
       
       # Email Service
-      EMAIL_SERVICE_URL: ${EMAIL_SERVICE_URL:-}
-      BACKEND_API_KEY_EMAIL_NOTIFICATION: ${BACKEND_API_KEY_EMAIL_NOTIFICATION:-}
-      NOTIFICATIONS_ENABLED: ${NOTIFICATIONS_ENABLED:-true}
+      EMAIL_SERVICE_URL: ${EMAIL_SERVICE_URL}
+      BACKEND_API_KEY_EMAIL_NOTIFICATION: ${BACKEND_API_KEY_EMAIL_NOTIFICATION}
+      NOTIFICATIONS_ENABLED: ${NOTIFICATIONS_ENABLED}
       
       # API Key
-      BACKEND_API_KEY: ${BACKEND_API_KEY:-}
-      VITE_BACKEND_API_KEY: ${BACKEND_API_KEY:-}
+      BACKEND_API_KEY: ${BACKEND_API_KEY}
+      VITE_BACKEND_API_KEY: ${BACKEND_API_KEY}
       
-      # Role Bootstrap Secret
-      ROLE_BOOTSTRAP_SECRET: ${ROLE_BOOTSTRAP_SECRET:-}
     ports:
-      - "${SERVER_PUBLISH_PORT:-11100}:8000"
+      - "${SERVER_PUBLISH_PORT}:8000"
     networks:
       - ams-observability
     restart: unless-stopped
+    develop:
+      watch:
+        - path: ./Server
+          action: rebuild
 
   client:
     build:
       context: ./Client
       dockerfile: Dockerfile
       args:
-        VITE_API_URL: ${VITE_API_URL:-http://localhost:11100}
-        VITE_BACKEND_API_KEY: ${BACKEND_API_KEY:-}
-        VITE_AUTH_AUTHORITY: ${VITE_AUTH_AUTHORITY:-}
-        VITE_CLIENT_ID: ${VITE_CLIENT_ID:-}
-        VITE_ORG_ID: ${VITE_ORG_ID:-}
-        VITE_PROJECT_ID: ${VITE_PROJECT_ID:-}
-        VITE_CALLBACK_PATH: ${VITE_CALLBACK_PATH:-/callback}
-        VITE_LOGOUT_PATH: ${VITE_LOGOUT_PATH:-/login}
-        VITE_FRONTEND_URL: ${FRONTEND_URL:-http://localhost:11000}
-        VITE_PUBLIC_APP_ORIGIN: ${VITE_PUBLIC_APP_ORIGIN:-http://localhost:11000}
-        VITE_OTEL_GRAFANA_ENABLED: ${VITE_OTEL_GRAFANA_ENABLED:-false}
-        VITE_OTEL_EXPORTER_ENDPOINT: ${VITE_OTEL_EXPORTER_ENDPOINT:-http://localhost:14318/v1/traces}
-        VITE_GRAFANA_DASHBOARD_URL_FOR_ITOPS: ${VITE_GRAFANA_DASHBOARD_URL_FOR_ITOPS:-}
+        VITE_API_URL: ${VITE_API_URL}
+        VITE_BACKEND_API_KEY: ${BACKEND_API_KEY}
+        VITE_AUTH_AUTHORITY: ${VITE_AUTH_AUTHORITY}
+        VITE_CLIENT_ID: ${VITE_CLIENT_ID}
+        VITE_ORG_ID: ${VITE_ORG_ID}
+        VITE_PROJECT_ID: ${VITE_PROJECT_ID}
+        VITE_CALLBACK_PATH: ${VITE_CALLBACK_PATH}
+        VITE_LOGOUT_PATH: ${VITE_LOGOUT_PATH}
+        VITE_PUBLIC_APP_ORIGIN: ${VITE_PUBLIC_APP_ORIGIN}
+        VITE_OTEL_GRAFANA_ENABLED: ${VITE_OTEL_GRAFANA_ENABLED}
+        VITE_OTEL_EXPORTER_ENDPOINT: ${VITE_OTEL_EXPORTER_ENDPOINT}
+        VITE_GRAFANA_DASHBOARD_URL_FOR_ITOPS: ${VITE_GRAFANA_DASHBOARD_URL_FOR_ITOPS}
     container_name: ams-client
     depends_on:
       server:
         condition: service_healthy
     ports:
-      - "${CLIENT_PUBLISH_PORT:-11000}:80"
+      - "${CLIENT_PUBLISH_PORT}:80"
     networks:
       - ams-observability
     restart: unless-stopped
+    develop:
+      watch:
+        - path: ./Client
+          action: rebuild
 
   pgadmin:
     image: dpage/pgadmin4:latest
     container_name: ams-pgadmin
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     environment:
-      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@example.com}
-      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD}
     ports:
-      - "${PGADMIN_PUBLISH_PORT:-11300}:80"
+      - "${PGADMIN_PUBLISH_PORT}:80"
+    volumes:
+      - ./pgadmin-servers.json:/pgadmin4/servers.json
+      - ./pgpassfile:/pgadmin4/pgpassfile
     networks:
       - ams-observability
     restart: unless-stopped
@@ -234,6 +244,7 @@ networks:
     driver: bridge
 
 volumes:
+  postgres_data:
   prometheus_data:
   loki_data:
   tempo_data:

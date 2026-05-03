@@ -36,7 +36,6 @@ COPY schemas/ ./schemas/
 COPY services/ ./services/
 COPY core/ ./core/
 COPY auth/ ./auth/
-COPY db/ ./db/
 COPY scripts/ ./scripts/
 
 # Expose port

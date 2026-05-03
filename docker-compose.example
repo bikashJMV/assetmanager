@@ -30,7 +30,6 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-assetmanager_user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:11000}
-      VITE_FRONTEND_URL: ${FRONTEND_URL:-http://localhost:11000}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:11000,http://localhost:11100,http://115.241.70.253:10100/api/v1/auth/jwks}
       AUTH_ENABLED: ${AUTH_ENABLED:-true}
       AUTH_JWKS_URL: ${AUTH_JWKS_URL:-}
@@ -47,7 +46,6 @@ services:
       NOTIFICATIONS_ENABLED: ${NOTIFICATIONS_ENABLED:-true}
       BACKEND_API_KEY: ${BACKEND_API_KEY:-}
       VITE_BACKEND_API_KEY: ${BACKEND_API_KEY:-}
-      ROLE_BOOTSTRAP_SECRET: ${ROLE_BOOTSTRAP_SECRET:-}
     ports:
       - "${SERVER_PUBLISH_PORT:-11100}:8000"
     networks:
@@ -68,7 +66,6 @@ services:
         VITE_PROJECT_ID: ${VITE_PROJECT_ID:-}
         VITE_CALLBACK_PATH: ${VITE_CALLBACK_PATH:-/callback}
         VITE_LOGOUT_PATH: ${VITE_LOGOUT_PATH:-/login}
-        VITE_FRONTEND_URL: ${FRONTEND_URL:-http://localhost:11000}
         VITE_PUBLIC_APP_ORIGIN: ${VITE_PUBLIC_APP_ORIGIN:-http://localhost:11000}
         VITE_OTEL_GRAFANA_ENABLED: ${VITE_OTEL_GRAFANA_ENABLED:-true}
         VITE_OTEL_EXPORTER_ENDPOINT: ${VITE_OTEL_EXPORTER_ENDPOINT:-http://localhost:14318/v1/traces}

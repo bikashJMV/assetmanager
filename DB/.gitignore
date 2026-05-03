@@ -1,3 +1,5 @@
 .env
 postgres/
 # Ignore PostgreSQL data directory
+.env.production
+.database_dump.sql  

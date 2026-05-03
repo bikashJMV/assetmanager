@@ -35,7 +35,7 @@ loki.process "add_ams_labels" {
 otelcol.receiver.otlp "default" {
   grpc { endpoint = "0.0.0.0:4317" }
   http {
-    endpoint = "0.0.0.0:14318"
+    endpoint = "0.0.0.0:4318"
     cors {
       allowed_origins = [env("OTEL_ALLOWED_ORIGIN"), "http://localhost:11000","http://localhost:11100","http://115.241.70.253:11000","http://115.241.70.253:11100"]
       allowed_headers = ["*"]

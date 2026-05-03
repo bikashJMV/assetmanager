@@ -1,45 +1,88 @@
 # Notifications (`services/notifications/`)
 
-This package sits between **Asset Manager Server** domain code and an **external Email Notification microservice**. The email service is **not** implemented in this repository; AMS only issues HTTP requests to it when configured.
+This package sits between the AMS Server domain layer and an **external email notification microservice**. The email service is **not** implemented in this repository — AMS only issues HTTP POST requests to it when configured. All calls are fire-and-forget: failures are logged but never raise to callers and never roll back domain operations.
 
 ## Files
 
 | File | Role |
 | --- | --- |
-| [`__init__.py`](./__init__.py) | Package marker |
-| [`orchestrator.py`](./orchestrator.py) | Async functions that build payloads and call `get_adapter()` — `notify_asset_assigned`, `notify_asset_returned`, `notify_user_created`, `notify_force_recall` — and role normalization (`_VALID_ROLES`: `employee`, `admin`, `it_ops`) |
-| [`adapter.py`](./adapter.py) | `NotificationAdapter` interface: `send_event`, `send_structured_event`; implementations `EmailMicroserviceAdapter`, `NoOpNotificationAdapter`; factory `get_adapter()` |
+| `__init__.py` | Package marker |
+| `adapter.py` | `NotificationAdapter` interface; `EmailMicroserviceAdapter` (live HTTP); `NoOpNotificationAdapter` (silent no-op); `get_adapter()` factory |
+| `orchestrator.py` | Async functions that build event payloads and call `get_adapter()`: `notify_asset_assigned`, `notify_asset_returned`, `notify_user_created`, `notify_force_recall` |
 
-## Transport (`adapter.py`)
+## Adapter (`adapter.py`)
 
-- **`EmailMicroserviceAdapter`:** `POST {EMAIL_SERVICE_URL}/send/event` with `httpx`, header `X-API-Key: BACKEND_API_KEY_EMAIL_NOTIFICATION` (or legacy `EMAIL_SERVICE_API_KEY` read in `core.settings` for migration). Failures are logged; they do not raise to callers (must not roll back DB work).
-- **`NoOpNotificationAdapter`:** logs at debug and does nothing — used when notifications are disabled or URL/key missing.
+### `EmailMicroserviceAdapter`
 
-## `get_adapter()` selection (`adapter.py`)
+Posts to `{EMAIL_SERVICE_URL}/send/event` with:
+- Header: `X-API-Key: {BACKEND_API_KEY_EMAIL_NOTIFICATION}`
+- Body: JSON event payload
+- Timeout: 8 seconds
 
-Returns **`EmailMicroserviceAdapter`** only when **all** hold:
+HTTP 4xx/5xx responses are logged as warnings. Network errors are logged as errors. Neither raises to the caller.
 
-- `settings.NOTIFICATIONS_ENABLED` is true  
-- `settings.EMAIL_SERVICE_URL` is non-empty after strip  
-- `settings.BACKEND_API_KEY_EMAIL_NOTIFICATION` is non-empty (or legacy key from env as loaded in `settings`)
+### `NoOpNotificationAdapter`
 
-Otherwise returns **`NoOpNotificationAdapter`**. If `NOTIFICATIONS_ENABLED` is true but URL or key is missing, a **warning** is logged.
+Logs at `DEBUG` level and discards all events. Used when `NOTIFICATIONS_ENABLED=false` or when URL/key is missing.
 
-## Events (`orchestrator.py` docstring and function bodies)
+### `get_adapter()` factory
 
-Structured events use **`send_structured_event`** with a JSON body including `event_name` and, for assign/return/recall, `primary_recipient`, `admin_email`, `asset_data`, etc.:
+Returns `EmailMicroserviceAdapter` only when **all three** conditions hold:
+1. `settings.NOTIFICATIONS_ENABLED` is `true`
+2. `settings.EMAIL_SERVICE_URL` is non-empty
+3. `settings.BACKEND_API_KEY_EMAIL_NOTIFICATION` is non-empty
 
-- **`asset.assigned`**, **`asset.returned`** — same envelope; templates differ on the email service side
-- **`user.created`** — `send_event("user.created", …)` with `data: { name }` (not the full structured body used for asset events)
-- **`force.recall.old`**, **`force.recall.new`** — `notify_force_recall` issues two separate structured events when the corresponding email addresses are present
+If `NOTIFICATIONS_ENABLED=true` but URL or key is missing, a **warning** is logged and `NoOpNotificationAdapter` is returned. `EMAIL_SERVICE_API_KEY` is still accepted as a deprecated fallback for `BACKEND_API_KEY_EMAIL_NOTIFICATION` (read in `core/settings.py`).
 
-## Server configuration (see `core/settings.py`)
+## Events (`orchestrator.py`)
 
-- `NOTIFICATIONS_ENABLED` — `true` / `false` (string compared case-insensitively)
-- `EMAIL_SERVICE_URL` — base URL, trailing slashes stripped in adapter URL join
-- `BACKEND_API_KEY_EMAIL_NOTIFICATION` — preferred; `EMAIL_SERVICE_API_KEY` is still read as a fallback in `core/settings.py` for the same purpose
+### `notify_asset_assigned`
+
+Fires `asset.assigned` structured event. Skipped silently if `primary_email` or `admin_email` is empty.
+
+Payload fields: `event_name`, `primary_recipient` (`{email, name, role}`), `admin_email`, `admin_name`, `all_admin_emails` (CC list, deduped), `asset_data` (`{category, model_no, asset_id}`). Optional: `previous_employee_email`, `new_employee_email`.
+
+### `notify_asset_returned`
+
+Fires `asset.returned` with the same envelope as `asset.assigned`. Template selection is done by the email service based on `event_name`.
+
+### `notify_user_created`
+
+Fires `user.created` welcome email via `send_event` (simpler body: `{event_name, primary_recipient, data: {name}}`). Skipped if `recipient_email` is empty.
+
+### `notify_force_recall`
+
+Fires two separate events when an asset is reassigned from one employee to another:
+1. `force.recall.old` — to the employee losing the asset
+2. `force.recall.new` — to the employee receiving the asset
+
+Either event is silently skipped if the corresponding email is missing.
+
+## CC deduplication
+
+`_dedupe_cc(admin_emails, admin_email, primary_email)` removes the primary recipient from the CC list to avoid duplicate inbox entries. The assigner (`admin_email`) is kept in the CC list.
+
+## Role normalization
+
+`_normalize_role(role)` maps any unrecognized role string to `"employee"`. Valid values: `employee`, `admin`, `it_ops`.
+
+## Server configuration
+
+Set in `Server/.env` (read by `core/settings.py`):
+
+| Variable | Description |
+| --- | --- |
+| `NOTIFICATIONS_ENABLED` | `true` to dispatch real emails; anything else → no-op |
+| `EMAIL_SERVICE_URL` | Base URL of the email microservice (trailing slash stripped) |
+| `BACKEND_API_KEY_EMAIL_NOTIFICATION` | `X-API-Key` header value for the email service |
+| `EMAIL_SERVICE_API_KEY` | Deprecated fallback for `BACKEND_API_KEY_EMAIL_NOTIFICATION` |
+
+## Known TODOs / limitations
+
+- The email microservice itself is external and not documented here. Template names (`assigned.html`, `returned.html`, `welcome.html`) are resolved on the email service side.
+- `notify_user_created` is defined but its call site in the server (e.g. after employee creation) is unclear — needs clarification.
 
 ## Related
 
 - [`../README.md`](../README.md) — services index
-- [`../../SERVER_README.md`](../../SERVER_README.md) — top-level server env and router overview
+- [`../../SERVER_README.md`](../../SERVER_README.md) — server env vars and router overview

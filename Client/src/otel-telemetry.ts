@@ -21,7 +21,7 @@ export function startOtelTelemetry() {
     return
   }
 
-  const exporterEndpoint = import.meta.env.VITE_OTEL_EXPORTER_ENDPOINT || 'http://localhost:4318/v1/traces'
+  const exporterEndpoint = import.meta.env.VITE_OTEL_EXPORTER_ENDPOINT || 'http://localhost:14318/v1/traces'
 
   try {
     const provider = new WebTracerProvider({
@@ -52,11 +52,11 @@ export function startOtelTelemetry() {
     registerInstrumentations({
       instrumentations: [
         new FetchInstrumentation({
-          ignoreUrls: [/localhost:4318/],
+          ignoreUrls: [/localhost:14318/],
           clearTimingResources: true,
         }),
         new XMLHttpRequestInstrumentation({
-          ignoreUrls: [/localhost:4318/],
+          ignoreUrls: [/localhost:14318/],
         }),
       ],
     })

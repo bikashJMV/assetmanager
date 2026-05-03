@@ -1,130 +1,306 @@
 # AMS Client
 
-React 19 + Vite 7 + TypeScript single-page app for Asset Manager. Dependencies and scripts are defined in `Client/package.json`.
+React 19 + Vite 7 + TypeScript single-page application for Asset Manager. All dependencies and scripts are defined in `Client/package.json`. The dev server runs on port **5174** (configured in `vite.config.ts`).
 
 ## What this app does
 
-- **Signs in** with **authNexus** (OIDC) using `oidc-client-ts` and `UserManager` in `src/utils/authService.ts` (see also `src/components/pages/AuthCallback.tsx`).
-- **Calls the FastAPI BFF** with a bearer access token. Axios is configured in `src/utils/authNexus.api.ts` (base URL from `VITE_API_URL`, default `http://localhost:8000`). Higher-level `apiRequest` lives in `src/api/apiClient.ts`.
-- **TanStack React Query** is used for server state in `src/queries/*` (keys and hooks; imports services from `src/services/*` where applicable).
-- **IT Ops / Analysis logs** use `src/api/logsApi.ts`, which issues `GET` requests to **`/observability/logs`** on the same API origin (no direct Loki URL in the browser).
-- **OpenTelemetry (browser):** `src/otel-telemetry.ts` runs only when `import.meta.env.VITE_OTEL_GRAFANA_ENABLED === 'true'`. Exporter URL defaults to `http://localhost:4318/v1/traces` (see `VITE_OTEL_EXPORTER_ENDPOINT` in `src/vite-env.d.ts`).
+- **Signs in** with **authNexus** (OIDC) using `oidc-client-ts`. `UserManager` is configured in `src/utils/authService.ts`; the OIDC callback is handled by `src/components/pages/AuthCallback.tsx`.
+- **Calls the FastAPI backend** with a Bearer access token. The Axios instance in `src/utils/authNexus.api.ts` handles token injection, silent renewal on 401, and API envelope unwrapping. Base URL defaults to `http://localhost:8000` when `VITE_API_URL` is not set.
+- **TanStack React Query** manages server state. Query hooks live in `src/queries/*`; they call service functions from `src/services/*`.
+- **IT Ops log viewer** uses `src/api/logsApi.ts` to call `GET /observability/logs` on the same API origin — the browser never calls Loki directly.
+- **OpenTelemetry browser tracing** is initialized in `src/otel-telemetry.ts` only when `VITE_OTEL_GRAFANA_ENABLED === 'true'`. Traces are exported via OTLP/HTTP to `VITE_OTEL_EXPORTER_ENDPOINT` (default `http://localhost:14318/v1/traces`).
 
-## Source-of-truth files
+## Folder structure
 
-| Area | File(s) |
-| --- | --- |
-| Routes, auth shell, idle timeout, OTel startup | `src/App.tsx` |
-| OIDC UserManager, token storage (access token in `localStorage`, OIDC state in `sessionStorage`) | `src/utils/authService.ts` |
-| Axios client, token refresh, `X-API-Key` when configured | `src/utils/authNexus.api.ts` |
-| Large legacy/helper API surface, session employee, some QR helpers | `src/api.ts` |
-| Typed API + `apiRequest` | `src/api/apiClient.ts`, `src/api/logsApi.ts` |
-| REST wrappers for UI | `src/services/assetService.ts`, `assignmentService.ts`, `employeeService.ts`, `metaService.ts`, `authzService.ts` |
-| React Query hooks | `src/queries/assets.ts`, `assignments.ts`, `employees.ts`, `meta.ts`, `authz.ts` |
-| User-facing error text | `src/utils/errors.ts` |
-| Breadcrumb overrides on detail pages | `src/hooks/useBreadcrumbOverride.ts` |
-| In-app QR data URLs (prefers `VITE_FRONTEND_URL` then `VITE_PUBLIC_APP_ORIGIN`) | `src/utils/qr.ts` |
+```
+Client/
+├── index.html               # Vite HTML entry point
+├── vite.config.ts           # Vite config: React plugin, port 5174, manual chunk splits
+├── tailwind.config.js       # Tailwind CSS config
+├── nginx.conf               # nginx config for the production Docker image
+├── Dockerfile               # Production container (nginx serving the Vite build)
+├── vercel.json              # Vercel SPA routing config
+├── public/
+│   ├── favicon.svg
+│   ├── icons.svg
+│   ├── asset-import-template.xlsx        # Downloadable bulk import template
+│   ├── employee-import-template.xlsx.xlsx# Downloadable employee import template
+│   └── inventory-update-template.xlsx    # Downloadable inventory update template
+├── scripts/
+│   ├── generate-asset-import-template.mjs    # Script to regenerate asset import template
+│   └── generate-inventory-update-template.mjs# Script to regenerate inventory update template
+└── src/
+    ├── main.tsx             # React DOM entry point; wraps App in QueryClientProvider
+    ├── App.tsx              # BrowserRouter, all routes, auth state, idle timeout, top bar
+    ├── api.ts               # Large API surface: types, session employee, all fetch helpers
+    ├── queryClient.ts       # TanStack QueryClient singleton
+    ├── otel-telemetry.ts    # OpenTelemetry Web SDK initialization
+    ├── index.css            # Tailwind directives
+    ├── vite-env.d.ts        # TypeScript declarations for VITE_* env vars
+    │
+    ├── api/
+    │   ├── apiClient.ts     # Typed apiRequest wrapper over authNexus.api.ts
+    │   └── logsApi.ts       # fetchLokiLogs — calls GET /observability/logs
+    │
+    ├── assets/              # Static image assets (hero.png, react.svg, vite.svg)
+    │
+    ├── components/
+    │   ├── animationIcons/
+    │   │   ├── Active.GreenCircle.tsx    # Animated green status indicator
+    │   │   └── Inactive.RedCircle.tsx   # Animated red status indicator
+    │   ├── asset/
+    │   │   ├── AssetChangeHistory.tsx   # Renders asset change history section
+    │   │   ├── assetHistoryFormatters.ts# Format helpers for history display values
+    │   │   ├── AssetHistoryTable.tsx    # Tabular view of asset history events
+    │   │   └── AssetHistoryTimeline.tsx # Timeline view of asset history events
+    │   ├── auth/
+    │   │   ├── callBack.authNexus.tsx   # Older callback component (unclear — needs clarification)
+    │   │   └── User.Signin.tsx          # Sign-in UI component
+    │   ├── common/
+    │   │   ├── AnimatedNavIcon.tsx      # SVG icon with animation support
+    │   │   ├── Breadcrumbs.tsx          # Auto-generated breadcrumb trail
+    │   │   ├── ConfirmDialog.tsx        # Reusable confirmation modal
+    │   │   ├── DataPagination.tsx       # Page-based pagination controls
+    │   │   ├── EmployeeAssignLookup.tsx # Employee search/select for assignment flows
+    │   │   ├── Error.tsx                # Error display component
+    │   │   ├── FilterPopup.tsx          # Popover filter panel
+    │   │   ├── FilterSelect.tsx         # Dropdown filter select
+    │   │   ├── FontSizeSlider.tsx       # Accessibility font size control
+    │   │   ├── Footer.tsx               # Page footer
+    │   │   ├── Guide.tsx                # In-app user guide page
+    │   │   ├── IconActionButton.tsx     # Icon-only action button
+    │   │   ├── IdleWarningModal.tsx     # Idle session warning dialog
+    │   │   ├── InfoHint.tsx             # Tooltip/hint popover
+    │   │   ├── InventoryStatusBadge.tsx # Colored badge for asset status values
+    │   │   ├── Loader.tsx               # Loading spinner
+    │   │   ├── LoadMorePagination.tsx   # "Load more" pagination pattern
+    │   │   ├── ModalPortal.tsx          # React portal for modals
+    │   │   ├── PageHeaderActions.tsx    # Standardized page header with action buttons
+    │   │   ├── PageNotFound.tsx         # 404 page
+    │   │   ├── RefreshButton.tsx        # Manual data refresh button
+    │   │   ├── RowActionMenu.tsx        # Per-row action dropdown menu
+    │   │   ├── ScrollTopButton.tsx      # Floating scroll-to-top button
+    │   │   ├── Sidebar.tsx              # Collapsible navigation sidebar
+    │   │   ├── sidebarNav.ts            # Sidebar navigation link definitions
+    │   │   └── ToastProvider.tsx        # Toast notification context and renderer
+    │   ├── form/
+    │   │   ├── AssetBulkImportModal.tsx     # Modal for bulk asset import from XLSX
+    │   │   ├── AssetForm.tsx                # Create/edit asset form
+    │   │   ├── CategoryPickerGrid.tsx       # Visual category selection grid
+    │   │   ├── DepartmentCombobox.tsx       # Department autocomplete input
+    │   │   ├── EmployeeBulkImportModal.tsx  # Modal for bulk employee import from XLSX
+    │   │   ├── EmployeeForm.tsx             # Create/edit employee form
+    │   │   ├── InventoryBulkUpdateModal.tsx # Modal for bulk inventory status update from XLSX
+    │   │   └── OtherAssetForm.tsx           # Form variant for "Other" category assets
+    │   ├── home/
+    │   │   ├── ActBeforeItBreaksBox.tsx  # Home page warranty alert section
+    │   │   ├── AssignReturnBox.tsx       # Home page assign/return quick-action section
+    │   │   ├── HomeHero.tsx              # Home page hero banner
+    │   │   ├── OverviewKpisBox.tsx       # Home page KPI summary cards
+    │   │   ├── QuickFactCard.tsx         # Individual KPI card
+    │   │   ├── QuickFactsRow.tsx         # Row of KPI cards
+    │   │   ├── RightAccessBox.tsx        # Home page access control info section
+    │   │   ├── ShipAnythingBox.tsx       # Home page feature highlight section
+    │   │   ├── StoryCard.tsx             # Feature story card
+    │   │   └── StoryNote.tsx             # Inline story note component
+    │   └── pages/
+    │       ├── AllAssets.tsx            # /assets — paginated asset list with filters
+    │       ├── Analysis.tsx             # /analysis — Grafana link + log viewer
+    │       ├── AssetDetail.tsx          # /assets/:id — asset detail, history, assign/return
+    │       ├── AuthCallback.tsx         # /callback — OIDC authorization code exchange
+    │       ├── Employee.tsx             # /employee — employee directory list
+    │       ├── EmployeeDetail.tsx       # /employee/:id — employee profile + portfolio
+    │       ├── Home.tsx                 # /dashboard — landing page with KPIs and sections
+    │       ├── LogViewer.tsx            # Log viewer component used by Analysis page
+    │       ├── NewAsset.tsx             # /assets/new — create asset form page
+    │       ├── NewEmployee.tsx          # /employee/new — create employee form page
+    │       ├── Notifications.tsx        # /notifications — warranty notification list
+    │       ├── Overview.Analysis.tsx    # Overview analysis charts/stats section
+    │       ├── RecycleBin.tsx           # /recycle-bin — soft-deleted items management
+    │       └── ScanPage.tsx             # /scan/:id and /assets/scan/:id — QR scan result
+    │
+    ├── data/                # Static JSON data files
+    │   ├── address.json                 # Address/location catalog data
+    │   ├── assetInfoHint.json           # Info hint text for asset form fields
+    │   ├── employeeInfoHint.json        # Info hint text for employee form fields
+    │   ├── notifications.InfoHint.json  # Info hint text for notifications page
+    │   └── recyclebin.json              # Info hint text for recycle bin page
+    │
+    ├── hooks/               # Custom React hooks
+    │   ├── useBreadcrumbOverride.ts     # Context + hook to override breadcrumb label on detail pages
+    │   ├── useIdleTimeout.ts            # Idle session detection with warn/logout callbacks
+    │   ├── useModalScrollLock.ts        # Lock body scroll when a modal is open
+    │   ├── useRefreshableLoader.ts      # Data loader with manual refresh support
+    │   └── useToast.tsx                 # Hook to push toast notifications
+    │
+    ├── queries/             # TanStack React Query hooks
+    │   ├── assets.ts        # useAssets, useAssetDetail, useNextAssetTag, etc.
+    │   ├── assignments.ts   # useAssignAsset, useReturnAsset
+    │   ├── authz.ts         # useAdminAccess, useItOpsAccess
+    │   ├── employees.ts     # useEmployees, useEmployeePortfolio, etc.
+    │   └── meta.ts          # useCategories, useDepartments, useDashboardStats, etc.
+    │
+    ├── services/            # REST call wrappers (called by queries and direct handlers)
+    │   ├── assetService.ts      # Asset CRUD, assign, return, soft delete, QR export
+    │   ├── assignmentService.ts # Assign and return via /api/v1/assignments
+    │   ├── authzService.ts      # Admin/IT Ops access checks
+    │   ├── employeeService.ts   # Employee CRUD, bulk import, role change
+    │   └── metaService.ts       # Categories, departments, dashboard stats, warranty
+    │
+    ├── styles/
+    │   ├── global.css       # Global CSS resets and base styles
+    │   └── theme.css        # CSS custom properties for theming (light/dark, density)
+    │
+    ├── types/
+    │   └── api.ts           # Shared TypeScript API types
+    │
+    └── utils/
+        ├── apiEnvelope.ts           # Helpers to unwrap the API success/error envelope
+        ├── assetBulkImport.ts       # XLSX parsing and validation for asset bulk import
+        ├── assetBulkImport.test.ts  # Unit tests for bulk import parsing
+        ├── authNexus.api.ts         # Axios instance with token injection, 401 retry, envelope unwrap
+        ├── authService.ts           # oidc-client-ts UserManager config and token storage
+        ├── employeeBulkImport.ts    # XLSX parsing and validation for employee bulk import
+        ├── errors.ts                # User-facing error message formatting
+        ├── formatDisplay.ts         # Display formatters (role labels, badge classes, dates)
+        ├── inventoryBulkUpdate.ts   # XLSX parsing for inventory status bulk update
+        ├── locationAddressCatalog.ts# Location/address lookup helpers using address.json
+        ├── newAssetCategoryPolicy.ts# Rules for which form to show per category slug
+        ├── paginationPrefs.ts       # Persist user's preferred page size in localStorage
+        ├── qr.ts                    # Build scan URLs and generate QR data URIs (client-side)
+        └── theme.ts                 # Apply and persist theme/density/font preferences
+```
 
 ## Routes
 
-All routes are defined in `src/App.tsx` inside `<BrowserRouter>`. The `<Routes>` table below matches the file as of this documentation.
+All routes are defined in `src/App.tsx` inside `<BrowserRouter>`.
 
-### No sidebar (full-screen or callback)
+### Public (no auth required)
 
-- `/` → `<Navigate to="/dashboard" replace />`
-- `/callback` → `AuthCallback`
-- `/login` → sign-in screen (inline in `App.tsx`)
-- `/scan/:id` → `ScanPage` (public: no `RequireAuth`)
+| Path | Component | Notes |
+| --- | --- | --- |
+| `/` | Redirect | Redirects to `/dashboard` |
+| `/login` | `SignInScreen` | Inline in `App.tsx`; triggers `userManager.signinRedirect()` |
+| `/callback` | `AuthCallback` | OIDC authorization code exchange |
+| `/scan/:id` | `ScanPage` | Public QR scan — no `RequireAuth` wrapper |
+| `/guide` | `Guide` | In-app user guide |
 
-### With top bar and sidebar (when authenticated except where noted)
+### Authenticated (`RequireAuth`)
 
-- `/dashboard` → `Home`
-- `/guide` → `Guide`
-- `/assets` → `AllAssets`
-- `/assets/scan` → `ScanPage` with `protectedRoute` prop
-- `/assets/scan/:id` → `ScanPage` with `protectedRoute` prop
-- `/assets/:id` → `AssetDetail`
-- `/notifications` → `Notifications`
-- `/employee/:id` → `EmployeeDetail`
+`RequireAuth` redirects to `/login?next=…` if no OIDC user or token is expired. If the user is signed in but `getSessionEmployee()` returns null, `NoEmployeeAccessHandler` is shown (redirects to `/login?reason=no-profile` after 3 seconds).
 
-`RequireAuth` (wrapper in `App.tsx`): if no OIDC user or token expired, redirect to `/login?next=…`. If the user is signed in but `getSessionEmployee()` returns no row, `NoEmployeeAccessHandler` is shown (not registered in the directory).
+| Path | Component | Notes |
+| --- | --- | --- |
+| `/dashboard` | `Home` | Landing page with KPIs |
+| `/assets` | `AllAssets` | Asset list with filters |
+| `/assets/scan` | `ScanPage` | Authenticated scan |
+| `/assets/scan/:id` | `ScanPage` | Authenticated scan with tag |
+| `/assets/:id` | `AssetDetail` | Asset detail, history, assign/return |
+| `/notifications` | `Notifications` | Warranty notification list |
+| `/employee/:id` | `EmployeeDetail` | Employee profile + portfolio |
 
-### Privileged (nested under `RequirePrivileged` in `App.tsx`)
+### Privileged (`RequirePrivileged`)
 
-`RequirePrivileged` renders children only when `sessionEmployee?.is_active` and `sessionEmployee.role !== 'employee'`. Other users are redirected to `/assets`.
+`RequirePrivileged` renders only when `sessionEmployee.is_active && sessionEmployee.role !== 'employee'`. Other users are redirected to `/assets`.
 
-- `/assets/new` → `NewAsset`
-- `/employee` → `Employee`
-- `/employee/new` → `NewEmployee`
-- `/analysis` → `Analysis`
-- `/recycle-bin` → `RecycleBin`
+| Path | Component |
+| --- | --- |
+| `/assets/new` | `NewAsset` |
+| `/employee` | `Employee` |
+| `/employee/new` | `NewEmployee` |
+| `/analysis` | `Analysis` |
+| `/recycle-bin` | `RecycleBin` |
 
 ### Catch-all
 
-- `*` (unknown path) → if `user` is truthy, navigate to `/404`; else to `/login`
+- `*` → `/404` (if signed in) or `/login` (if not)
 - `/404` → `PageNotFound`
-
-## Main feature areas
-
-- Assets: list, create, detail, assign/return, QR, bulk import, history where exposed by the API
-- Employees: list, create, detail, bulk import, role management per API
-- Public and authenticated scan flows: `ScanPage` + `src/services/assetService.ts` + `src/api.ts`
-- Analysis: link out to Grafana when configured; logs tab uses `fetchLokiLogs` → `GET /observability/logs` on the same API host
 
 ## Environment variables
 
-Only `VITE_*` keys are exposed to the browser. Create `Client/.env` from `Client/.env.example`. Declared TypeScript types for optional keys are in `src/vite-env.d.ts`.
+Only `VITE_*` keys are exposed to the browser. Create `Client/.env` from `Client/.env.example`. TypeScript types for all optional keys are declared in `src/vite-env.d.ts`.
 
-| Variable | Required for sign-in | Purpose |
-| --- | --- | --- |
-| `VITE_API_URL` | No | BFF base URL; if unset, `http://localhost:8000` (`authNexus.api.ts`) |
-| `VITE_AUTH_AUTHORITY` | Yes | OIDC issuer (authNexus) |
-| `VITE_CLIENT_ID` | Yes | OIDC client id |
-| `VITE_ORG_ID` | Yes | Organization id (passed through auth config) |
-| `VITE_PROJECT_ID` | Yes | Project id; must align with server `AUTH_PROJECT_ID` for JWT checks |
-| `VITE_CALLBACK_PATH` | No | Default `/callback` |
-| `VITE_LOGOUT_PATH` | No | e.g. `/login` |
-| `VITE_BACKEND_API_KEY` | No | Sent as `X-API-Key` if the server enforces `BACKEND_API_KEY` |
-| `VITE_FRONTEND_URL` | No | Preferred origin for in-app QR codes (`src/utils/qr.ts`); also referenced in `Client/.env.example` for local dev port |
-| `VITE_PUBLIC_APP_ORIGIN` | No | Optional override; used by `src/utils/qr.ts` and by `getScanPageBaseUrl` in `src/api.ts` (that helper only checks this variable) |
-| `VITE_OTEL_GRAFANA_ENABLED` | No | Must be the string `true` to start OTel (`otel-telemetry.ts`) |
-| `VITE_OTEL_EXPORTER_ENDPOINT` | No | OTLP/HTTP traces endpoint; default `http://localhost:4318/v1/traces` |
-| `VITE_GRAFANA_DASHBOARD_URL_FOR_ITOPS` | No | Link target on Analysis page |
-| `VITE_TELEMETRY_ENABLED`, `VITE_TELEMETRY_INGEST_URL`, `VITE_TELEMETRY_TOKEN_URL` | No | Optional alternate telemetry paths; declared in `vite-env.d.ts` |
+| Variable | Required | Default | Purpose |
+| --- | --- | --- | --- |
+| `VITE_API_URL` | No | `http://localhost:8000` | FastAPI backend base URL |
+| `VITE_AUTH_AUTHORITY` | Yes | — | OIDC issuer URL (authNexus) |
+| `VITE_CLIENT_ID` | Yes | — | OIDC client ID |
+| `VITE_ORG_ID` | Yes | — | Organization ID (passed in OIDC scope) |
+| `VITE_PROJECT_ID` | Yes | — | Project ID; must match server `AUTH_PROJECT_ID` |
+| `VITE_CALLBACK_PATH` | No | `/callback` | OIDC redirect URI path |
+| `VITE_LOGOUT_PATH` | No | `/login` | Post-logout redirect path |
+| `VITE_BACKEND_API_KEY` | No | `""` | Sent as `X-API-Key` if server enforces `BACKEND_API_KEY` |
+| `VITE_PUBLIC_APP_ORIGIN` | No | — | Override origin for QR scan URLs and `getScanPageBaseUrl` |
+| `FRONTEND_URL` | No | — | Preferred origin for QR codes in `src/utils/qr.ts` |
+| `VITE_OTEL_GRAFANA_ENABLED` | No | `false` | Must be the string `"true"` to start OTel tracing |
+| `VITE_OTEL_EXPORTER_ENDPOINT` | No | `http://localhost:14318/v1/traces` | OTLP/HTTP traces endpoint |
+| `VITE_GRAFANA_DASHBOARD_URL_FOR_ITOPS` | No | — | Grafana dashboard link shown on the Analysis page |
 
-`Client/.env.example` includes `LOKI_BASE_URL` for convenience but **the React app does not read it**; Loki is queried only through the server `GET /observability/logs` endpoint.
+> `Client/.env.example` also lists `LOKI_BASE_URL` for convenience, but the React app does not read it. Loki is queried only through the server's `GET /observability/logs` endpoint.
 
 ## Local development
 
 ```bash
 cd Client
 npm install
-npm run dev
+npm run dev    # http://localhost:5174
 ```
 
-| Script | Command |
+| Script | Command | Description |
+| --- | --- | --- |
+| `dev` | `vite` | Start dev server on port 5174 |
+| `build` | `tsc -b && vite build` | Type-check and build for production |
+| `lint` | `eslint .` | Run ESLint |
+| `preview` | `vite preview` | Preview the production build locally |
+| `test` | `vitest run` | Run tests once |
+| `test:watch` | `vitest` | Run tests in watch mode |
+
+## Key dependencies
+
+**Runtime:**
+
+| Package | Purpose |
 | --- | --- |
-| `dev` | `vite` |
-| `build` | `tsc -b && vite build` |
-| `lint` | `eslint .` |
-| `preview` | `vite preview` |
-| `test` | `vitest run` |
-| `test:watch` | `vitest` |
+| `react` / `react-dom` | UI framework |
+| `react-router-dom` | Client-side routing |
+| `oidc-client-ts` | OIDC/OAuth2 UserManager for authNexus sign-in |
+| `axios` | HTTP client (configured in `authNexus.api.ts`) |
+| `@tanstack/react-query` | Server state management and caching |
+| `@tanstack/react-virtual` | Virtualized list rendering for large datasets |
+| `qrcode` | Client-side QR code data URI generation |
+| `@e965/xlsx` | XLSX parsing for bulk import features |
+| `@opentelemetry/*` | Browser tracing SDK (only active when `VITE_OTEL_GRAFANA_ENABLED=true`) |
 
-## Dependencies (from `package.json`)
+**Dev:**
 
-**Runtime (selection):** `react`, `react-dom`, `react-router-dom`, `oidc-client-ts`, `axios`, `@tanstack/react-query`, `@tanstack/react-virtual`, `qrcode`, `@e965/xlsx`, OpenTelemetry web packages.
+| Package | Purpose |
+| --- | --- |
+| `vite` | Build tool and dev server |
+| `typescript` | Type checking |
+| `tailwindcss` | Utility-first CSS |
+| `vitest` | Unit test runner |
+| `eslint` | Linting |
+| `@vitejs/plugin-react` | React Fast Refresh for Vite |
 
-**Dev (selection):** `vite`, `typescript`, `tailwindcss`, `eslint`, `@vitejs/plugin-react`, `vitest`, …
+## Token storage
+
+- **Access token:** stored in `localStorage` under key `ams-authnexus-access-token` (set/cleared by `authService.ts` event handlers).
+- **OIDC session state:** stored in `sessionStorage` via `WebStorageStateStore` (configured in `authService.ts`).
 
 ## Implementation notes
 
-- **Primary data path:** browser → FastAPI → Postgres (no direct DB from the client).
-- Prefer **`src/services/*` + `src/queries/*`** for new features so auth and types stay consistent.
-- **`/api/v1/employees/me`** (via `getSessionEmployee` in `api.ts`) gates the app: unprovisioned users see the restricted access screen in `App.tsx`.
-- **QR base URL** logic differs slightly between `src/utils/qr.ts` and `src/api.ts`; prefer `utils/qr.ts` for new code or consolidate later.
+- **Primary data path:** browser → FastAPI → Postgres. No direct DB access from the client.
+- **Prefer `src/services/*` + `src/queries/*`** for new features to keep auth and types consistent.
+- **`/api/v1/employees/me`** (via `getSessionEmployee` in `api.ts`) gates the app: unprovisioned users see `NoEmployeeAccessHandler`.
+- **QR base URL** logic differs slightly between `src/utils/qr.ts` (checks `FRONTEND_URL` → `VITE_PUBLIC_APP_ORIGIN` → production fallback) and `getScanPageBaseUrl` in `src/api.ts` (checks only `VITE_PUBLIC_APP_ORIGIN`). Keep both env values consistent or consolidate to `utils/qr.ts`.
+- **Vite build chunks:** `vite.config.ts` splits the bundle into `react`, `qr`, `xlsx`, `vendor`, and `otel` chunks to optimize loading.
+
+## Known TODOs / limitations
+
+- `src/components/auth/callBack.authNexus.tsx` appears to be an older callback component alongside the newer `src/components/pages/AuthCallback.tsx`. Its current usage is unclear — needs clarification.
+- `src/assets/react.svg` and `src/assets/vite.svg` are Vite scaffold leftovers and are not used in the application.
 
 ## Related docs
 
-- [`../README.md`](../README.md)
-- [`../Server/SERVER_README.md`](../Server/SERVER_README.md)
+- [`../README.md`](../README.md) — project overview
+- [`../Server/SERVER_README.md`](../Server/SERVER_README.md) — backend API documentation

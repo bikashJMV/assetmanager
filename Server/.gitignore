@@ -4,7 +4,7 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
-
+.env.production
 # Runtime/debug artifacts
 *.log
 debug.txt
@@ -13,7 +13,7 @@ import_report*.json
 
 # Smoke tests
 *smoke*.py
-
+.env.production
 # Test files
 *test*.py
 tests/

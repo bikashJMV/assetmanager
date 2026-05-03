@@ -42,14 +42,14 @@ class Settings:
     FRONTEND_URL: str = field(
         default_factory=lambda: os.getenv(
             "FRONTEND_URL",
-            os.getenv("VITE_FRONTEND_URL", "https://web-assetmanager.vercel.app"),
+            os.getenv("FRONTEND_URL"),
         )
     )
 
     # ALLOWED_ORIGINS: Comma-separated list of allowed origins for CORS.
     ALLOWED_ORIGINS: List[str] = field(
         default_factory=lambda: _parse_origins(
-            os.getenv("ALLOWED_ORIGINS", os.getenv("VITE_ALLOWED_ORIGINS", ""))
+            os.getenv("ALLOWED_ORIGINS", os.getenv("ALLOWED_ORIGINS", ""))
         )
     )
 

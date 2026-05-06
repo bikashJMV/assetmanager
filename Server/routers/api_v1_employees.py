@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+import logging
+import asyncio
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, Query, status
@@ -13,6 +15,9 @@ from core.authz import require_authenticated, require_privileged
 from repositories.db import pool
 from repositories.employee_repository import EmployeeRepository
 from repositories.errors import ConflictError, NotFoundError, ValidationError
+from services.authnexus_service import AuthNexusClient
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/employees", tags=["Employees (v1)"])
 
@@ -141,6 +146,59 @@ async def list_employees(
         return _json_error(500, message="Failed to retrieve employees.", code="INTERNAL_ERROR", details=str(exc))
 
 
+async def _sync_employee_to_auth_nexus(
+    employee_row: Any, 
+    *,
+    name_changed: bool = False,
+    role_changed: bool = False,
+    is_create: bool = False
+):
+    """
+    Selective best-effort sync to AuthNexus.
+    Only calls APIs for fields that actually changed.
+    """
+    logger.debug(f"[AuthNexus Sync] Starting sync for {employee_row.employee_id} (create={is_create}, name={name_changed}, role={role_changed})")
+    try:
+        auth_user_id = employee_row.auth_user_id
+        
+        # Step 1: Provision if missing
+        if not auth_user_id:
+            parts = employee_row.name.split(" ", 1)
+            first_name = parts[0]
+            last_name = parts[1] if len(parts) > 1 else "."
+            
+            auth_user_id = await AuthNexusClient.create_user(
+                username=employee_row.employee_id,
+                email=employee_row.email,
+                first_name=first_name,
+                last_name=last_name
+            )
+            
+            if auth_user_id:
+                await EmployeeRepository.link_auth_user_id(
+                    employee_id=employee_row.id, 
+                    sub=auth_user_id
+                )
+                # If we just created them, we must sync the role too
+                role_changed = True
+            else:
+                logger.warning(f"[AuthNexus Sync] User {employee_row.employee_id} not created in AuthNexus.")
+                return
+
+        # Step 2: Sync Name if changed
+        if name_changed and not is_create:
+            parts = employee_row.name.split(" ", 1)
+            first_name = parts[0]
+            last_name = parts[1] if len(parts) > 1 else "."
+            await AuthNexusClient.update_user_profile(auth_user_id, first_name, last_name)
+
+        # Step 3: Sync Role if changed
+        if role_changed or is_create:
+            await AuthNexusClient.assign_roles(auth_user_id, [employee_row.role])
+            
+    except Exception as e:
+        logger.warning(f"[AuthNexus Sync] Failed for {employee_row.employee_id}: {e}")
+
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_employee(
     body: EmployeeUpsertBody,
@@ -162,6 +220,10 @@ async def create_employee(
             role=body.role or "employee",
             is_active=body.is_active if body.is_active is not None else True,
         )
+        
+        # Best-effort sync (inline for debugging visibility)
+        await _sync_employee_to_auth_nexus(row, is_create=True)
+
         return JSONResponse(
             status_code=status.HTTP_201_CREATED,
             content=success_response(
@@ -283,6 +345,9 @@ async def update_employee(
     Notes: Privileged only (admin/it_ops).
     """
     try:
+        # Fetch old state to detect changes
+        old_row = await EmployeeRepository.get_by_id(id)
+        
         row = await EmployeeRepository.upsert(
             record_id=id,
             employee_id=body.employee_id,
@@ -292,6 +357,18 @@ async def update_employee(
             role=body.role or "employee",
             is_active=body.is_active if body.is_active is not None else True,
         )
+
+        # Detect changes for selective sync
+        name_changed = False
+        role_changed = False
+        if old_row:
+            name_changed = (old_row.name != row.name)
+            role_changed = (old_row.role != row.role)
+
+        # Best-effort sync
+        if name_changed or role_changed or not row.auth_user_id:
+            await _sync_employee_to_auth_nexus(row, name_changed=name_changed, role_changed=role_changed)
+
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content=success_response(
@@ -328,6 +405,10 @@ async def change_employee_role(
             return _json_error(403, message="Only IT Ops can assign the it_ops role.", code="FORBIDDEN")
 
         row = await EmployeeRepository.update_role(employee_id=id, role=body.role)
+
+        # Best-effort sync (role definitely changed)
+        await _sync_employee_to_auth_nexus(row, role_changed=True)
+
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content=success_response(
@@ -372,6 +453,60 @@ async def soft_delete_employee(
         return _json_error(400, message=str(exc), code="VALIDATION_ERROR")
     except Exception as exc:
         return _json_error(500, message="Failed to soft-delete employee.", code="INTERNAL_ERROR", details=str(exc))
+async def _bulk_sync_to_auth_nexus(rows: list[Any]):
+    """
+    Concurrent best-effort sync for bulk imports.
+    1. Provision users in parallel.
+    2. Link IDs.
+    3. Bulk assign roles in groups.
+    """
+    try:
+        # Step 1: Provision users who don't have auth_user_id
+        to_provision = [r for r in rows if not r.auth_user_id]
+        
+        async def _prov(r):
+            parts = r.name.split(" ", 1)
+            first_name = parts[0]
+            last_name = parts[1] if len(parts) > 1 else "."
+            uid = await AuthNexusClient.create_user(
+                username=r.employee_id,
+                email=r.email,
+                first_name=first_name,
+                last_name=last_name
+            )
+            if uid:
+                await EmployeeRepository.link_auth_user_id(employee_id=r.id, sub=uid)
+                return uid
+            return None
+
+        if to_provision:
+            # Process sequentially to avoid overwhelming the IDP and causing ReadTimeouts
+            for r in to_provision:
+                await _prov(r)
+                await asyncio.sleep(0.5)  # Small delay between requests
+
+        
+        # Step 2: Re-fetch or use updated IDs for role assignment
+        # We'll just re-fetch the latest state to be sure
+        updated_rows = []
+        for r in rows:
+            latest = await EmployeeRepository.get_by_id(r.id)
+            if latest and latest.auth_user_id:
+                updated_rows.append(latest)
+        
+        # Step 3: Group by role for bulk assignment
+        role_map: dict[str, list[str]] = {}
+        for r in updated_rows:
+            role_map.setdefault(r.role, []).append(r.auth_user_id)
+        
+        for role, uids in role_map.items():
+            if uids:
+                await AuthNexusClient.bulk_assign_roles(uids, [role])
+                
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Bulk AuthNexus sync failed: {e}")
+
 @router.post("/bulk")
 async def bulk_insert_employees(
     rows: list[dict[str, Any]],
@@ -385,15 +520,21 @@ async def bulk_insert_employees(
     Notes: Privileged only.
     """
     try:
-        count = await EmployeeRepository.bulk_upsert(rows)
+        inserted_rows = await EmployeeRepository.bulk_upsert(rows)
+        
+        # Best-effort background sync
+        asyncio.create_task(_bulk_sync_to_auth_nexus(inserted_rows))
+
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content=success_response(
-                message=f"Successfully processed {count} employees.",
-                data={"inserted": count},
+                message=f"Successfully processed {len(inserted_rows)} employees.",
+                data={"inserted": len(inserted_rows)},
                 status_code=200,
             ),
         )
+    except ValidationError as exc:
+        return _json_error(400, message=str(exc), code="VALIDATION_ERROR")
     except Exception as exc:
         return _json_error(500, message="Bulk import failed.", code="INTERNAL_ERROR", details=str(exc))
 @router.post("/check-codes")

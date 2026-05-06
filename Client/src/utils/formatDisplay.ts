@@ -63,7 +63,19 @@ export function formatDateTime(value: unknown): string {
   if (!raw) return '-'
   const d = parseToDate(raw)
   if (!d) return raw
-  return d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+
+  const year = d.getFullYear()
+  const month = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  const datePart = `${year}-${month}-${day}`
+
+  const timePart = d.toLocaleTimeString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  })
+
+  return `${datePart}, ${timePart}`
 }
 
 export function getInventoryStatusTone(status: string): { dot: string; border: string; bg: string; text: string } {

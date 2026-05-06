@@ -161,6 +161,12 @@ services:
       AUTH_PROJECT_ID: ${AUTH_PROJECT_ID}
       AUTH_AUDIENCE: ${AUTH_AUDIENCE}
       AUTH_CLOCK_SKEW_SECONDS: 30
+      AUTH_AUTHORITY: ${AUTH_AUTHORITY}
+      
+      # AuthNexus Admin (for sync)
+      AUTHNEXUS_ADMIN_USER: ${AUTHNEXUS_ADMIN_USER}
+      AUTHNEXUS_ADMIN_PASSWORD: ${AUTHNEXUS_ADMIN_PASSWORD}
+      AUTHNEXUS_ORG_ID: ${AUTHNEXUS_ORG_ID}
       
       # Environment
       ENV: ${ENV}
@@ -178,6 +184,7 @@ services:
       # API Key
       BACKEND_API_KEY: ${BACKEND_API_KEY}
       VITE_BACKEND_API_KEY: ${BACKEND_API_KEY}
+
       
     ports:
       - "${SERVER_PUBLISH_PORT}:8000"

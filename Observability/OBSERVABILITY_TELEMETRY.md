@@ -53,7 +53,7 @@ Copy `.env.observability.example` to `.env` and fill in values.
 | Variable | Description |
 | --- | --- |
 | `GRAFANA_PUBLISH_PORT` | Host port for Grafana (default `11200` in production) |
-| `OTLP_HTTP_PUBLISH_PORT` | Host port for Alloy OTLP/HTTP receiver (default `14318`) |
+| `OTLP_HTTP_PUBLISH_PORT` | Host port for Alloy OTLP/HTTP receiver (default `11400`) |
 | `OTEL_ALLOWED_ORIGIN` | CORS allowed origin for browser traces (e.g. `http://your-org-host:11000`) |
 | `AMS_SERVER_METRICS_TARGET` | Prometheus scrape target for AMS server (e.g. `ams-server:8000`) |
 | `GRAFANA_DASHBOARD_ADMIN_USERNAME` | Grafana admin username |
@@ -93,7 +93,7 @@ The AMS server uses `prometheus-fastapi-instrumentator` to expose `/metrics` whe
 
 ### Client-side instrumentation
 
-`Client/src/otel-telemetry.ts` initializes the OpenTelemetry Web SDK when `VITE_OTEL_GRAFANA_ENABLED === 'true'`. It instruments `fetch` and `XMLHttpRequest` calls and exports traces via OTLP/HTTP to `VITE_OTEL_EXPORTER_ENDPOINT` (default `http://localhost:14318/v1/traces`). The service name is `ams-client`.
+`Client/src/otel-telemetry.ts` initializes the OpenTelemetry Web SDK when `VITE_OTEL_GRAFANA_ENABLED === 'true'`. It instruments `fetch` and `XMLHttpRequest` calls and exports traces via OTLP/HTTP to `VITE_OTEL_EXPORTER_ENDPOINT` (default `http://localhost:11400/v1/traces`). The service name is `ams-client`.
 
 ## API request flow
 

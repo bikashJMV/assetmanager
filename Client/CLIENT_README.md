@@ -8,7 +8,7 @@ React 19 + Vite 7 + TypeScript single-page application for Asset Manager. All de
 - **Calls the FastAPI backend** with a Bearer access token. The Axios instance in `src/utils/authNexus.api.ts` handles token injection, silent renewal on 401, and API envelope unwrapping. Base URL defaults to `http://localhost:8000` when `VITE_API_URL` is not set.
 - **TanStack React Query** manages server state. Query hooks live in `src/queries/*`; they call service functions from `src/services/*`.
 - **IT Ops log viewer** uses `src/api/logsApi.ts` to call `GET /observability/logs` on the same API origin — the browser never calls Loki directly.
-- **OpenTelemetry browser tracing** is initialized in `src/otel-telemetry.ts` only when `VITE_OTEL_GRAFANA_ENABLED === 'true'`. Traces are exported via OTLP/HTTP to `VITE_OTEL_EXPORTER_ENDPOINT` (default `http://localhost:14318/v1/traces`).
+- **OpenTelemetry browser tracing** is initialized in `src/otel-telemetry.ts` only when `VITE_OTEL_GRAFANA_ENABLED === 'true'`. Traces are exported via OTLP/HTTP to `VITE_OTEL_EXPORTER_ENDPOINT` (default `http://localhost:11400/v1/traces`).
 
 ## Folder structure
 
@@ -233,7 +233,7 @@ Only `VITE_*` keys are exposed to the browser. Create `Client/.env` from `Client
 | `VITE_PUBLIC_APP_ORIGIN` | No | — | Override origin for QR scan URLs and `getScanPageBaseUrl` |
 | `FRONTEND_URL` | No | — | Preferred origin for QR codes in `src/utils/qr.ts` |
 | `VITE_OTEL_GRAFANA_ENABLED` | No | `false` | Must be the string `"true"` to start OTel tracing |
-| `VITE_OTEL_EXPORTER_ENDPOINT` | No | `http://localhost:14318/v1/traces` | OTLP/HTTP traces endpoint |
+| `VITE_OTEL_EXPORTER_ENDPOINT` | No | `http://localhost:11400/v1/traces` | OTLP/HTTP traces endpoint |
 | `VITE_GRAFANA_DASHBOARD_URL_FOR_ITOPS` | No | — | Grafana dashboard link shown on the Analysis page |
 
 > `Client/.env.example` also lists `LOKI_BASE_URL` for convenience, but the React app does not read it. Loki is queried only through the server's `GET /observability/logs` endpoint.
@@ -286,6 +286,14 @@ npm run dev    # http://localhost:5174
 
 - **Access token:** stored in `localStorage` under key `ams-authnexus-access-token` (set/cleared by `authService.ts` event handlers).
 - **OIDC session state:** stored in `sessionStorage` via `WebStorageStateStore` (configured in `authService.ts`).
+
+## Authentication & Token Refresh
+
+The application uses a hybrid approach for authentication:
+- **Initial Sign-in:** Standard OIDC flow via `oidc-client-ts`.
+- **Token Refresh:** To prevent conflicts with silent renewal and ensure stable sessions, the app uses a **proactive refresh mechanism** through the Backend-for-Frontend (BFF).
+- **Silent Renewal:** Default `oidc-client-ts` silent renewal is disabled (`automaticSilentRenew: false`).
+- **Refresh Flow:** When a token is nearing expiry (or a 401 is received), the client calls the server's refresh endpoint. The server handles the token exchange and returns the new token set, which the client then updates in its local state.
 
 ## Implementation notes
 

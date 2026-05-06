@@ -15,13 +15,13 @@ import { XMLHttpRequestInstrumentation } from '@opentelemetry/instrumentation-xm
  */
 export function startOtelTelemetry() {
   const isEnabled = import.meta.env.VITE_OTEL_GRAFANA_ENABLED === 'true'
-  
+
   if (!isEnabled) {
     console.debug('[OTel] Tracing is disabled via VITE_OTEL_GRAFANA_ENABLED')
     return
   }
 
-  const exporterEndpoint = import.meta.env.VITE_OTEL_EXPORTER_ENDPOINT || 'http://localhost:14318/v1/traces'
+  const exporterEndpoint = import.meta.env.VITE_OTEL_EXPORTER_ENDPOINT || 'http://localhost:11400/v1/traces'
 
   try {
     const provider = new WebTracerProvider({
@@ -52,11 +52,11 @@ export function startOtelTelemetry() {
     registerInstrumentations({
       instrumentations: [
         new FetchInstrumentation({
-          ignoreUrls: [/localhost:14318/],
+          ignoreUrls: [/localhost:11400/],
           clearTimingResources: true,
         }),
         new XMLHttpRequestInstrumentation({
-          ignoreUrls: [/localhost:14318/],
+          ignoreUrls: [/localhost:11400/],
         }),
       ],
     })

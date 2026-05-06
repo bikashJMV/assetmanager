@@ -37,7 +37,7 @@ export default function HomeHero({ isAuthenticated }: { isAuthenticated: boolean
             to="/employee"
             className="rounded-full bg-accent px-6 py-3 text-sm font-semibold text-white transition hover:bg-accent-hover shadow-accent"
           >
-            View Employees
+              Quick Views
           </Link>
         </div>
       ) : null}

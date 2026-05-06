@@ -97,6 +97,11 @@ class Settings:
         default_factory=lambda: os.getenv("NOTIFICATIONS_ENABLED", "false").strip().lower() == "true"
     )
 
+    # authNexus Admin (for sync)
+    AUTHNEXUS_ADMIN_USER: str = field(default_factory=lambda: os.getenv("AUTHNEXUS_ADMIN_USER", "").strip())
+    AUTHNEXUS_ADMIN_PASSWORD: str = field(default_factory=lambda: os.getenv("AUTHNEXUS_ADMIN_PASSWORD", "").strip())
+    AUTHNEXUS_ORG_ID: str = field(default_factory=lambda: os.getenv("AUTHNEXUS_ORG_ID", "").strip())
+
     def __post_init__(self):
         if not self.DATABASE_URL.strip():
                 missing: list[str] = []
@@ -118,6 +123,10 @@ class Settings:
                 raise ValueError("AUTH_JWKS_URL must be set when AUTH_ENABLED=true.")
             if not self.AUTH_PROJECT_ID:
                 raise ValueError("AUTH_PROJECT_ID must be set when AUTH_ENABLED=true.")
+            
+            # Warn if admin credentials are missing (needed for role sync)
+            if not self.AUTHNEXUS_ADMIN_USER or not self.AUTHNEXUS_ADMIN_PASSWORD or not self.AUTHNEXUS_ORG_ID:
+                print("WARNING: AUTHNEXUS_ADMIN credentials not fully set. AuthNexus sync features will be disabled.")
 
 
         if not self.FRONTEND_URL.startswith("http"):

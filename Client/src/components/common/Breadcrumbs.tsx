@@ -44,7 +44,7 @@ function buildCrumbs(pathname: string): Crumb[] {
       segments.length > 1 &&
       !['assets', 'employee'].includes(seg)
     ) {
-      label = `${baseLabel === seg ? 'Detail' : baseLabel}: ${seg}`
+      label = baseLabel === seg ? 'Detail' : baseLabel
     }
 
     crumbs.push({ label, to: isLast ? undefined : pathAcc })

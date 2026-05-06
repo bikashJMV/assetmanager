@@ -1,6 +1,11 @@
 import QRCode from 'qrcode'
 
-const PRODUCTION_QR_APP_ORIGIN = 'https://web-assetmanager.vercel.app'
+const VITE_PUBLIC_APP_ORIGIN = import.meta.env.VITE_PUBLIC_APP_ORIGIN || 'http://localhost:11000';
+
+if (!import.meta.env.VITE_PUBLIC_APP_ORIGIN) {
+  console.warn("⚠️ VITE_PUBLIC_APP_ORIGIN not set. Using fallback.");
+}
+
 
 /**
  * Origin embedded in asset QR codes (`/scan/{tag}`).
@@ -15,7 +20,7 @@ export function getScanPageBaseUrl(): string {
       return trimmed
     }
   }
-  return PRODUCTION_QR_APP_ORIGIN
+  return VITE_PUBLIC_APP_ORIGIN
 }
 
 export async function buildAssetQrDataUri(assetTag: string): Promise<string> {

@@ -4,24 +4,36 @@ import { UserManager, WebStorageStateStore, Log } from 'oidc-client-ts';
 Log.setLogger(console);
 Log.setLevel(Log.WARN);
 
-const AUTHNEXUS_ACCESS_TOKEN_STORAGE_KEY = 'ams-authnexus-access-token'
+const AUTHNEXUS_ACCESS_TOKEN_STORAGE_KEY = 'access_token'
+const LEGACY_AUTHNEXUS_ACCESS_TOKEN_STORAGE_KEY = 'ams-authnexus-access-token'
 
 export function getAuthNexusAccessToken(): string | null {
     const raw = window.localStorage.getItem(AUTHNEXUS_ACCESS_TOKEN_STORAGE_KEY)
     const token = (raw || '').trim()
-    return token ? token : null
+    if (token) return token
+
+    const legacyRaw = window.localStorage.getItem(LEGACY_AUTHNEXUS_ACCESS_TOKEN_STORAGE_KEY)
+    const legacyToken = (legacyRaw || '').trim()
+    if (!legacyToken) return null
+
+    window.localStorage.setItem(AUTHNEXUS_ACCESS_TOKEN_STORAGE_KEY, legacyToken)
+    window.localStorage.removeItem(LEGACY_AUTHNEXUS_ACCESS_TOKEN_STORAGE_KEY)
+    return legacyToken
 }
 
 export function setAuthNexusAccessToken(token: string | null) {
     if (!token || !token.trim()) {
         window.localStorage.removeItem(AUTHNEXUS_ACCESS_TOKEN_STORAGE_KEY)
+        window.localStorage.removeItem(LEGACY_AUTHNEXUS_ACCESS_TOKEN_STORAGE_KEY)
         return
     }
     window.localStorage.setItem(AUTHNEXUS_ACCESS_TOKEN_STORAGE_KEY, token.trim())
+    window.localStorage.removeItem(LEGACY_AUTHNEXUS_ACCESS_TOKEN_STORAGE_KEY)
 }
 
 export function clearAuthNexusAccessToken() {
     window.localStorage.removeItem(AUTHNEXUS_ACCESS_TOKEN_STORAGE_KEY)
+    window.localStorage.removeItem(LEGACY_AUTHNEXUS_ACCESS_TOKEN_STORAGE_KEY)
 }
 
 // Base URLs from ENV
@@ -38,12 +50,12 @@ const settings = {
     post_logout_redirect_uri: `${clientOrigin}${import.meta.env.VITE_LOGOUT_PATH}`,
     response_type: 'code',
     // Dynamic Project Scope
-    scope: `openid profile email role urn:zitadel:iam:org:project:id:${projectId}:aud`,
+    scope: `openid profile email role offline_access urn:zitadel:iam:org:project:id:${projectId}:aud`,
 
     loadUserInfo: true, // Ensure roles are fetched from the gateway userinfo endpoint
     automaticSilentRenew: false,
-
-    monitorSession: false,
+ 
+    monitorSession: true,
     accessTokenExpiringNotificationTimeInSeconds: 60,
     // Never store sensitive data in localStorage (except the access token itself).
     // OIDC user/session details stay in sessionStorage; access_token is mirrored into localStorage explicitly.
@@ -53,7 +65,7 @@ const settings = {
     metadata: {
         issuer: authority,
         authorization_endpoint: `${authority}/api/v1/auth/authorize`,
-        token_endpoint: `${authority}/api/v1/auth/token`,
+        token_endpoint: `${window.location.origin}/nexus-proxy/api/v1/auth/token`,
         userinfo_endpoint: `${authority}/oidc/v1/userinfo`,
         jwks_uri: `${authority}/api/v1/auth/jwks`,
         end_session_endpoint: `${authority}/oidc/v1/end_session`
@@ -66,9 +78,18 @@ const settings = {
 
 export const userManager = new UserManager(settings);
 
+let _proactiveRefreshCallback: (() => Promise<void>) | null = null
+export function registerSilentRefreshCallback(cb: () => Promise<void>) {
+    _proactiveRefreshCallback = cb
+}
+
 // Add these to the bottom of authService.ts
-userManager.events.addAccessTokenExpiring(() => {
-    console.warn("[authNexus] Access token expiring soon... initiating silent renew.");
+userManager.events.addAccessTokenExpiring(async () => {
+    console.warn("[authNexus] Access token expiring soon... initiating proactive BFF refresh.");
+    if (_proactiveRefreshCallback) {
+        try { await _proactiveRefreshCallback() }
+        catch (err) { console.error("[authNexus] Proactive refresh failed:", err) }
+    }
 });
 
 userManager.events.addAccessTokenExpired(() => {
@@ -77,9 +98,8 @@ userManager.events.addAccessTokenExpired(() => {
 
 
 userManager.events.addSilentRenewError((error) => {
-    console.error("[authNexus] Silent Renew Error:", error);
-    // Treat silent renew failures as unsafe to keep using any cached token.
-    clearAuthNexusAccessToken()
+    console.error("[authNexus] Silent Renew Error (oidc):", error);
+    // Do NOT clear access token — it may still be valid
 });
 
 userManager.events.addUserLoaded((user) => {

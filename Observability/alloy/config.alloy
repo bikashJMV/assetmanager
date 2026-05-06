@@ -31,7 +31,7 @@ loki.process "add_ams_labels" {
 
 // ─── Phase 2: OTLP receiver (gRPC + HTTP with CORS) ───────────────────────
 // gRPC  :4317 — AMS Server OTel auto-instrument
-// HTTP  :14318 — OTel Web SDK from the React browser client
+// HTTP  :11400 — OTel Web SDK from the React browser client
 otelcol.receiver.otlp "default" {
   grpc { endpoint = "0.0.0.0:4317" }
   http {

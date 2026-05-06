@@ -133,6 +133,20 @@ When running via Docker Compose, pgAdmin is available at `http://localhost:{PGAD
 - The `postgres/` directory (Postgres data files) is git-ignored.
 - The `asset_tag_seq` sequence is present in the schema but `fn_next_asset_tag()` derives the next tag by scanning existing rows rather than using the sequence directly.
 
+## Maintenance: Backup & Restore
+
+### Create a Backup
+If running via Docker, run this from the host terminal:
+```bash
+docker exec -t ams-postgres-docker pg_dump -U assetmanager_user -d assetmanager_db > backup_$(date +%Y%m%d).sql
+```
+
+### Restore a Backup
+To restore a `.sql` dump into the running container:
+```bash
+cat your_backup.sql | docker exec -i ams-postgres-docker psql -U assetmanager_user -d assetmanager_db
+```
+
 ## Related
 
 - [`../README.md`](../README.md) — project overview and setup order

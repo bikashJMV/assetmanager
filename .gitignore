@@ -1,4 +1,4 @@
-.env
+﻿.env
 *.pdf
 ./context.md    
 sheet.xlsx
@@ -10,7 +10,9 @@ Server/.env
 Context.md
 note.txt
 ./Notes/read_docx.py    
-./Notes/extract_clean.py    
+./Notes/extract_clean.py  
+./Notes/Guideline.AI.md
+./Notes/Implementation.notes.md
 TelemetryServer/.env
 Telemetry.plan.md
 .cursorignore
@@ -26,7 +28,8 @@ logs/**
 logs/ams_server.log
 logs/telemetry_server.log
 .env.observability
-
+.env.production
+logs.txt
 # Smoke Tests
 *smoke*.py
 
@@ -39,3 +42,6 @@ __pycache__/
 .pytest_cache/
 tests/
 *test*.py
+DB/*.sql
+
+CREDENTIALS_AND_ACCESS.txt

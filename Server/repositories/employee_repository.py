@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -10,6 +11,8 @@ from asyncpg.exceptions import UniqueViolationError
 
 from repositories.db import Page, fetch_dicts, fetchrow_dict, normalize_page_params, pool
 from repositories.errors import ConflictError, NotFoundError, ValidationError
+
+logger = logging.getLogger(__name__)
 
 
 def _now() -> datetime:
@@ -265,6 +268,7 @@ class EmployeeRepository:
         role: str,
         is_active: bool,
         record_id: Optional[str] = None,  # UUID of row — set on update
+        conn: Optional[asyncpg.Connection] = None,
     ) -> EmployeeRow:
         """Create or update an employee record. `employee_id` is the business / login identifier."""
         emp_business = (employee_id or "").strip()
@@ -280,87 +284,126 @@ class EmployeeRepository:
 
         email_norm = (email or "").strip().lower() or None
 
+        if conn:
+            return await EmployeeRepository._upsert_with_conn(
+                conn, emp_business, emp_name, email_norm, department_name, role_norm, is_active, record_id
+            )
+
         async with pool().acquire() as conn:
-            # Resolve department_id if provided
-            dept_id: Optional[str] = None
-            if department_name and department_name.strip():
-                dept_row = await fetchrow_dict(
+            return await EmployeeRepository._upsert_with_conn(
+                conn, emp_business, emp_name, email_norm, department_name, role_norm, is_active, record_id
+            )
+
+    @staticmethod
+    async def _upsert_with_conn(
+        conn: asyncpg.Connection,
+        emp_business: str,
+        emp_name: str,
+        email_norm: Optional[str],
+        department_name: Optional[str],
+        role_norm: str,
+        is_active: bool,
+        record_id: Optional[str] = None,
+    ) -> EmployeeRow:
+        # Resolve department_id if provided
+        dept_id: Optional[str] = None
+        if department_name and department_name.strip():
+            dept_row = await fetchrow_dict(
+                conn,
+                "select id::text from departments where name=$1 limit 1",
+                department_name.strip(),
+            )
+            if dept_row:
+                dept_id = dept_row["id"]
+            else:
+                # Auto-create department
+                new_dept = await fetchrow_dict(
                     conn,
-                    "select id::text from departments where name=$1 limit 1",
+                    "insert into departments(name) values($1) returning id::text as id",
                     department_name.strip(),
                 )
-                if dept_row:
-                    dept_id = dept_row["id"]
-                else:
-                    # Auto-create department
-                    new_dept = await fetchrow_dict(
-                        conn,
-                        "insert into departments(name) values($1) returning id::text as id",
-                        department_name.strip(),
-                    )
-                    dept_id = new_dept["id"] if new_dept else None
+                dept_id = new_dept["id"] if new_dept else None
 
-            try:
-                if record_id:
-                    # Update existing
-                    row = await fetchrow_dict(
-                        conn,
-                        """
-                        update employees
-                           set employee_id=$2,
-                               name=$3,
-                               email=$4,
-                               department_id=$5::uuid,
-                               role=$6,
-                               is_active=$7,
-                               updated_at=now()
-                         where id=$1::uuid
-                         returning id::text as id, employee_id, name,
-                                   email::text as email, auth_user_id,
-                                   department_id::text as department_id,
-                                   coalesce(role,'employee') as role,
-                                   coalesce(is_active,true) as is_active
-                        """,
-                        record_id,
-                        emp_business,
-                        emp_name,
-                        email_norm,
-                        dept_id,
-                        role_norm,
-                        is_active,
-                    )
-                    if not row:
-                        raise NotFoundError("Employee not found")
-                else:
-                    # Create new
-                    row = await fetchrow_dict(
-                        conn,
-                        """
-                        insert into employees(employee_id, name, email, department_id, role, is_active)
-                        values($1, $2, $3, $4::uuid, $5, $6)
-                        returning id::text as id, employee_id, name,
-                                  email::text as email, auth_user_id,
-                                  department_id::text as department_id,
-                                  coalesce(role,'employee') as role,
-                                  coalesce(is_active,true) as is_active
-                        """,
-                        emp_business,
-                        emp_name,
-                        email_norm,
-                        dept_id,
-                        role_norm,
-                        is_active,
-                    )
-                    if not row:
-                        raise RuntimeError("Failed to create employee")
-            except UniqueViolationError as exc:
-                raise ConflictError("employee_id or email already exists") from exc
+        try:
+            if record_id:
+                # Update existing
+                row = await fetchrow_dict(
+                    conn,
+                    """
+                    update employees
+                       set employee_id=$2,
+                           name=$3,
+                           email=$4,
+                           department_id=$5::uuid,
+                           role=$6,
+                           is_active=$7,
+                           updated_at=now()
+                     where id=$1::uuid
+                     returning id::text as id, employee_id, name,
+                               email::text as email, auth_user_id,
+                               department_id::text as department_id,
+                               coalesce(role,'employee') as role,
+                               coalesce(is_active,true) as is_active
+                    """,
+                    record_id,
+                    emp_business,
+                    emp_name,
+                    email_norm,
+                    dept_id,
+                    role_norm,
+                    is_active,
+                )
+                if not row:
+                    raise NotFoundError("Employee not found")
+            else:
+                # Create new
+                row = await fetchrow_dict(
+                    conn,
+                    """
+                    insert into employees(employee_id, name, email, department_id, role, is_active)
+                    values($1, $2, $3, $4::uuid, $5, $6)
+                    returning id::text as id, employee_id, name,
+                              email::text as email, auth_user_id,
+                              department_id::text as department_id,
+                              coalesce(role,'employee') as role,
+                              coalesce(is_active,true) as is_active
+                    """,
+                    emp_business,
+                    emp_name,
+                    email_norm,
+                    dept_id,
+                    role_norm,
+                    is_active,
+                )
+                if not row:
+                    raise RuntimeError("Failed to create employee")
+        except UniqueViolationError as exc:
+            raise ConflictError("employee_id or email already exists") from exc
 
-            # Re-fetch with department name joined
-            saved = await EmployeeRepository.get_by_id(str(row["id"]))
-            if not saved:
-                raise RuntimeError("Failed to retrieve saved employee")
-            return saved
+        # Re-fetch with department name joined
+        # We need to use the SAME connection to see the changes if in a transaction
+        row_id = str(row["id"])
+        saved_dict = await fetchrow_dict(
+            conn,
+            """
+            select e.id::text as id,
+                   e.employee_id,
+                   e.name,
+                   e.email::text as email,
+                   e.auth_user_id,
+                   d.name as department,
+                   coalesce(e.role, 'employee') as role,
+                   coalesce(e.is_active, true) as is_active
+              from employees e
+              left join departments d on d.id = e.department_id
+             where e.id::text = $1
+             limit 1
+            """,
+            row_id,
+        )
+        if not saved_dict:
+            raise RuntimeError("Failed to retrieve saved employee")
+        return _to_employee_row(saved_dict)
 
     @staticmethod
     async def update_role(*, employee_id: str, role: str) -> EmployeeRow:
@@ -608,26 +651,34 @@ class EmployeeRepository:
         return str(val).strip() if val else None
 
     @staticmethod
-    async def bulk_upsert(rows: list[dict[str, Any]]) -> int:
+    async def bulk_upsert(rows: list[dict[str, Any]]) -> list[EmployeeRow]:
         """
-        Bulk upsert employees.
-        Returns the number of successfully processed rows.
+        Bulk upsert employees in a single transaction.
+        Rolls back all changes if any row fails.
+        Returns the list of successfully processed EmployeeRow objects.
         """
-        count = 0
-        for row in rows:
-            try:
-                bid = row.get("employee_id")
-                if bid is None:
-                    raise ValueError("missing employee_id")
-                await EmployeeRepository.upsert(
-                    employee_id=str(bid),
-                    name=row["name"],
-                    email=row.get("email"),
-                    department_name=row.get("department"),
-                    role=row.get("role") or "employee",
-                    is_active=row.get("is_active") if row.get("is_active") is not None else True,
-                )
-                count += 1
-            except Exception as exc:
-                print(f"[EmployeeRepository] Bulk upsert failed for row {row.get('employee_id')}: {exc}")
-        return count
+        results: list[EmployeeRow] = []
+        async with pool().acquire() as conn:
+            async with conn.transaction():
+                for idx, row in enumerate(rows):
+                    try:
+                        bid = row.get("employee_id")
+                        if bid is None:
+                            raise ValidationError(f"Row {idx+1}: missing employee_id")
+                        
+                        emp = await EmployeeRepository.upsert(
+                            employee_id=str(bid),
+                            name=row["name"],
+                            email=row.get("email"),
+                            department_name=row.get("department"),
+                            role=row.get("role") or "employee",
+                            is_active=row.get("is_active") if row.get("is_active") is not None else True,
+                            conn=conn
+                        )
+                        results.append(emp)
+                    except Exception as exc:
+                        # Wrap the error with row information
+                        error_msg = f"Bulk import failed at row {idx+1} ({row.get('employee_id', 'unknown')}): {str(exc)}"
+                        logger.error(f"[EmployeeRepository] {error_msg}")
+                        raise ValidationError(error_msg) from exc
+        return results

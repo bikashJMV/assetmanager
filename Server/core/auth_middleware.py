@@ -25,9 +25,13 @@ _EXEMPT_PREFIXES: tuple[str, ...] = (
     "/",
 )
 
+_EXEMPT_PATHS: set[str] = {
+    "/api/auth/refresh",
+}
+
 
 def _should_skip(path: str) -> bool:
-    if path in {"/", "/favicon.ico"}:
+    if path in {"/", "/favicon.ico"} or path in _EXEMPT_PATHS:
         return True
     return any(path == p or path.startswith(p + "/") for p in _EXEMPT_PREFIXES)
 
@@ -152,4 +156,3 @@ def _extract_preferred_username(payload: dict) -> Optional[str]:
     if isinstance(raw, str) and raw.strip():
         return raw.strip()
     return None
-

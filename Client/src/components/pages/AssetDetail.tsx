@@ -20,27 +20,6 @@ import AnimatedNavIcon, { type IconName } from '../common/AnimatedNavIcon'
 import { useToast } from '../../hooks/useToast'
 import EmployeeAssignLookup from '../common/EmployeeAssignLookup'
 
-// function formatInventryStatus=(status:string)=>{
-//   if(status.toLowerCase()==='in_stock'){
-//     return 'In Stock'
-//   } else if(status.toLowerCase()==='assigned'){
-//     return 'Assigned'
-//   }
-//   else if(status.toLowerCase()==='lost'){
-//     return 'Lost/Can\'t Locate'
-//   }
-
-//   else if(status.toLowerCase()==='retired'){
-//     return 'Retired/Decommissioned'
-//   }
-//   else if(status.toLowerCase()==='lost'){
-//     return 'Lost/Can\'t Locate'
-//   }
-//   else if(status.toLowerCase()==='disposed'){
-//     return 'Disposed'
-//   }
-
-// }
 
 const ASSIGNABLE_STATUSES = new Set(['in_stock', 'assigned'])
 

@@ -60,7 +60,7 @@ export default function Guide() {
               <ul className="mt-3 space-y-2 text-sm text-muted">
                 <li>View assigned assets.</li>
                 <li>Use scan for quick lookup.</li>
-                <li>View employee information in read-only mode.</li>
+                <li>  Quick View information in read-only mode.</li>
                 <li>Create a ticket request when an update is needed.</li>
               </ul>
             </article>

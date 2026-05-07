@@ -82,7 +82,7 @@ cp .env.observability.example .env
 docker compose up -d
 ```
 
-Grafana: `http://localhost:3000` · Prometheus: `http://localhost:9090` · Loki: `http://localhost:3100`
+Grafana: `http://localhost:11200` · Prometheus: `http://localhost:9090` · Loki: `http://localhost:3100`
 
 ### 5. Docker (optional — app containers only)
 
@@ -144,6 +144,25 @@ flowchart TD
 | `VITE_CLIENT_ID` | Client | OIDC client ID |
 | `VITE_PROJECT_ID` | Client | Must match server `AUTH_PROJECT_ID` |
 | `VITE_OTEL_GRAFANA_ENABLED` | Client | Enable browser OTel traces |
+
+## Database Maintenance & Backups
+
+To back up your data from the Docker container, use the following commands:
+
+### Full Backup (Schema + Data)
+```bash
+docker exec -t ams-postgres-docker pg_dump -U assetmanager_user -d assetmanager_db > database_dump.sql
+```
+
+### Schema Only
+```bash
+docker exec -t ams-postgres-docker pg_dump -U assetmanager_user -d assetmanager_db -s > schema_only.sql
+```
+
+### Restore Backup
+```bash
+cat database_dump.sql | docker exec -i ams-postgres-docker psql -U assetmanager_user -d assetmanager_db
+```
 
 ## Notes
 

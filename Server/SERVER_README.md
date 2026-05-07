@@ -261,6 +261,18 @@ cd Server
 pytest tests/
 ```
 
+## Database Maintenance
+
+### Export Data (Backup)
+```bash
+docker exec -t ams-postgres-docker pg_dump -U assetmanager_user -d assetmanager_db > backup.sql
+```
+
+### Import Data (Restore)
+```bash
+cat backup.sql | docker exec -i ams-postgres-docker psql -U assetmanager_user -d assetmanager_db
+```
+
 ## Middleware stack
 
 Middleware is added in `main.py` in reverse execution order (last added = outermost = runs first):

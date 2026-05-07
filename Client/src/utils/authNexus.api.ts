@@ -1,7 +1,7 @@
 import axios from 'axios'
 import type { AxiosError, AxiosInstance, AxiosRequestConfig, AxiosResponse, InternalAxiosRequestConfig } from 'axios'
 
-import { clearAuthNexusAccessToken, getAuthNexusAccessToken, userManager } from './authService'
+import { clearAuthNexusAccessToken, getAuthNexusAccessToken, setAuthNexusAccessToken, userManager, registerSilentRefreshCallback } from './authService'
 
 type FailedQueueEntry = {
   resolve: (token: string | null) => void
@@ -28,6 +28,7 @@ const backendBaseUrl = (() => {
 
 const backendApiKey = (import.meta.env.VITE_BACKEND_API_KEY as string | undefined)?.trim() ?? ''
 
+
 const api: AxiosInstance = axios.create({
   baseURL: backendBaseUrl,
 })
@@ -45,6 +46,47 @@ const processQueue = (error: unknown, token: string | null = null) => {
   })
   failedQueue = []
 }
+
+const refreshTokenViaBFF = async (): Promise<string> => {
+  const response = await fetch(`/api/auth/refresh`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+  })
+
+  if (!response.ok) {
+    throw new Error(`Token refresh failed: ${response.status}`)
+  }
+
+  const data = await response.json()
+  const newAccessToken: string = data.access_token
+  const expiresIn: number = data.expires_in ?? 900
+
+  setAuthNexusAccessToken(newAccessToken)
+
+  const user = await userManager.getUser()
+  if (user) {
+    user.access_token = newAccessToken
+    user.expires_at = Math.floor(Date.now() / 1000) + expiresIn
+    await userManager.storeUser(user)
+  }
+
+  return newAccessToken
+}
+
+registerSilentRefreshCallback(async () => {
+    if (isRefreshing) return
+    isRefreshing = true
+    try {
+        const newToken = await refreshTokenViaBFF()
+        processQueue(null, newToken)
+    } catch (err) {
+        processQueue(err, null)
+    } finally {
+        isRefreshing = false
+    }
+})
+
 
 function applyDefaultHeaders(config: InternalAxiosRequestConfig) {
   const explicitEnvelopeHeader = config.headers.get('X-Response-Envelope')
@@ -101,16 +143,10 @@ api.interceptors.request.use(async (config) => {
     isRefreshing = true
 
     try {
-      console.log("[authNexus.api] REQUEST INTERCEPTOR: Token expired or expiring - calling signinSilent()");
-      const newUser = await userManager.signinSilent()
-      if (!newUser?.access_token) {
-        throw new Error('No new token received')
-      }
-
-      console.log("[authNexus.api] REQUEST INTERCEPTOR: Token refreshed successfully");
-      await userManager.storeUser(newUser)
-      processQueue(null, newUser.access_token)
-      user = newUser
+      console.log("[authNexus.api] REQUEST INTERCEPTOR: Token expired or expiring - calling refreshTokenViaBFF()");
+      const newToken = await refreshTokenViaBFF()
+      processQueue(null, newToken)
+      user = await userManager.getUser()
     } catch (err) {
       console.error("[authNexus.api] REQUEST INTERCEPTOR: Failed to refresh token -", err);
       processQueue(err, null)
@@ -152,16 +188,10 @@ api.interceptors.response.use(
       isRefreshing = true
 
       try {
-        console.log("[authNexus.api] RESPONSE INTERCEPTOR: 401 error - calling signinSilent() to refresh");
-        const newUser = await userManager.signinSilent()
-        if (!newUser?.access_token) {
-          throw new Error('No new token received')
-        }
-
-        console.log("[authNexus.api] RESPONSE INTERCEPTOR: Token refreshed successfully, retrying request");
-        await userManager.storeUser(newUser)
-        processQueue(null, newUser.access_token)
-        originalRequest.headers.set('Authorization', `Bearer ${newUser.access_token}`)
+        console.log("[authNexus.api] RESPONSE INTERCEPTOR: 401 error - calling refreshTokenViaBFF() to refresh");
+        const newToken = await refreshTokenViaBFF()
+        processQueue(null, newToken)
+        originalRequest.headers.set('Authorization', `Bearer ${newToken}`)
         return api(originalRequest)
       } catch (refreshError) {
         console.error("[authNexus.api] RESPONSE INTERCEPTOR: Failed to refresh token -", refreshError);

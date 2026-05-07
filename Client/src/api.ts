@@ -4,7 +4,11 @@ import { User } from 'oidc-client-ts'
 import { userManager } from './utils/authService'
 
 /** Default origin in all QRs unless `VITE_PUBLIC_APP_ORIGIN` is set (staging / fork). */
-const PRODUCTION_QR_APP_ORIGIN = 'https://web-assetmanager.vercel.app'
+const VITE_PUBLIC_APP_ORIGIN = import.meta.env.VITE_PUBLIC_APP_ORIGIN || 'http://localhost:11000';
+
+if (!import.meta.env.VITE_PUBLIC_APP_ORIGIN) {
+  console.warn("⚠️ VITE_PUBLIC_APP_ORIGIN not set. Using fallback.");
+}
 
 /**
  * BFF (FastAPI Server) base URL.
@@ -1055,7 +1059,6 @@ export async function createLog(assetTag: string, note: string) {
 
 /**
  * Origin embedded in asset QR codes (`/scan/{tag}`).
- * Defaults to `https://web-assetmanager.vercel.app` in dev and production so scans work from a phone
  * even when the admin UI runs on localhost. Override with `VITE_PUBLIC_APP_ORIGIN` for staging/forks.
  */
 export function getScanPageBaseUrl(): string {
@@ -1066,7 +1069,7 @@ export function getScanPageBaseUrl(): string {
       return trimmed
     }
   }
-  return PRODUCTION_QR_APP_ORIGIN
+  return VITE_PUBLIC_APP_ORIGIN
 }
 
 async function buildAssetQrDataUri(assetTag: string): Promise<string> {

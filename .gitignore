@@ -15,6 +15,10 @@ note.txt
 ./Notes/Implementation.notes.md
 TelemetryServer/.env
 Telemetry.plan.md
+./Notes/Admin_authNexus.png
+./Notes/authNexus.Project.png
+./Notes/*credentials*.png
+./Notes/*credential*.png
 .cursorignore
 EVALUATION_SCORECARD.md
 ./email.service.implementation.md
@@ -45,3 +49,9 @@ tests/
 DB/*.sql
 
 CREDENTIALS_AND_ACCESS.txt
+pgpassfile
+*pgpass*
+*credentials*
+*credential*
+*secrets*
+*secret*

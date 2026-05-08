@@ -30,7 +30,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-assetmanager_user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:11000}
-      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:11000,http://localhost:11100,http://115.241.70.253:10100/api/v1/auth/jwks}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:11000,http://localhost:11100,http://165.101.248.59:10100/api/v1/auth/jwks}
       AUTH_ENABLED: ${AUTH_ENABLED:-true}
       AUTH_JWKS_URL: ${AUTH_JWKS_URL:-}
       AUTH_ISSUER: ${AUTH_ISSUER:-}

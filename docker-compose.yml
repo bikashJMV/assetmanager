@@ -218,7 +218,7 @@ services:
       server:
         condition: service_healthy
     ports:
-      - "${CLIENT_PUBLISH_PORT}:80"
+      - "127.0.0.1:${CLIENT_PUBLISH_PORT}:80"
     networks:
       - ams-observability
     restart: unless-stopped

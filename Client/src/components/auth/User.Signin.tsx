@@ -1,6 +1,6 @@
 import { userManager } from '../../utils/authService'
 
-const orgId = import.meta.env.VITE_ORG_ID?.trim()
+// const orgId = import.meta.env.VITE_ORG_ID?.trim()
 
 export type AuthNexusLoginButtonProps = {
   /** `primary`: full-width accent (login page). `default`: compact pill (home). */
@@ -19,9 +19,11 @@ export default function AuthNexusLoginButton({ variant = 'default' }: AuthNexusL
     console.log('[authNexus] Initiating redirect. Storage Key:', userManager.settings.authority)
     void userManager.signinRedirect({
       extraQueryParams: {
-        ...(orgId ? { org_id: orgId } : {}),
-        primary_origin: window.location.origin,
-      },
+                'org_id': import.meta.env.VITE_ORG_ID?.trim(),
+                'project_id': import.meta.env.VITE_PROJECT_ID?.trim(),
+                'project_name': import.meta.env.VITE_PROJECT_NAME?.trim(),
+                'primary_origin': window.location.origin
+            }
     })
   }
 

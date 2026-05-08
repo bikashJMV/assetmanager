@@ -72,7 +72,9 @@ const settings = {
     },
 
     extraQueryParams: {
-        "org_id": import.meta.env.VITE_ORG_ID?.trim()
+        "org_id": import.meta.env.VITE_ORG_ID?.trim(),
+        "project_id": import.meta.env.VITE_PROJECT_ID?.trim(),
+        "project_name": import.meta.env.VITE_PROJECT_NAME?.trim()
     }
 };
 

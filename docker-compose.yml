@@ -187,7 +187,7 @@ services:
 
       
     ports:
-      - "${SERVER_PUBLISH_PORT}:8000"
+      - "127.0.0.1:${SERVER_PUBLISH_PORT}:8000"
     networks:
       - ams-observability
     restart: unless-stopped

@@ -66,7 +66,7 @@ const settings = {
         issuer: authority,
         authorization_endpoint: `${authority}/api/v1/auth/authorize`,
         token_endpoint: `${window.location.origin}/nexus-proxy/api/v1/auth/token`,
-        userinfo_endpoint: `${authority}/oidc/v1/userinfo`,
+        userinfo_endpoint: `${window.location.origin}/nexus-proxy/oidc/v1/userinfo`,
         jwks_uri: `${authority}/api/v1/auth/jwks`,
         end_session_endpoint: `${authority}/oidc/v1/end_session`
     },

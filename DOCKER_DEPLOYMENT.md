@@ -31,10 +31,10 @@ Use `assetmanager/.env` on the deployment server. Keep real env files ignored.
 CLIENT_PUBLISH_PORT=11000
 SERVER_PUBLISH_PORT=11100
 PGADMIN_PUBLISH_PORT=11300
-FRONTEND_URL=http://your-org-host:11000
-ALLOWED_ORIGINS=http://your-org-host:11000
+FRONTEND_URL=https://your-org-host:11000
+ALLOWED_ORIGINS=https://your-org-host:11000
 VITE_API_URL=http://your-org-host:11100
-VITE_PUBLIC_APP_ORIGIN=http://your-org-host:11000
+VITE_PUBLIC_APP_ORIGIN=https://your-org-host:11000
 VITE_OTEL_EXPORTER_ENDPOINT=http://your-org-host:11400/v1/traces
 VITE_GRAFANA_DASHBOARD_URL_FOR_ITOPS=http://your-org-host:11200
 LOKI_BASE_URL=http://loki:3100

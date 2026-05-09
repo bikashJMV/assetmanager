@@ -37,7 +37,7 @@ otelcol.receiver.otlp "default" {
   http {
     endpoint = "0.0.0.0:4318"
     cors {
-      allowed_origins = [env("OTEL_ALLOWED_ORIGIN"), "http://localhost:11000","http://localhost:11100","http://165.101.248.59:11000","http://165.101.248.59:11100"]
+      allowed_origins = [env("OTEL_ALLOWED_ORIGIN"), "http://localhost:11000","http://localhost:11100","https://165.101.248.59:11000","https://165.101.248.59:11100"]
       allowed_headers = ["*"]
       max_age         = 7200
     }

@@ -55,3 +55,6 @@ pgpassfile
 *credential*
 *secrets*
 *secret*
+
+deploy_key
+deploy_key.pub

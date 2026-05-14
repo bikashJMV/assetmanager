@@ -210,15 +210,17 @@ services:
         VITE_CALLBACK_PATH: ${VITE_CALLBACK_PATH}
         VITE_LOGOUT_PATH: ${VITE_LOGOUT_PATH}
         VITE_PUBLIC_APP_ORIGIN: ${VITE_PUBLIC_APP_ORIGIN}
+        VITE_PROJECT_NAME: ${VITE_PROJECT_NAME}
         VITE_OTEL_GRAFANA_ENABLED: ${VITE_OTEL_GRAFANA_ENABLED}
         VITE_OTEL_EXPORTER_ENDPOINT: ${VITE_OTEL_EXPORTER_ENDPOINT}
         VITE_GRAFANA_DASHBOARD_URL_FOR_ITOPS: ${VITE_GRAFANA_DASHBOARD_URL_FOR_ITOPS}
+        VITE_LOKI_BASE_URL: ${VITE_LOKI_BASE_URL}
     container_name: ams-client
     depends_on:
       server:
         condition: service_healthy
     ports:
-      - "127.0.0.1:${CLIENT_PUBLISH_PORT}:80"
+      - "${CLIENT_PUBLISH_PORT}:80"
     networks:
       - ams-observability
     restart: unless-stopped

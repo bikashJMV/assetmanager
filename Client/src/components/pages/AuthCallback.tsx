@@ -11,9 +11,11 @@ export default function AuthCallback() {
         processed.current = true;
 
         userManager.signinRedirectCallback()
-            .then(() => {
+            .then((user) => {
                 console.log("[authNexus] Callback success");
-                navigate('/', { replace: true });
+                const state = user?.state as any;
+                const returnTo = typeof state?.returnTo === 'string' ? state.returnTo : '/';
+                navigate(returnTo, { replace: true });
             })
             .catch((err) => {
                 console.error("[authNexus] Callback error:", err);

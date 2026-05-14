@@ -127,25 +127,35 @@ class AssetRepository:
                 "select * from recycle_bin_entries where restored_at is null order by deleted_at desc"
             )
     @staticmethod
+    async def get_next_asset_tag_atomic(conn: Any | None = None) -> str:
+        """
+        Generate the next sequential asset tag atomically via Postgres sequence.
+        
+        Race-safe: handles unlimited concurrent callers without collision.
+        Optionally accepts an existing connection for inclusion in a transaction
+        (used by bulk QR generation to keep tag reservation in same TX).
+        
+        Returns: 'AST-{n:05d}' format (e.g. 'AST-00042')
+        """
+        query = "select 'AST-' || lpad(nextval('asset_tag_seq')::text, 5, '0') as tag"
+        
+        if conn is not None:
+            return await conn.fetchval(query)
+        
+        async with pool().acquire() as c:
+            return await c.fetchval(query)
+
+    @staticmethod
     async def get_next_asset_tag() -> str:
-        """Generate the next sequential asset tag (e.g. AST-00042) in Python."""
-        async with pool().acquire() as conn:
-            last = await conn.fetchval(
-                """
-                select asset_tag from assets
-                 where asset_tag ~ '^AST-[0-9]+$'
-                 order by asset_tag desc
-                 limit 1
-                """
-            )
-        if last:
-            try:
-                n = int(last.split("-")[1]) + 1
-            except (IndexError, ValueError):
-                n = 1
-        else:
-            n = 1
-        return f"AST-{n:05d}"
+        """
+        Generate the next sequential asset tag (e.g. AST-00042).
+        
+        Backward-compatible wrapper around atomic sequence-based generation.
+        All existing call sites (asset_service.create_asset, /next-tag endpoint)
+        continue to work without modification.
+        """
+        return await AssetRepository.get_next_asset_tag_atomic()
+
     @staticmethod
     async def get_public_scan(asset_tag: str) -> Optional[dict[str, Any]]:
         """Return limited public info for scanning."""

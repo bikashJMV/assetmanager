@@ -28,9 +28,15 @@ def require_privileged(request: Request) -> EmployeeContext:
     return employee
 
 
+def require_admin(request: Request) -> EmployeeContext:
+    employee = require_authenticated(request)
+    if employee.role != "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin role required.")
+    return employee
+
+
 def require_it_ops(request: Request) -> EmployeeContext:
     employee = require_authenticated(request)
     if employee.role != "it_ops":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="IT Ops role required.")
     return employee
-

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { listDepartments, type EmployeeRole, type EmployeeUpsertInput } from '../../api'
+import { listDepartments, type EmployeeRole } from '../../api'
+import type { EmployeeUpsertInput } from '../../types/api'
 import { getUserFacingMessage, logDevError } from '../../utils/errors'
 import FilterSelect, { type FilterSelectOption } from '../common/FilterSelect'
 

@@ -9,14 +9,15 @@ Asset Manager (AMS) is a **Postgres-backed** platform for tracking physical and 
 | `Client/` | React + Vite + TypeScript SPA (`Client/package.json`, dev port `5174`) |
 | `Server/` | FastAPI app (`Server/main.py`), asyncpg pool, versioned API routers |
 | `DB/` | `init.sql` full schema dump + pgAdmin bootstrap files |
-| `Observability/` | Docker Compose stack: Loki, Tempo, Prometheus, Grafana, Alloy |
+| `Observability/` | Loki, Tempo, Prometheus, Grafana, Alloy **configs**; env template — services run via root [`docker-compose.yml`](./docker-compose.yml) |
 | `logs/` | Runtime log files tailed by Alloy (`ams_server.log`, `telemetry_server.log`) |
 | `Notes/` | Product requirements and authNexus API reference docs |
+| `email.service.implementation.readme.md` | Spec for the **external** email notification microservice (not shipped in `Server/`) |
 
 ## Architecture
 
 - The **browser calls the FastAPI server** for all application data. Base URL: `VITE_API_URL` (default `http://localhost:8000`). Integration layers: `Client/src/api.ts`, `Client/src/api/apiClient.ts`, `Client/src/utils/authNexus.api.ts`, `Client/src/services/*`, `Client/src/queries/*`.
-- **Sign-in** uses OIDC via `oidc-client-ts` (`Client/src/utils/authService.ts`, callback at `Client/src/components/pages/AuthCallback.tsx`). The server validates RS256 access tokens via JWKS when `AUTH_ENABLED=true` (`Server/core/auth_middleware.py`, `Server/core/authnexus.py`).
+- **Sign-in** uses OIDC via `oidc-client-ts` (`Client/src/utils/authService.ts`, callback at `Client/src/components/pages/AuthCallback.tsx`). The server validates RS256 access tokens via JWKS when `AUTH_ENABLED=true` (`Server/core/auth_middleware.py`, `Server/core/authnexus.py`). **`POST /api/auth/refresh`** (`Server/routers/api_auth.py`) forwards refresh using the HttpOnly `nexus_refresh_token` cookie so the SPA can obtain new access tokens without silent OIDC renewal.
 - **Postgres** is the system of record. The asyncpg pool is created from `DATABASE_URL` or individual `POSTGRES_*` vars (`Server/core/postgres.py`). Business rules live in `Server/repositories/` and `Server/services/`.
 - **Database schema:** `DB/init.sql` is a full `pg_dump` of the schema including tables, views, functions, and seed categories. It is the authoritative schema reference.
 - **Email notifications:** the AMS server POSTs fire-and-forget events to an external email microservice when `NOTIFICATIONS_ENABLED=true` (`Server/services/notifications/`).
@@ -39,7 +40,9 @@ Asset Manager (AMS) is a **Postgres-backed** platform for tracking physical and 
 - [`Server/services/notifications/README.md`](./Server/services/notifications/README.md) — email adapter and orchestrator
 - [`DB/README.md`](./DB/README.md) — database schema, setup, and seed data
 - [`Observability/OBSERVABILITY_TELEMETRY.md`](./Observability/OBSERVABILITY_TELEMETRY.md) — local observability stack setup and telemetry guide
-- [`DOCKER_DEPLOYMENT.md`](./DOCKER_DEPLOYMENT.md) — Docker Compose deployment for server + client (Postgres is separate)
+- [`DOCKER_DEPLOYMENT.md`](./DOCKER_DEPLOYMENT.md) — Docker Compose: ports, env, single-file stack
+- [`email.service.implementation.readme.md`](./email.service.implementation.readme.md) — external email microservice contract (Supabase audit, templates)
+- [`CHANGELOG.md`](./CHANGELOG.md) — release notes
 
 ## Local development
 
@@ -76,21 +79,18 @@ npm run dev            # starts on http://localhost:5174
 
 ### 4. Observability (optional)
 
-```bash
-cd Observability
-cp .env.observability.example .env
-docker compose up -d
-```
+Configuration lives under `Observability/` (`Observability/.env` from `.env.observability.example`). With **local Docker**, observability services start together with the app from the repo root compose file (see step 5).
 
-Grafana: `http://localhost:11200` · Prometheus: `http://localhost:9090` · Loki: `http://localhost:3100`
+Grafana (typical published port `11200`): `http://localhost:11200` · Prometheus: `http://localhost:9090` · Loki: `http://localhost:3100`
 
-### 5. Docker (optional — app containers only)
+### 5. Docker (full stack)
 
-Postgres runs outside this stack. From the repo root:
+From `assetmanager/`, root `docker-compose.yml` starts **observability, Postgres, FastAPI, nginx client, and pgAdmin** on one network.
 
 ```bash
 cd assetmanager
-# edit .env with POSTGRES_*, VITE_API_URL, FRONTEND_URL, ALLOWED_ORIGINS
+cp Observability/.env.observability.example Observability/.env   # Grafana / Alloy vars
+# edit .env with POSTGRES_*, VITE_* , AUTH_*, FRONTEND_URL, ALLOWED_ORIGINS, ports
 docker compose up --build -d
 ```
 
@@ -99,7 +99,7 @@ See [`DOCKER_DEPLOYMENT.md`](./DOCKER_DEPLOYMENT.md) for port mapping and rebuil
 ## Setup order
 
 1. Provision **Postgres** and apply `DB/init.sql`.
-2. Configure **Server** `.env` — database connection, `AUTH_ENABLED`, `FRONTEND_URL`, `ALLOWED_ORIGINS`.
+2. Configure **Server** `.env` — database connection, `AUTH_ENABLED`, `AUTH_JWKS_URL`, **`AUTH_ISSUER`** and **`AUTH_AUDIENCE`** (must match access-token `iss` / `aud` from authNexus), `AUTH_PROJECT_ID`, **`AUTH_AUTHORITY`** (required for `POST /api/auth/refresh`), `FRONTEND_URL`, `ALLOWED_ORIGINS`.
 3. Configure **Client** `.env` — `VITE_API_URL`, authNexus OIDC vars, optional telemetry.
 4. Start the server, then the client.
 5. Provision at least one employee row with `role = 'it_ops'` or `'admin'` to access privileged routes.
@@ -133,6 +133,8 @@ flowchart TD
 | `DATABASE_URL` or `POSTGRES_*` | Server | Postgres connection |
 | `AUTH_ENABLED` | Server | Enable JWT validation (default `false`) |
 | `AUTH_JWKS_URL` | Server | Required when `AUTH_ENABLED=true` |
+| `AUTH_ISSUER` / `AUTH_AUDIENCE` | Server | Optional but recommended when validating JWTs; `AUTH_AUDIENCE` must match the access token `aud` or APIs return 401 (`Audience doesn't match`) |
+| `AUTH_AUTHORITY` | Server | authNexus base URL; used by `POST /api/auth/refresh` |
 | `AUTH_PROJECT_ID` | Server | JWT project scope check |
 | `FRONTEND_URL` | Server | Base URL embedded in QR code PDFs |
 | `ALLOWED_ORIGINS` | Server | CORS allowed origins (comma-separated) |
@@ -166,8 +168,23 @@ cat database_dump.sql | docker exec -i ams-postgres-docker psql -U assetmanager_
 
 ## Notes
 
+### Reverse proxy and hostname
+
+If nginx uses a **`default_server`** that `return 404` for unknown `server_name`, browsing by **raw IP** on port 80 can 404 by design. Use the **configured hostname** (for example `ams.rokkalabs.com`) so the server block that proxies to the client matches.
+
+### JWT 401 after sign-in (`Audience doesn't match`)
+
+The access token’s **`aud`** claim must match server **`AUTH_AUDIENCE`** (and typically **`iss`** matches **`AUTH_ISSUER`** when set). If authNexus issues `aud: default_client` but the API expects a project API audience, align IdP application settings or set `AUTH_AUDIENCE` to the value your tokens actually carry.
+
+### Port reference (common defaults)
+
+| Context | Client UI | API | Grafana (host) |
+| --- | --- | --- | --- |
+| Local dev | `5174` (Vite) | `8000` | `11200` if compose publishes it |
+| Docker (see `.env`) | `11000` | `11100` | `11200` |
+
 - **QR link origin:** `Client/src/utils/qr.ts` builds scan URLs using `FRONTEND_URL` → `VITE_PUBLIC_APP_ORIGIN` → a hardcoded production fallback. `getScanPageBaseUrl` in `Client/src/api.ts` only checks `VITE_PUBLIC_APP_ORIGIN`; keep both env values consistent.
-- **CORS:** `Server/main.py` reads `settings.ALLOWED_ORIGINS` and always appends `http://localhost:11000` if not already present. Align with your Vite dev port (`5174` by default).
+- **CORS:** `Server/main.py` reads `settings.ALLOWED_ORIGINS` and always appends `http://localhost:11000` if not already present. For Vite on `5174`, add `http://localhost:5174` to `ALLOWED_ORIGINS` when testing cross-origin to `localhost:8000`.
 - **Request tracing:** every response carries `x-request-id` (set by `RequestIdMiddleware`). Send `X-Request-Id` on requests to correlate with server logs.
 - **Prometheus metrics:** exposed at `GET /metrics` only when `OTEL_GRAFANA_ENABLED=true` on the server.
 - **`app.py`:** legacy compatibility shim — re-exports `main.app` so `uvicorn app:app` still works.

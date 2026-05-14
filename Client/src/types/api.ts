@@ -85,6 +85,7 @@ export type AssetInventoryRecord = {
 }
 
 export type PublicScanAsset = {
+  kind?: string
   category_name: string
   asset_tag: string
   status: string

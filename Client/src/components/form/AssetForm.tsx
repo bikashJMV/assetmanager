@@ -20,11 +20,12 @@ type Props = {
   onClose: () => void
   onSuccess: (result: unknown) => void
   variant?: 'modal' | 'panel'
-  /** When true (create flow only), category is fixed — no dropdown. */
   categoryLocked?: boolean
-  /** Shown when categoryLocked; falls back to title from slug. */
   lockedCategoryLabel?: string
+  qr_reservation_id?: string
+  isStatusDisabled?: boolean
 }
+
 
 type FormState = {
   asset_tag: string
@@ -41,7 +42,7 @@ type FormState = {
 
 type ExtraPair = { id: string; key: string; value: string }
 
-const inventoryStatuses = ['in_stock', 'assigned', 'in_repair', 'retired', 'lost', 'disposed']
+const inventoryStatuses = ['in_stock', 'in_repair', 'retired', 'lost', 'disposed']
 const lifecycleEditStatuses = ['in_stock', 'in_repair', 'retired', 'lost', 'disposed']
 
 function getCategoryLabelFromSlug(slug: string): string {
@@ -72,7 +73,10 @@ export default function AssetForm({
   variant = 'modal',
   categoryLocked = false,
   lockedCategoryLabel,
+  qr_reservation_id,
+  isStatusDisabled = false,
 }: Props) {
+
   const isEditing = !!prefill.asset_tag
   const originalStatus = prefill.status || 'in_stock'
   const isPanel = variant === 'panel'
@@ -266,7 +270,9 @@ export default function AssetForm({
         status: form.status || undefined,
         custom_fields,
         metadata: form.notes.trim() ? { notes: form.notes.trim() } : undefined,
+        qr_reservation_id: qr_reservation_id || undefined,
       }
+
 
       let result: unknown
       if (isEditing && prefill.asset_tag) {
@@ -343,14 +349,22 @@ export default function AssetForm({
           <div>
             <p className="text-xs uppercase tracking-[0.14em] text-muted mb-2">Core Details</p>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <Field
+              {/* <Field
                 label="Asset Tag"
                 value={isEditing ? form.asset_tag : ''}
                 placeholder={isEditing ? 'AST-00001' : 'Auto-generated on save'}
                 onChange={(v) => setForm((c) => ({ ...c, asset_tag: v }))}
                 disabled
-              />
-
+              /> */}
+              {(isEditing || !qr_reservation_id) && (
+                <Field
+                  label="Asset Tag"
+                  value={isEditing ? form.asset_tag : ''}
+                  placeholder={isEditing ? 'AST-00001' : 'Auto-generated on save'}
+                  onChange={(v) => setForm((c) => ({ ...c, asset_tag: v }))}
+                  disabled
+                />
+              )}
               <div>
                 <label htmlFor="asset-form-category" className="block text-muted text-xs mb-0.5">
                   Category{' '}
@@ -413,6 +427,8 @@ export default function AssetForm({
                   hideLabel
                   dense
                   triggerId="asset-form-status"
+                  disabled={isStatusDisabled}
+                  title={isStatusDisabled ? "Cannot change status while asset is assigned and in edit mode" : undefined}
                 />
                 <p className="text-[11px] text-muted mt-0.5 leading-snug">
                   Status changes in edit mode are logged in asset history.
@@ -543,12 +559,18 @@ export default function AssetForm({
 
         {error && <p className="text-accent text-sm">{error}</p>}
 
-        <p className="text-[11px] text-muted leading-relaxed border-t border-base pt-2.5 mt-1">
+        {/* <p className="text-[11px] text-muted leading-relaxed border-t border-base pt-2.5 mt-1">
           <span className="text-accent font-semibold">*</span> Asset tag is auto-generated. Category and serial number
           are the only required fields; everything else is optional.
           All other fields including template and additional details are optional.
-        </p>
+        </p> */}
 
+        <p className="text-[11px] text-muted leading-relaxed border-t border-base pt-2.5 mt-1">
+          <span className="text-accent font-semibold">*</span>{' '}
+          {qr_reservation_id
+            ? `Asset tag is locked to the scanned QR. Category and serial number are required; others are optional.`
+            : `Asset tag is auto-generated. Category and serial number are the only required fields; others are optional.`}
+        </p>
         <div className="flex flex-col sm:flex-row gap-2 pt-1">
           <button
             type="button"

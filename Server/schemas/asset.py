@@ -48,6 +48,8 @@ class AssetCreate(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
     qr_code: Optional[str] = None
     log_note: Optional[str] = None
+    qr_reservation_id: Optional[str] = None
+
 
 
 class AssetUpdate(BaseModel):

@@ -20,6 +20,8 @@ type FilterSelectProps = {
   dense?: boolean
   /** `id` on the trigger button for `htmlFor` on an external label. */
   triggerId?: string
+  /** Disable the control. */
+  disabled?: boolean
 }
 
 type FloatingMenuPosition = {
@@ -40,6 +42,7 @@ export default function FilterSelect({
   hideLabel = false,
   dense = false,
   triggerId,
+  disabled = false,
 }: FilterSelectProps) {
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement | null>(null)
@@ -155,14 +158,17 @@ export default function FilterSelect({
           aria-expanded={open ? 'true' : 'false'}
           aria-controls={open ? listboxId : undefined}
           onClick={() => setOpen((current) => !current)}
+          disabled={disabled}
           className={`flex w-full items-center justify-between gap-3 border text-left outline-none transition ${
             dense ? 'rounded-lg px-3 py-2.5 text-sm' : 'rounded-xl px-3 py-3 text-sm'
           } ${
-            open
-              ? 'border-[color:var(--accent)] bg-surface-2 text-primary ring-2 ring-[color:var(--accent-soft)]'
-              : dense
-                ? 'border-base bg-app text-primary hover:border-[color:var(--accent-soft)]'
-                : 'border-base bg-surface text-primary hover:border-[color:var(--accent-soft)]'
+            disabled
+              ? 'opacity-50 cursor-not-allowed border-base bg-app text-primary'
+              : open
+                ? 'border-[color:var(--accent)] bg-surface-2 text-primary ring-2 ring-[color:var(--accent-soft)]'
+                : dense
+                  ? 'border-base bg-app text-primary hover:border-[color:var(--accent-soft)]'
+                  : 'border-base bg-surface text-primary hover:border-[color:var(--accent-soft)]'
           }`}
         >
           <span className="truncate">{selectedOption.label}</span>

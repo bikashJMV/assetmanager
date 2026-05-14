@@ -177,6 +177,7 @@ class AssignmentService:
                             "asset_tag": asset_row.get("asset_tag"),
                             "previous_employee_row_id": previous_employee_id,
                             "previous_employee_id": asset_row.get("current_employee_business_id"),
+                            "notes": notes,
                         },
                         ip_address=ip_address,
                         user_agent=user_agent,

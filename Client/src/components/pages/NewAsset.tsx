@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
+
 import AssetBulkImportModal from '../form/AssetBulkImportModal'
 import AssetForm from '../form/AssetForm'
 import CategoryPickerGrid from '../form/CategoryPickerGrid'
@@ -16,6 +17,10 @@ import { getUserFacingMessage, logDevError } from '../../utils/errors'
 
 export default function NewAsset() {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const urlTag = searchParams.get('tag')
+  const urlReservationId = searchParams.get('reservation_id')
+
   const [accessState, setAccessState] = useState<'loading' | 'allowed' | 'denied'>('loading')
   const [error, setError] = useState('')
   const [categories, setCategories] = useState<CategoryRecord[]>([])
@@ -91,7 +96,7 @@ export default function NewAsset() {
   }, [pickerCategories, baselineSlug])
 
   const handleCreated = (result: unknown) => {
-    const tag = (result as AssetInventoryRecord)?.asset_tag
+    const tag = (result as AssetInventoryRecord)?.asset_tag ?? urlTag
     if (tag) {
       void navigate(`/assets/${encodeURIComponent(tag)}`)
       return
@@ -271,21 +276,34 @@ export default function NewAsset() {
             variant="panel"
             onClose={() => setSelectedSlug(null)}
             onSuccess={handleCreated}
+            reservedTag={urlTag || undefined}
+            reservationId={urlReservationId || undefined}
           />
         ) : effectiveSlug ? (
-          <AssetForm
-            key={effectiveSlug}
-            variant="panel"
-            categoryLocked
-            lockedCategoryLabel={activeCategory?.name}
-            prefill={{
-              status: 'in_stock',
-              category_slug: effectiveSlug,
-            }}
-            onClose={() => navigate('/assets')}
-            onSuccess={handleCreated}
-          />
+          <>
+            {urlTag && (
+              <div className="bg-surface-2 border border-base rounded-lg px-4 py-3 mb-4">
+                <p className="text-sm text-primary">
+                  Logging reserved tag: <strong className="text-accent">{urlTag}</strong>
+                </p>
+              </div>
+            )}
+            <AssetForm
+              key={effectiveSlug}
+              variant="panel"
+              categoryLocked
+              lockedCategoryLabel={activeCategory?.name}
+              prefill={{
+                status: 'in_stock',
+                category_slug: effectiveSlug,
+              }}
+              qr_reservation_id={urlReservationId || undefined}
+              onClose={() => navigate('/assets')}
+              onSuccess={handleCreated}
+            />
+          </>
         ) : categoriesLoading ? (
+
           <p className="text-sm text-subtle text-center py-8">Loading categories…</p>
         ) : (
           <p className="text-sm text-subtle text-center py-8">

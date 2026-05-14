@@ -10,19 +10,27 @@ export type AuthNexusLoginButtonProps = {
 /**
  * Triggers AuthNexus OIDC redirect (Authorization Code + PKCE).
  */
+import { getInitialTheme } from '../../utils/theme'
+
 export default function AuthNexusLoginButton({ variant = 'default' }: AuthNexusLoginButtonProps) {
   const authority = import.meta.env.VITE_AUTH_AUTHORITY?.trim()
   const disabled = !authority
 
   const handleClick = () => {
     if (disabled) return
+    
+    const currentTheme = getInitialTheme()
+    const themeColor = currentTheme === 'dark' ? '#020617' : '#FFFFFF'
+
     console.log('[authNexus] Initiating redirect. Storage Key:', userManager.settings.authority)
     void userManager.signinRedirect({
       extraQueryParams: {
                 'org_id': import.meta.env.VITE_ORG_ID?.trim(),
                 'project_id': import.meta.env.VITE_PROJECT_ID?.trim(),
                 'project_name': import.meta.env.VITE_PROJECT_NAME?.trim(),
-                'primary_origin': window.location.origin
+                'primary_color': import.meta.env.VITE_PRIMARY_COLOR?.trim(),
+                'primary_origin': window.location.origin,
+                'theme' : themeColor
             }
     })
   }

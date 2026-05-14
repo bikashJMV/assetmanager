@@ -84,29 +84,44 @@ class AssetWriteRepository:
         metadata: Optional[dict] = None,
         qr_code: Optional[str] = None,
         created_by_employee_id: Optional[str] = None,
+        source: str = "direct",
+        qr_reservation_id: Optional[str] = None,
+        conn: Any = None,
     ) -> dict[str, Any]:
-        async with pool().acquire() as conn:
-            row = await fetchrow_dict(
-                conn,
-                """
-                insert into assets (
-                    asset_tag, category_id, manufacturer_id, location_id,
-                    model, serial_number, status, purchase_date,
-                    warranty_expiry, custom_fields, metadata, qr_code,
-                    created_by_employee_id, created_at, updated_at
-                ) values (
-                    $1, $2::uuid, $3::uuid, $4::uuid,
-                    $5, $6, $7, $8::date,
-                    $9::date, $10::jsonb, $11::jsonb, $12,
-                    $13::uuid, now(), now()
-                ) returning id::text as id, asset_tag, serial_number
-                """,
+        """
+        Insert a new asset row.
+        
+        Optionally accepts an existing `conn` for transaction participation
+        (used by Path A scan-to-log to coordinate with reservation consume).
+        """
+        query = """
+            insert into assets (
                 asset_tag, category_id, manufacturer_id, location_id,
                 model, serial_number, status, purchase_date,
-                warranty_expiry, custom_fields or {}, metadata or {}, qr_code,
-                created_by_employee_id
-            )
-            return row
+                warranty_expiry, custom_fields, metadata, qr_code,
+                created_by_employee_id, source, qr_reservation_id,
+                created_at, updated_at
+            ) values (
+                $1, $2::uuid, $3::uuid, $4::uuid,
+                $5, $6, $7, $8::date,
+                $9::date, $10::jsonb, $11::jsonb, $12,
+                $13::uuid, $14, $15::uuid,
+                now(), now()
+            ) returning id::text as id, asset_tag, serial_number
+        """
+        params = (
+            asset_tag, category_id, manufacturer_id, location_id,
+            model, serial_number, status, purchase_date,
+            warranty_expiry, custom_fields or {}, metadata or {}, qr_code,
+            created_by_employee_id, source, qr_reservation_id,
+        )
+
+        if conn is not None:
+            return await fetchrow_dict(conn, query, *params)
+        
+        async with pool().acquire() as c:
+            return await fetchrow_dict(c, query, *params)
+
     async def update_status(
         *,
         asset_tag: str,

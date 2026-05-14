@@ -124,7 +124,7 @@ export default function AssetHistoryTable({ events }: Props) {
       <table className="w-full min-w-[920px] text-sm">
         <thead className="bg-surface-2 text-muted uppercase text-xs">
           <tr>
-            <th className="px-3 py-2 text-left">When</th>
+            <th className="px-3 py-2 text-left">Time/Date</th>
             <th className="px-3 py-2 text-left">Action</th>
             <th className="px-3 py-2 text-left">By</th>
             <th className="px-3 py-2 text-left">Field</th>

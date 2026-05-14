@@ -9,11 +9,13 @@ type Props = {
   onClose: () => void
   onSuccess: (result: unknown) => void
   variant?: 'modal' | 'panel'
+  reservedTag?: string
+  reservationId?: string
 }
 
 const emptyRow = (): KvRow => ({ key: '', value: '' })
 
-export default function OtherAssetForm({ onClose, onSuccess, variant = 'panel' }: Props) {
+export default function OtherAssetForm({ onClose, onSuccess, variant = 'panel', reservedTag, reservationId }: Props) {
   const isPanel = variant === 'panel'
   const [categoryName, setCategoryName] = useState('')
   const [assetTitle, setAssetTitle] = useState('')
@@ -110,6 +112,7 @@ export default function OtherAssetForm({ onClose, onSuccess, variant = 'panel' }
         serial_number: serialNumber.trim(),
         status: 'in_stock',
         custom_fields: customFields,
+        qr_reservation_id: reservationId || undefined,
       })
       showToast({ message: 'Asset created successfully.', variant: 'success' })
       onSuccess(result)
@@ -132,6 +135,14 @@ export default function OtherAssetForm({ onClose, onSuccess, variant = 'panel' }
 
       <form onSubmit={handleSubmit} className="px-3 sm:px-4 py-3 sm:py-4 space-y-3">
         {loadError ? <p className="text-xs text-accent">{loadError}</p> : null}
+
+        {reservedTag && (
+          <div className="bg-surface-2 border border-base rounded-lg px-4 py-3">
+            <p className="text-sm text-primary">
+              Logging reserved tag: <strong className="text-accent">{reservedTag}</strong>
+            </p>
+          </div>
+        )}
 
         <div className="space-y-4">
           <div>

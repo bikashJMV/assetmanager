@@ -94,20 +94,16 @@ psql -U postgres -c "CREATE DATABASE assetmanager_db OWNER assetmanager_user;"
 psql -U assetmanager_user -d assetmanager_db -f DB/init.sql
 ```
 
-### Option 2: Docker Compose (from repo root)
+### Option 2: Docker Compose (from `assetmanager/`)
 
-The main `docker-compose.yml` includes a Postgres service. Configure `DB/.env` from `DB/.env.example`:
-
-```bash
-cd DB
-cp .env.example .env   # fill in POSTGRES_PASSWORD, PGADMIN_DEFAULT_PASSWORD
-```
-
-Then start from the repo root:
+The root [`docker-compose.yml`](../docker-compose.yml) defines a `postgres` service with `container_name: ams-postgres-docker` and loads `DB/init.sql` on first start. Configure `assetmanager/.env` with `POSTGRES_*` and run:
 
 ```bash
+cd assetmanager
 docker compose up -d postgres
 ```
+
+Alternatively start the full stack (observability + app + Postgres) as described in [`../DOCKER_DEPLOYMENT.md`](../DOCKER_DEPLOYMENT.md).
 
 ## Environment variables
 

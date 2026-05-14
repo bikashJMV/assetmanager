@@ -47,7 +47,8 @@ __pycache__/
 tests/
 *test*.py
 DB/*.sql
-
+prod_schema.sql
+DB/prod_schema.sql
 CREDENTIALS_AND_ACCESS.txt
 pgpassfile
 *pgpass*
@@ -55,3 +56,6 @@ pgpassfile
 *credential*
 *secrets*
 *secret*
+
+deploy_key
+deploy_key.pub

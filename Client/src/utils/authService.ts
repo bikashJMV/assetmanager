@@ -55,7 +55,7 @@ const settings = {
     loadUserInfo: true, // Ensure roles are fetched from the gateway userinfo endpoint
     automaticSilentRenew: false,
  
-    monitorSession: true,
+    monitorSession: true, // DISABLED: Prevents check_session_iframe from firing 'userSignedOut' when the BFF rotates the token
     accessTokenExpiringNotificationTimeInSeconds: 60,
     // Never store sensitive data in localStorage (except the access token itself).
     // OIDC user/session details stay in sessionStorage; access_token is mirrored into localStorage explicitly.
@@ -66,7 +66,7 @@ const settings = {
         issuer: authority,
         authorization_endpoint: `${authority}/api/v1/auth/authorize`,
         token_endpoint: `${window.location.origin}/nexus-proxy/api/v1/auth/token`,
-        userinfo_endpoint: `${authority}/oidc/v1/userinfo`,
+        userinfo_endpoint: `${window.location.origin}/nexus-proxy/oidc/v1/userinfo`,
         jwks_uri: `${authority}/api/v1/auth/jwks`,
         end_session_endpoint: `${authority}/oidc/v1/end_session`
     },

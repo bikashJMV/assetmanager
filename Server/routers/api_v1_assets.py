@@ -1,20 +1,24 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Optional
 from repositories.db import pool, fetchrow_dict, fetch_dicts
 from fastapi import APIRouter, Depends, Query, Request, Response, status
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from core.api_response import error_response, success_response
 from core.authnexus import EmployeeContext
-from core.authz import require_authenticated, require_privileged
+from core.authz import require_admin, require_authenticated, require_privileged
+from core.settings import settings
 from repositories.asset_detail_repository import AssetDetailRepository
 from repositories.asset_repository import AssetRepository
 from repositories.errors import NotFoundError, ValidationError
 from schemas.asset import AssetCreate, AssetQrLabelsExportRequest, AssetUpdate
 from schemas.asset_admin import SoftDeleteAssetRequest
 from services.asset_service import asset_service
+from services.asset_csv_export_service import asset_csv_export_service
 from services.qr_label_pdf_service import qr_label_pdf_service
+from services.audit_trail_pdf_service import AuditTrailPdfAssetHeader, audit_trail_pdf_service
 
 router = APIRouter(prefix="/api/v1/assets", tags=["Assets (v1)"])
 
@@ -291,12 +295,15 @@ async def create_asset(
         user_agent = request.headers.get("user-agent")
 
         payload = body.model_dump()
+        qr_reservation_id = payload.pop("qr_reservation_id", None)
         asset = await asset_service.create_asset(
             payload=payload,
             actor=employee,
             ip_address=ip_address,
             user_agent=user_agent,
+            qr_reservation_id=qr_reservation_id,
         )
+
 
         return JSONResponse(
             status_code=status.HTTP_201_CREATED,
@@ -810,8 +817,53 @@ async def scan_asset(ref: str, request: Request) -> JSONResponse:
     """
     try:
         row = await AssetRepository.get_inventory_by_ref(ref)
+        # ─────────────────────────────────────────────────────────────
+        # NEW BRANCH: Reserved-but-not-logged QR tag (Path A)
+        # ─────────────────────────────────────────────────────────────
         if not row:
+            from repositories.qr_repository import QrRepository
+            reservation = await QrRepository.get_reservation_by_tag(ref)
+            
+            if reservation and reservation["status"] == "reserved":
+                signed_in: Optional[EmployeeContext] = getattr(request.state, "employee", None)
+                
+                if signed_in and signed_in.role in _PRIVILEGED_ROLES:
+                    return JSONResponse(
+                        status_code=200,
+                        content=success_response(
+                            message="Reserved QR tag ready to log.",
+                            data={
+                                "kind": "ready_to_log",
+                                "asset_tag": ref,
+                                "qr_reservation_id": str(reservation["id"]),
+                                "batch_code": reservation["batch_code"],
+                            },
+                            status_code=200,
+                        ),
+                    )
+                
+                if signed_in and signed_in.role == "employee":
+                    return JSONResponse(
+                        status_code=200,
+                        content=success_response(
+                            message="Admin access required to log this asset.",
+                            data={"kind": "admin_required", "asset_tag": ref},
+                            status_code=200,
+                        ),
+                    )
+                
+                # Unauthenticated
+                return JSONResponse(
+                    status_code=200,
+                    content=success_response(
+                        message="Please sign in to log this asset.",
+                        data={"kind": "reserved", "asset_tag": ref},
+                        status_code=200,
+                    ),
+                )
+            
             return _json_error(404, message="Asset not found.", code="NOT_FOUND")
+
 
         signed_in: Optional[EmployeeContext] = getattr(request.state, "employee", None)
 
@@ -880,6 +932,87 @@ async def scan_asset(ref: str, request: Request) -> JSONResponse:
         return _json_error(400, message=str(exc), code="VALIDATION_ERROR")
     except Exception as exc:
         return _json_error(500, message="Failed to process scan.", code="INTERNAL_ERROR", details=str(exc))
+
+
+@router.get("/export.csv")
+async def export_assets_csv(
+    employee: EmployeeContext = Depends(require_admin),
+) -> Response:
+    """
+    Purpose: Export all asset inventory rows as a CSV file.
+    Method/Route: GET /api/v1/assets/export.csv
+    Request: None.
+    Response: 200 `text/csv` with `Content-Disposition` attachment.
+    Notes: Admin only (`require_admin`); streams results for efficiency.
+    """
+    _ = employee
+    if not settings.ASSET_EXPORT_ENABLED:
+        return _json_error(503, message="Asset export is disabled.", code="SERVICE_UNAVAILABLE")
+    from datetime import datetime, timezone
+
+    filename = f"assets_{datetime.now(timezone.utc).date().isoformat()}.csv"
+    headers = {
+        "Content-Disposition": f'attachment; filename="{filename}"',
+        "Cache-Control": "no-store",
+    }
+    return StreamingResponse(
+        asset_csv_export_service.stream_inventory_csv(prefetch=2000),
+        media_type="text/csv; charset=utf-8",
+        headers=headers,
+    )
+
+
+# Columns to include in the XLSX/JSON export (no internal UUIDs or system blobs).
+_XLSX_EXPORT_COLUMNS = (
+    "asset_tag",
+    "category_name",
+    "manufacturer_name",
+    "model",
+    "serial_number",
+    "status",
+    "location_name",
+    "purchase_date",
+    "warranty_expiry",
+    "current_employee_name",
+    "current_employee_business_id",
+    "current_employee_department",
+    "current_employee_is_active",
+    "custom_fields",
+)
+
+
+@router.get("/export.json")
+async def export_assets_json(
+    employee: EmployeeContext = Depends(require_admin),
+) -> JSONResponse:
+    """
+    Purpose: Export curated asset rows as JSON for client-side XLSX generation.
+    Method/Route: GET /api/v1/assets/export.json
+    Request: None.
+    Response: 200 Guideline envelope `{data: [{asset_tag, category_name, ...}]}`.
+    Notes: Strict-admin only (`require_admin` + role check); guarded by ASSET_EXPORT_ENABLED.
+    """
+    if employee.role != "admin":
+        return _json_error(403, message="Only administrators can export assets.", code="FORBIDDEN")
+    if not settings.ASSET_EXPORT_ENABLED:
+        return _json_error(503, message="Asset export is disabled.", code="SERVICE_UNAVAILABLE")
+
+    async with pool().acquire() as conn:
+        cols_sql = ", ".join(f'"{c}"' for c in _XLSX_EXPORT_COLUMNS)
+        rows = await fetch_dicts(
+            conn,
+            f"SELECT {cols_sql} FROM v_asset_inventory ORDER BY asset_tag ASC",
+        )
+
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content=success_response(
+            message="Asset export retrieved successfully.",
+            data=rows,
+            status_code=200,
+        ),
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @router.get("/{ref}")
@@ -967,6 +1100,81 @@ async def export_asset_qr_labels(
         "X-Exported-Asset-Count": str(len(printable_tags)),
     }
     return Response(content=pdf_bytes, media_type="application/pdf", headers=headers)
+
+
+@router.get("/{ref}/audit-trail/export")
+async def export_asset_audit_trail_pdf(
+    ref: str,
+    limit: int | None = None,
+    employee: EmployeeContext = Depends(require_privileged),
+) -> Response:
+    """
+    Purpose: Export the asset audit trail (lifecycle log) as a readable PDF (tabular).
+    Method/Route: GET /api/v1/assets/{ref}/audit-trail/export?limit=100
+    Response: 200 `application/pdf` with `Content-Disposition`; Errors: 400/403/404/500 envelope.
+    Notes: Privileged only (`require_privileged`).
+    """
+    try:
+        row = await AssetDetailRepository.get_asset_inventory_by_ref(ref)
+        if not row:
+            return _json_error(404, message="Asset not found.", code="NOT_FOUND")
+
+        if employee.role == "employee" and not _is_assigned_to(row, employee.id):
+            return _json_error(403, message="You do not have access to this asset.", code="FORBIDDEN")
+
+        asset_id = str(row.get("id") or "")
+        if not asset_id:
+            return _json_error(500, message="Asset record is missing an id.", code="INTERNAL_ERROR")
+
+        try:
+            resolved_limit = 100 if limit is None else int(limit)
+        except Exception:
+            return _json_error(400, message="limit must be an integer", code="VALIDATION_ERROR")
+        lifecycle_events, _is_capped = await AssetDetailRepository.list_events(asset_id=asset_id, limit=resolved_limit)
+
+        asset_name = " ".join(
+            [
+                str(row.get("manufacturer_name") or "").strip(),
+                str(row.get("model") or "").strip(),
+            ]
+        ).strip() or "-"
+        asset_tag = str(row.get("asset_tag") or "").strip() or "-"
+        category = str(row.get("category_name") or "").strip() or "-"
+
+        created_by = " · ".join(
+            [
+                part
+                for part in [
+                    str(getattr(employee, "name", "") or "").strip() or None,
+                    str(getattr(employee, "employee_id", "") or "").strip() or None,
+                ]
+                if part
+            ]
+        ) or "—"
+        generated_at = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+
+        pdf_bytes = audit_trail_pdf_service.build_pdf(
+            header=AuditTrailPdfAssetHeader(
+                asset_name=asset_name,
+                asset_tag=asset_tag,
+                category=category,
+                created_by=created_by,
+                generated_at=generated_at,
+            ),
+            lifecycle_events=lifecycle_events,
+        )
+
+        safe_tag = asset_tag.replace("/", "-").replace("\\", "-")
+        file_name = f'Audit Trail - {safe_tag}.pdf'
+        headers = {
+            "Content-Disposition": f'inline; filename="{file_name}"',
+            "Cache-Control": "no-store",
+        }
+        return Response(content=pdf_bytes, media_type="application/pdf", headers=headers)
+    except ValidationError as exc:
+        return _json_error(400, message=str(exc), code="VALIDATION_ERROR")
+    except Exception as exc:
+        return _json_error(500, message="Failed to export audit trail PDF.", code="INTERNAL_ERROR", details=str(exc))
 
 
 @router.post("/{asset_id}/soft-delete")
@@ -1099,4 +1307,42 @@ async def _gather_asset_detail_parts(asset_id: str) -> tuple[list[dict[str, Any]
     return components, assignments
 
 
-
+@router.post(
+    "/{ref}/history/pdf",
+    summary="Export asset assignment history as PDF",
+)
+async def export_asset_history_pdf(
+    ref: str,
+    employee: EmployeeContext = Depends(require_privileged),
+):
+    from services.asset_history_pdf_service import asset_history_pdf_service
+    from fastapi.responses import StreamingResponse
+    from io import BytesIO
+    
+    try:
+        row = await AssetDetailRepository.get_asset_inventory_by_ref(ref)
+        if not row:
+            return _json_error(404, message="Asset not found.", code="NOT_FOUND")
+            
+        asset_id = str(row.get("id") or "")
+        if not asset_id:
+            return _json_error(500, message="Asset record is missing an id.", code="INTERNAL_ERROR")
+            
+        components, assignments = await _gather_asset_detail_parts(asset_id)
+        if not assignments:
+            return _json_error(422, message="No assignment history to export", code="UNPROCESSABLE_ENTITY")
+            
+        lifecycle_events, lifecycle_is_capped = await AssetDetailRepository.list_events(asset_id=asset_id)
+        
+        pdf_bytes = asset_history_pdf_service.build_pdf(row, assignments, lifecycle_events)
+        
+        asset_tag = row.get("asset_tag") or "asset"
+        filename = f"{asset_tag}-history.pdf"
+        
+        return StreamingResponse(
+            BytesIO(pdf_bytes),
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+        )
+    except Exception as exc:
+        return _json_error(500, message="Failed to export history PDF.", code="INTERNAL_ERROR", details=str(exc))

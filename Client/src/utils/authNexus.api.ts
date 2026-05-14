@@ -21,13 +21,11 @@ type ApiEnvelope<T = unknown> = {
   meta?: Record<string, unknown>
 }
 
-const backendBaseUrl = (() => {
-  const raw = (import.meta.env.VITE_API_URL as string | undefined)?.trim()
-  return raw ? raw.replace(/\/$/, '') : 'http://localhost:8000'
-})()
+const backendBaseUrl: string = ((import.meta.env.VITE_API_URL as string | undefined) ?? '')
+  .trim()
+  .replace(/\/$/, '')
 
-const backendApiKey = (import.meta.env.VITE_BACKEND_API_KEY as string | undefined)?.trim() ?? ''
-
+const backendApiKey: string = (import.meta.env.VITE_BACKEND_API_KEY as string | undefined)?.trim() ?? ''
 
 const api: AxiosInstance = axios.create({
   baseURL: backendBaseUrl,
@@ -229,7 +227,9 @@ function unwrapEnvelope<T>(response: AxiosResponse<ApiEnvelope<T> | T>): T {
         envelope.error?.detail ??
         envelope.message ??
         `Request failed (${response.status}).`
-      throw new Error(detail)
+      const err = new Error(detail) as Error & { statusCode?: number }
+      err.statusCode = envelope.status_code ?? response.status
+      throw err
     }
     return envelope.data as T
   }
@@ -266,6 +266,16 @@ function toErrorMessage(error: unknown, fallback: string): Error {
   }
 
   return error instanceof Error ? error : new Error(fallback)
+}
+
+/** Extract HTTP status code from an error thrown by requestBackend / api interceptors. */
+export function getErrorStatusCode(error: unknown): number | undefined {
+  if (error == null) return undefined
+  // Augmented errors from toErrorMessage / unwrapEnvelope
+  if (typeof (error as any).statusCode === 'number') return (error as any).statusCode
+  // Raw AxiosError (e.g. 404 that didn't pass through unwrapEnvelope)
+  if (axios.isAxiosError(error)) return error.response?.status
+  return undefined
 }
 
 export async function requestBackend<T>(config: AxiosRequestConfig): Promise<T> {

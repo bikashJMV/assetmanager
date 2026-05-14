@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import { useSetBreadcrumbOverride } from '../../hooks/useBreadcrumbOverride'
 import AnimatedNavIcon from '../common/AnimatedNavIcon'
 import Error from '../common/Error'
@@ -61,8 +61,6 @@ export default function EmployeeDetail() {
   }, [detail, setBreadcrumb])
 
   const isViewingOwnProfile = sessionEmployeeId === id && sessionEmployeeRole === 'employee'
-  const showRecycleBinRemovalHint =
-    Boolean(detail) && viewerHasAdminAccess && Boolean(id) && sessionEmployeeId !== id
 
   if (loading && !detail) {
     return (
@@ -142,7 +140,7 @@ export default function EmployeeDetail() {
               {detail.employee.is_active ? 'Active Employee' : 'Inactive Employee'}
             </span>
           </div>
-          {showRecycleBinRemovalHint ? (
+          {/* {showRecycleBinRemovalHint ? (
             <div className="mt-4 border-t border-base pt-4">
               <p className="text-xs text-subtle">
                 To mark someone Active or Inactive only, use Edit on{' '}
@@ -156,7 +154,7 @@ export default function EmployeeDetail() {
                 after assignments are returned or reassigned as required.
               </p>
             </div>
-          ) : null}
+          ) : null} */}
         </div>
       </section>
 

@@ -105,24 +105,28 @@ class AssetService:
         ip_address: Optional[str] = None,
         user_agent: Optional[str] = None,
         event_type: AssetEventType = AssetEventType.ASSET_CREATED,
+        qr_reservation_id: Optional[str] = None,
     ) -> dict[str, Any]:
         from repositories.meta_repository import MetaRepository
+        from repositories.qr_repository import QrRepository
+        from repositories.db import pool
+        from repositories.asset_repository import AssetRepository as _AR
 
         try:
             normalize_asset_date_fields_inplace(payload)
         except AssetDateCoercionError as exc:
             raise ValidationError(str(exc)) from exc
 
-        # 1. Resolve Meta Entities
+        # ─────────────────────────────────────────────────────────────
+        # Meta resolution (shared by both Path A + Path B)
+        # ─────────────────────────────────────────────────────────────
         category_id = await MetaRepository.resolve_category(
             slug=payload["category_slug"],
             name=payload.get("category_name")
         )
-        
         manufacturer_id = None
         if payload.get("manufacturer_name"):
             manufacturer_id = await MetaRepository.resolve_manufacturer(payload["manufacturer_name"])
-        
         location_id = None
         if payload.get("location_code"):
             location_id = await MetaRepository.resolve_location(
@@ -130,9 +134,96 @@ class AssetService:
                 name=payload.get("location_name")
             )
 
-        # 2. Perform Creation
-        # asset_tag is optional from the client — auto-generate server-side when absent
-        from repositories.asset_repository import AssetRepository as _AR
+        # ─────────────────────────────────────────────────────────────
+        # PATH A — QR scan-to-log (atomic TX: consume reservation + insert asset)
+        # ─────────────────────────────────────────────────────────────
+        if qr_reservation_id:
+            async with pool().acquire() as conn:
+                async with conn.transaction():
+                    # 1. Atomically consume reservation (throws if already consumed/missing)
+                    reservation = await QrRepository.consume_reservation_in_tx(
+                        conn=conn,
+                        reservation_id=str(qr_reservation_id),
+                    )
+                    
+                    # 2. Use the reserved tag (override any client-supplied tag)
+                    reserved_tag = reservation["asset_tag"]
+                    
+                    # 3. Insert asset with source='qr_scan' + qr_reservation_id FK
+                    asset = await AssetWriteRepository.create_asset(
+                        asset_tag=reserved_tag,
+                        category_id=category_id,
+                        manufacturer_id=manufacturer_id,
+                        location_id=location_id,
+                        model=payload.get("model"),
+                        serial_number=payload["serial_number"],
+                        status=payload.get("status"),
+                        purchase_date=payload.get("purchase_date"),
+                        warranty_expiry=payload.get("warranty_expiry"),
+                        custom_fields=payload.get("custom_fields"),
+                        metadata=payload.get("metadata"),
+                        qr_code=payload.get("qr_code"),
+                        created_by_employee_id=actor.id,
+                        source="qr_scan",
+                        qr_reservation_id=str(qr_reservation_id),
+                        conn=conn,
+                    )
+                    
+                    # 4. Update reservation's consumed_by_asset_id to actual asset id
+                    await conn.execute(
+                        """
+                        update qr_tag_reservations
+                           set consumed_by_asset_id = $2::uuid
+                         where id = $1::uuid
+                        """,
+                        str(qr_reservation_id),
+                        asset["id"],
+                    )
+                    
+                    # 5. Audit — asset created (same event as Path B)
+                    await audit_service.write_asset_event(
+                        asset_id=asset["id"],
+                        event_type=AssetEventType.ASSET_CREATED,
+                        actor=actor,
+                        payload={
+                            "asset_tag": asset["asset_tag"],
+                            "category_id": category_id,
+                            "source": "qr_scan",
+                            "qr_reservation_id": str(qr_reservation_id),
+                        },
+                        ip_address=ip_address,
+                        user_agent=user_agent,
+                        conn=conn,
+                    )
+                    
+                    # 6. Audit — reservation consumed (Path A specific event)
+                    await audit_service.write_asset_event(
+                        asset_id=asset["id"],
+                        event_type=AssetEventType.QR_RESERVATION_CONSUMED,
+                        actor=actor,
+                        payload={
+                            "qr_reservation_id": str(qr_reservation_id),
+                            "asset_tag": asset["asset_tag"],
+                        },
+                        ip_address=ip_address,
+                        user_agent=user_agent,
+                        conn=conn,
+                    )
+                    
+                    # 7. Audit log entry
+                    await audit_service.write_asset_log(
+                        asset_id=asset["id"],
+                        actor=actor,
+                        note=payload.get("log_note") or "Asset created via QR scan.",
+                        metadata={"op": "asset.create", "source": "qr_scan"},
+                        conn=conn,
+                    )
+                    
+                    return asset
+
+        # ─────────────────────────────────────────────────────────────
+        # PATH B — Direct form submit (EXISTING FLOW, BYTE-IDENTICAL)
+        # ─────────────────────────────────────────────────────────────
         asset_tag = (payload.get("asset_tag") or "").strip() or await _AR.get_next_asset_tag()
 
         asset = await AssetWriteRepository.create_asset(
@@ -149,9 +240,9 @@ class AssetService:
             metadata=payload.get("metadata"),
             qr_code=payload.get("qr_code"),
             created_by_employee_id=actor.id,
+            # source defaults to 'direct' in repo; explicit for clarity
         )
 
-        # 3. Audit Logging
         await audit_service.write_asset_event(
             asset_id=asset["id"],
             event_type=event_type,
@@ -171,6 +262,7 @@ class AssetService:
         )
 
         return asset
+
 
     @staticmethod
     async def bulk_insert_assets(

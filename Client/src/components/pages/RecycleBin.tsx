@@ -5,6 +5,7 @@ import {
   restoreRecycleBinEntry,
   type RecycleBinEntry,
 } from "../../api"
+import { FEATURES } from "../../utils/featureFlags"
 import ConfirmDialog from "../common/ConfirmDialog"
 import RefreshButton from "../common/RefreshButton"
 import InfoHint from "../common/InfoHint"
@@ -198,15 +199,17 @@ export default function RecycleBin() {
                       >
                         {restoringId === entry.entry_id ? "Restoring..." : "Restore"}
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => setPurgeTarget(entry)}
-                        disabled={restoringId === entry.entry_id || purgingId === entry.entry_id}
-                        title="Permanently remove this record (opens confirmation)"
-                        className="rounded-lg border-2 border-red-600/80 bg-surface px-3 py-1.5 text-xs font-semibold text-red-700 shadow-sm transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-red-500 dark:bg-surface-2 dark:text-red-300 dark:hover:bg-red-950/40"
-                      >
-                        {purgingId === entry.entry_id ? "Removing..." : "Delete permanently"}
-                      </button>
+                      {FEATURES.RECYCLE_BIN && (
+                        <button
+                          type="button"
+                          onClick={() => setPurgeTarget(entry)}
+                          disabled={restoringId === entry.entry_id || purgingId === entry.entry_id}
+                          title="Permanently remove this record (opens confirmation)"
+                          className="rounded-lg border-2 border-red-600/80 bg-surface px-3 py-1.5 text-xs font-semibold text-red-700 shadow-sm transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-red-500 dark:bg-surface-2 dark:text-red-300 dark:hover:bg-red-950/40"
+                        >
+                          {purgingId === entry.entry_id ? "Removing..." : "Delete permanently"}
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -222,23 +225,24 @@ export default function RecycleBin() {
           </table>
         </section>
 
-        <ConfirmDialog
-          open={Boolean(purgeTarget)}
-          title="Delete permanently"
-          message={
-            purgeTarget
-              ? `This cannot be undone. Permanently remove this ${purgeTarget.entity_type} from the database: ${formatDeletedItem(purgeTarget)}?`
-              : ""
-          }
-          confirmLabel="Delete permanently"
-          loading={Boolean(purgingId)}
-          showDismissIcon
-          onClose={() => {
-            if (!purgingId) setPurgeTarget(null)
-          }}
-          onConfirm={() => void handleConfirmPermanentDelete()}
-        />
+        {FEATURES.RECYCLE_BIN && (
+          <ConfirmDialog
+            open={Boolean(purgeTarget)}
+            title="Delete permanently"
+            message={
+              purgeTarget
+                ? `This cannot be undone. Permanently remove this ${purgeTarget.entity_type} from the database: ${formatDeletedItem(purgeTarget)}?`
+                : ""
+            }
+            confirmLabel="Delete permanently"
+            loading={Boolean(purgingId)}
+            showDismissIcon
+            onClose={() => { if (!purgingId) setPurgeTarget(null) }}
+            onConfirm={() => void handleConfirmPermanentDelete()}
+          />
+        )}
       </div>
     </main>
   )
 }
+

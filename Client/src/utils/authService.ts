@@ -55,7 +55,7 @@ const settings = {
     loadUserInfo: true, // Ensure roles are fetched from the gateway userinfo endpoint
     automaticSilentRenew: false,
  
-    monitorSession: true,
+    monitorSession: true, // DISABLED: Prevents check_session_iframe from firing 'userSignedOut' when the BFF rotates the token
     accessTokenExpiringNotificationTimeInSeconds: 60,
     // Never store sensitive data in localStorage (except the access token itself).
     // OIDC user/session details stay in sessionStorage; access_token is mirrored into localStorage explicitly.

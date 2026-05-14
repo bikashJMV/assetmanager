@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import type { PublicScanAsset } from '../../api'
 import { useProtectedAssetScanQuery, usePublicAssetScanQuery } from '../../queries/assets'
 import { getUserFacingMessage, logDevError } from '../../utils/errors'
+import { getErrorStatusCode } from '../../utils/authNexus.api'
 import { formatDisplay } from '../../utils/formatDisplay'
 import InventoryStatusBadge from '../common/InventoryStatusBadge'
 
@@ -54,6 +55,21 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
     const data = protectedScan.data
     if (!data || typeof data !== 'object') return
 
+    // NEW — ready_to_log redirect (Path A scan-to-log)
+    if ('kind' in data && (data as { kind?: unknown }).kind === 'ready_to_log') {
+      const d = data as { asset_tag?: unknown; qr_reservation_id?: unknown }
+      const tag = typeof d.asset_tag === 'string' ? d.asset_tag : ref
+      const reservationId = typeof d.qr_reservation_id === 'string' ? d.qr_reservation_id : ''
+      if (tag && reservationId) {
+        void navigate(
+          `/assets/new?tag=${encodeURIComponent(tag)}&reservation_id=${encodeURIComponent(reservationId)}`,
+          { replace: true }
+        )
+        return
+      }
+    }
+
+    // EXISTING — unchanged
     if ('redirect' in data && (data as { redirect?: unknown }).redirect === true) {
       const tag =
         typeof (data as { asset_tag?: unknown }).asset_tag === 'string'
@@ -63,12 +79,20 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
     }
   }, [navigate, protectedRoute, protectedScan.data, ref])
 
+  const isNotFound = getErrorStatusCode(activeScan.error) === 404
   const error = activeScan.error ? getUserFacingMessage(activeScan.error, 'Asset not found') : ''
   const asset = (() => {
     const data = activeScan.data
     if (!data) return null
-    if (protectedRoute && typeof data === 'object' && 'redirect' in data && (data as { redirect?: unknown }).redirect === true) {
-      return null
+    if (protectedRoute && typeof data === 'object') {
+      // Existing redirect skip
+      if ('redirect' in data && (data as { redirect?: unknown }).redirect === true) {
+        return null
+      }
+      // NEW — skip rendering during ready_to_log (redirect effect handles it)
+      if ('kind' in data && (data as { kind?: unknown }).kind === 'ready_to_log') {
+        return null
+      }
     }
     return data as PublicScanAsset | AuthenticatedScanAsset
   })()
@@ -234,13 +258,46 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
   }
 
   if (error) {
-    const isNotFound = error.toLowerCase().includes('not find')
     return (
-      <main className="min-h-screen bg-app flex items-center justify-center px-6">
-        <div className="text-center">
-          <p className="text-accent text-5xl font-bold">{isNotFound ? '404' : 'Error'}</p>
-          <p className="mt-2 text-subtle">{error}</p>
+      <main className="min-h-screen bg-app flex flex-col items-center justify-center px-6 text-center">
+        <div className="mb-6 flex h-20 w-20 items-center justify-center rounded-full bg-surface-2 border border-base text-subtle">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="h-9 w-9" aria-hidden="true">
+            <rect x="3" y="3" width="7" height="7" rx="1" />
+            <rect x="14" y="3" width="7" height="7" rx="1" />
+            <rect x="3" y="14" width="7" height="7" rx="1" />
+            <path d="M14 14h2" />
+            <path d="M14 18h2" />
+            <path d="M18 14h3" />
+            <path d="M18 18h3" />
+            <path d="M20 14v4" />
+          </svg>
         </div>
+
+        <p className="text-accent text-sm font-semibold uppercase tracking-widest mb-2">
+          {isNotFound ? '404' : 'Error'}
+        </p>
+        <h1 className="text-2xl font-bold text-primary mb-2">
+          {isNotFound ? 'Asset Not Found' : 'Something went wrong'}
+        </h1>
+        <p className="text-subtle text-sm max-w-xs mb-8">
+          {isNotFound
+            ? ref
+              ? `No asset with tag "${ref}" exists in the system.`
+              : 'This asset tag does not exist in the system.'
+            : error}
+        </p>
+
+        <button
+          type="button"
+          onClick={() => navigate(-1)}
+          className="inline-flex items-center gap-2 rounded-xl border border-base bg-surface px-5 py-2.5 text-sm font-medium text-primary transition hover:border-accent-soft hover:bg-[color:var(--accent-soft)]/10 hover:text-accent"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden="true">
+            <path d="M19 12H5" />
+            <path d="m12 5-7 7 7 7" />
+          </svg>
+          Go back
+        </button>
       </main>
     )
   }
@@ -259,6 +316,43 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
   // assigned to them â€” both cases use the PublicScanAsset shape.
   const publicAsset = asset as PublicScanAsset
   const heading = formatDisplay(publicAsset.category_name) || formatDisplay(publicAsset.asset_tag) || '-'
+
+  if ((activeScan.data as any)?.kind === 'reserved') {
+    return (
+      <main className="min-h-screen bg-app text-primary px-4 py-8">
+        <div className="text-center mb-8 mt-12">
+          <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-accent/10 text-accent mb-4">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-8 h-8">
+              <path d="M4 8V5h3" />
+              <path d="M20 8V5h-3" />
+              <path d="M4 16v3h3" />
+              <path d="M20 16v3h-3" />
+              <rect x="9" y="9" width="6" height="6" rx="1" />
+            </svg>
+          </div>
+          <p className="text-accent text-xs uppercase tracking-widest mb-1">New Asset</p>
+          <h1 className="text-2xl font-bold">{publicAsset.asset_tag}</h1>
+        </div>
+
+        <div className="max-w-md mx-auto p-6 text-center">
+          <p className="text-sm text-subtle mb-6">
+            Note: <b className="text-accent font-bold">Unassigned QR Tag</b> - This QR tag is ready to be assigned to a new asset. Please sign in to assign it to a new asset.
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              const next = `/assets/scan/${publicAsset.asset_tag}`
+              navigate(`/login?next=${encodeURIComponent(next)}`)
+            }}
+            className="bg-accent text-white font-semibold px-6 py-3 rounded-xl hover:bg-accent-hover transition shadow-accent"
+          >
+            Sign In to Log Asset
+          </button>
+        </div>
+        <p className="text-center text-subtle text-xs mt-10">Powered by Asset Manager</p>
+      </main>
+    )
+  }
 
   return (
     <main className="min-h-screen bg-app text-primary px-4 py-8">
@@ -299,7 +393,7 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
             }}
             className="bg-accent text-white font-semibold px-6 py-2.5 rounded-lg hover:bg-accent-hover transition text-sm shadow-accent"
           >
-            See more
+           Login / See More
           </button>
         </div>
       ) : null}

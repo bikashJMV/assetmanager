@@ -80,7 +80,7 @@ Set in `Server/.env` (read by `core/settings.py`):
 ## Known TODOs / limitations
 
 - The email microservice itself is external and not documented here. Template names (`assigned.html`, `returned.html`, `welcome.html`) are resolved on the email service side.
-- `notify_user_created` is defined but its call site in the server (e.g. after employee creation) is unclear — needs clarification.
+- `notify_user_created` is implemented in `orchestrator.py` but is **not** called from any AMS router yet; welcome emails will not fire until a call site is added (for example after employee creation).
 
 ## Related
 

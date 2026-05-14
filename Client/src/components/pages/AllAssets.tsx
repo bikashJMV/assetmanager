@@ -4,8 +4,9 @@ import type { AssetFilters, AssetInventoryRecord, CategoryRecord } from '../../t
 
 import { useAssetsListQueryEnabled } from '../../queries/assets'
 import { useAdminAccessQuery } from '../../queries/authz'
+import { useSessionEmployeeQuery } from '../../queries/employees'
 import { useCategoriesQuery } from '../../queries/meta'
-import { exportAssetQrLabelsPdf, listAssets, softDeleteAsset } from '../../services/assetService'
+import { exportAssetQrLabelsPdf, exportAssetsXlsx, listAssets, /* softDeleteAsset */ } from '../../services/assetService'
 import { buildAssetQrDataUri } from '../../utils/qr'
 import Error from '../common/Error'
 import { useToast } from '../../hooks/useToast'
@@ -30,8 +31,6 @@ const SEARCH_DEBOUNCE_MS = 300
 const DEFAULT_PAGE_SIZE = 10
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100]
 const statusFilters = ['assigned', 'in_stock', 'in_repair', 'retired', 'lost', 'disposed']
-const OTHER_CATEGORY_FILTER_VALUE = '__other__'
-const DEFAULT_ASSET_CATEGORY_SLUGS = new Set(['laptop', 'desktop', 'monitor', 'pen-drive', 'mouse', 'keyboard', 'wifi-dongle'])
 const STATUS_ALL = '__all__'
 const QR_EXPORT_BATCH_SIZE = 200
 
@@ -75,7 +74,7 @@ export default function AllAssets() {
   const [pageSize, setPageSize] = useState(() =>
     getStoredPageSize({ storageKey: 'assets', defaultValue: DEFAULT_PAGE_SIZE, allowed: PAGE_SIZE_OPTIONS }),
   )
-  
+
   const statusParam = searchParams.get('status') || undefined
   const categoryParam = searchParams.get('category') || undefined
   const searchParam = searchParams.get('search') || undefined
@@ -90,9 +89,10 @@ export default function AllAssets() {
   const [qrModal, setQrModal] = useState<AssetQrModalState | null>(null)
   const [qrLoading, setQrLoading] = useState(false)
   const [bulkQrExporting, setBulkQrExporting] = useState(false)
+  const [bulkXlsxExporting, setBulkXlsxExporting] = useState(false)
   const [qrPdfTabFallback, setQrPdfTabFallback] = useState<AssetQrPdfTabFallbackState | null>(null)
   const qrPdfTabFallbackRef = useRef<AssetQrPdfTabFallbackState | null>(null)
-  const [deleteTarget, setDeleteTarget] = useState<AssetInventoryRecord | null>(null)
+  // const [deleteTarget, setDeleteTarget] = useState<AssetInventoryRecord | null>(null)
   const [actionMenuId, setActionMenuId] = useState<string | null>(null)
   const [filtersOpen, setFiltersOpen] = useState(false)
   const [bulkUpdateOpen, setBulkUpdateOpen] = useState(false)
@@ -111,6 +111,9 @@ export default function AllAssets() {
   const isAdmin = adminAccessQuery.data?.allowed ?? false
   const accessResolved = adminAccessQuery.isFetched
 
+  const sessionEmployeeQuery = useSessionEmployeeQuery()
+  const isStrictAdmin = Boolean(sessionEmployeeQuery.data?.is_active && sessionEmployeeQuery.data?.role === 'admin')
+
   const categoriesQuery = useCategoriesQuery()
   const categories: CategoryRecord[] = categoriesQuery.data ?? []
 
@@ -126,15 +129,14 @@ export default function AllAssets() {
   }
   const activeAdvancedFilterCount = getActiveAdvancedFilterCount(currentAdvancedFilters)
 
-  const shouldFilterOtherCategories = filters.category_slug === OTHER_CATEGORY_FILTER_VALUE
   const assetsQuery = useAssetsListQueryEnabled(
     {
       page: currentPage,
       limit: pageSize,
       search: searchParam?.trim() || undefined,
       status: statusParam?.trim() || undefined,
-      category: shouldFilterOtherCategories ? undefined : categoryParam?.trim() || undefined,
-      exclude_category_slugs: shouldFilterOtherCategories ? [...DEFAULT_ASSET_CATEGORY_SLUGS] : undefined,
+      category: categoryParam?.trim() || undefined,
+      exclude_category_slugs: undefined,
     },
     accessResolved,
   )
@@ -248,6 +250,8 @@ export default function AllAssets() {
       status: STATUS_ALL,
       categorySlug: '',
     })
+    navigate('/assets')
+    setFiltersOpen(false)
   }
 
   const handleRefresh = () => {
@@ -345,9 +349,8 @@ export default function AllAssets() {
     let total = 0
     let totalVerified = false
 
-    const shouldFilterOther = filters.category_slug === OTHER_CATEGORY_FILTER_VALUE
-    const category = shouldFilterOther ? undefined : filters.category_slug?.trim() || undefined
-    const exclude_category_slugs = shouldFilterOther ? [...DEFAULT_ASSET_CATEGORY_SLUGS] : undefined
+    const category = filters.category_slug?.trim() || undefined
+    const exclude_category_slugs = undefined
     const search = searchParam?.trim() ? searchParam.trim() : undefined
     const status = filters.status?.trim() || undefined
 
@@ -461,25 +464,55 @@ export default function AllAssets() {
     }
   }
 
-  const handleSoftDeleteAsset = async (asset: AssetInventoryRecord) => {
-    if (!isAdmin) return
+  const handleDownloadAssetsXlsx = async () => {
+    if (bulkXlsxExporting) {
+      showToast({ variant: 'warning', message: 'An export is already in progress. Please wait.' })
+      return
+    }
+
+    setBulkXlsxExporting(true)
+    setError('')
+    setErrorDebug(undefined)
+
     try {
-      await softDeleteAsset(asset.id)
-      setDeleteTarget(null)
-      const nextTotal = Math.max(0, totalAssets - 1)
-      const lastPage = Math.max(1, Math.ceil(nextTotal / pageSize))
-      const nextPage = Math.min(currentPage, lastPage)
-      setSearchParams(prev => {
-        prev.set('page', nextPage.toString())
-        return prev
-      }, { replace: true })
-      await assetsQuery.refetch()
+      const { xlsxBlob, fileName } = await exportAssetsXlsx()
+      const blobUrl = URL.createObjectURL(xlsxBlob)
+      const link = document.createElement('a')
+      link.href = blobUrl
+      link.download = fileName
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 120000)
+      showToast({ variant: 'success', message: 'Assets XLSX download started.' })
     } catch (err) {
-      logDevError('assets.soft_delete', err)
-      setError(getUserFacingMessage(err, 'Unable to delete asset right now.'))
+      logDevError('assets.xlsx.export', err)
+      setError(getUserFacingMessage(err, 'Unable to export XLSX right now.'))
       setErrorDebug(getErrorDebugDetail(err))
+    } finally {
+      setBulkXlsxExporting(false)
     }
   }
+
+  // const handleSoftDeleteAsset = async (asset: AssetInventoryRecord) => {
+  //   if (!isAdmin) return
+  //   try {
+  //     await softDeleteAsset(asset.id)
+  //     setDeleteTarget(null)
+  //     const nextTotal = Math.max(0, totalAssets - 1)
+  //     const lastPage = Math.max(1, Math.ceil(nextTotal / pageSize))
+  //     const nextPage = Math.min(currentPage, lastPage)
+  //     setSearchParams(prev => {
+  //       prev.set('page', nextPage.toString())
+  //       return prev
+  //     }, { replace: true })
+  //     await assetsQuery.refetch()
+  //   } catch (err) {
+  //     logDevError('assets.soft_delete', err)
+  //     setError(getUserFacingMessage(err, 'Unable to delete asset right now.'))
+  //     setErrorDebug(getErrorDebugDetail(err))
+  //   }
+  // }
 
   const hasDraftAdvancedChanges =
     draftAdvancedFilters.status !== currentAdvancedFilters.status ||
@@ -495,11 +528,12 @@ export default function AllAssets() {
   ]
   const categoryOptions: FilterSelectOption[] = [
     { value: '', label: 'All Categories' },
-    { value: OTHER_CATEGORY_FILTER_VALUE, label: 'Other' },
-    ...categories.map((category) => ({
-      value: category.slug,
-      label: category.name,
-    })),
+    ...categories
+      .filter((category) => category.name.toLowerCase().trim() !== 'other')
+      .map((category) => ({
+        value: category.slug,
+        label: category.name,
+      })),
   ]
 
   if (!initialListReady) {
@@ -553,28 +587,47 @@ export default function AllAssets() {
         actions={[
           ...(isAdmin
             ? [
-                {
-                  id: 'new-asset',
-                  label: 'New Asset',
-                  icon: 'plus' as const,
-                  onClick: () => navigate('/assets/new'),
+              {
+                id: 'new-asset',
+                label: 'New Asset',
+                icon: 'plus' as const,
+                onClick: () => navigate('/assets/new'),
+              },
+              {
+                id: 'bulk-inventory-update',
+                label: 'Bulk Inventory Update',
+                icon: 'upload' as const,
+                onClick: () => setBulkUpdateOpen(true),
+              },
+              {
+                id: 'download-asset-manager-qrs',
+                label: bulkQrExporting ? 'Preparing Asset manager QRs...' : `Asset's QR Download`,
+                icon: 'download' as const,
+                onClick: () => {
+                  void handleDownloadQrLabels()
                 },
-                {
-                  id: 'bulk-inventory-update',
-                  label: 'Bulk Inventory Update',
-                  icon: 'upload' as const,
-                  onClick: () => setBulkUpdateOpen(true),
-                },
-                {
-                  id: 'download-asset-manager-qrs',
-                  label: bulkQrExporting ? 'Preparing Asset manager QRs...' : 'Download Asset manager QRs',
-                  icon: 'download' as const,
-                  onClick: () => {
-                    void handleDownloadQrLabels()
+                disabled: loading || bulkQrExporting,
+              },
+              {
+                id: 'generate-bulk-qr',
+                label: 'Generate Bulk QR',
+                icon: 'qr' as const,
+                onClick: () => navigate('/qr-generate/batches'),
+              },
+              ...(isStrictAdmin
+                ? [
+                  {
+                    id: 'export-assets-xlsx',
+                    label: bulkXlsxExporting ? 'Exporting...' : 'Export Asset data',
+                    icon: 'download' as const,
+                    onClick: () => {
+                      void handleDownloadAssetsXlsx()
+                    },
+                    disabled: loading || bulkXlsxExporting,
                   },
-                  disabled: loading || bulkQrExporting,
-                },
-              ]
+                ]
+                : []),
+            ]
             : []),
           {
             id: 'scan-asset',
@@ -599,30 +652,29 @@ export default function AllAssets() {
           </div>
 
           <div className="flex shrink-0 items-center gap-3">
-          {isAdmin ? (
-            <button
-              type="button"
-              onClick={openFiltersPopup}
-              className={`inline-flex h-10 items-center gap-2 rounded-lg border px-3 text-sm font-medium transition ${
-                filtersOpen || activeAdvancedFilterCount > 0
+            {isAdmin ? (
+              <button
+                type="button"
+                onClick={openFiltersPopup}
+                className={`inline-flex h-10 items-center gap-2 rounded-lg border px-3 text-sm font-medium transition ${filtersOpen || activeAdvancedFilterCount > 0
                   ? 'border-accent-soft bg-[color:var(--accent-soft)]/15 text-primary'
                   : 'border-base bg-surface text-muted hover:border-accent-soft hover:bg-[color:var(--accent-soft)]/15 hover:text-accent'
-              }`}
-              aria-expanded={filtersOpen ? 'true' : 'false'}
-              aria-haspopup="dialog"
-            >
-              <span className="h-4 w-4 shrink-0">
-                <FilterIcon />
-              </span>
-              <span>Filters</span>
-              {activeAdvancedFilterCount > 0 ? (
-                <span className="inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-accent px-1.5 py-0.5 text-[11px] font-semibold text-white">
-                  {activeAdvancedFilterCount}
+                  }`}
+                aria-expanded={filtersOpen ? 'true' : 'false'}
+                aria-haspopup="dialog"
+              >
+                <span className="h-4 w-4 shrink-0">
+                  <FilterIcon />
                 </span>
-              ) : null}
-            </button>
-          ) : null}
-          {/* Legacy inline asset filters retired in favor of the shared popup.
+                <span>Filters</span>
+                {activeAdvancedFilterCount > 0 ? (
+                  <span className="inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-accent px-1.5 py-0.5 text-[11px] font-semibold text-white">
+                    {activeAdvancedFilterCount}
+                  </span>
+                ) : null}
+              </button>
+            ) : null}
+            {/* Legacy inline asset filters retired in favor of the shared popup.
           <div className="relative min-w-[170px]" data-status-filter-menu>
             <button
               type="button"
@@ -686,31 +738,31 @@ export default function AllAssets() {
             ))}
           </select>
           */}
-          <RefreshButton
-            onClick={handleRefresh}
-            loading={loading}
-            iconOnly
-            ariaLabel="Refresh Assets"
-            title={loading ? 'Refreshing assets' : 'Refresh assets'}
-            className="shrink-0 hover:border-accent-soft hover:bg-[color:var(--accent-soft)]/15 hover:text-accent"
-          />
-          <InfoHint
-            panelTitle={ASSETS_PAGE_INFO_HINT.panelTitle}
-            ariaLabel={ASSETS_PAGE_INFO_HINT.ariaLabel}
-            className="shrink-0"
-          >
-            {ASSETS_PAGE_INFO_HINT.sections.map((section) => (
-              <div key={section.heading}>
-                <p className="font-medium text-primary">{section.heading}</p>
-                <ul className="mt-1.5 list-disc space-y-1 pl-4">
-                  {section.bullets.map((text, i) => (
-                    <li key={`${section.heading}-${i}`}>{text}</li>
-                  ))}
-                </ul>
-              </div>
-            ))}
-          </InfoHint>
-        </div>
+            <RefreshButton
+              onClick={handleRefresh}
+              loading={loading}
+              iconOnly
+              ariaLabel="Refresh Assets"
+              title={loading ? 'Refreshing assets' : 'Refresh assets'}
+              className="shrink-0 hover:border-accent-soft hover:bg-[color:var(--accent-soft)]/15 hover:text-accent"
+            />
+            <InfoHint
+              panelTitle={ASSETS_PAGE_INFO_HINT.panelTitle}
+              ariaLabel={ASSETS_PAGE_INFO_HINT.ariaLabel}
+              className="shrink-0"
+            >
+              {ASSETS_PAGE_INFO_HINT.sections.map((section) => (
+                <div key={section.heading}>
+                  <p className="font-medium text-primary">{section.heading}</p>
+                  <ul className="mt-1.5 list-disc space-y-1 pl-4">
+                    {section.bullets.map((text, i) => (
+                      <li key={`${section.heading}-${i}`}>{text}</li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </InfoHint>
+          </div>
         </div>
       </div>
 
@@ -781,83 +833,83 @@ export default function AllAssets() {
 
       {!error && (
         <div className="flex flex-1 flex-col">
-        <div
-          className={`overflow-x-auto rounded-xl border border-base transition-opacity ${loading ? 'opacity-60 pointer-events-none' : ''}`}
-        >
-          <table className="w-full min-w-[1000px] text-left text-sm">
-            <thead className="bg-surface-2 text-subtle text-xs uppercase">
-              <tr>
-                {[
-                  'S.No',
-                  ...(isAdmin ? (['Actions'] as const) : []),
-                  'Asset Tag',
-                  'Category',
-                  'Manufacturer',
-                  'Model',
-                  'Holder',
-                  'Holder active',
-                  'Inventory Status',
-                ].map((header) => (
-                  <th key={header} className="px-4 py-3 whitespace-nowrap">{header}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {assets.map((asset, index) => (
-                <tr
-                  key={asset.id}
-                  className="border-t border-base hover:bg-surface-3 transition cursor-pointer"
-                  onClick={() => {
-                    if (asset.asset_tag) navigate(`/assets/${asset.asset_tag}`)
-                  }}
-                >
-                  <td className="px-4 py-3 text-muted">{(currentPage - 1) * pageSize + index + 1}</td>
-                  {isAdmin ? (
-                    <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
-                      <RowActionMenu
-                        open={actionMenuId === asset.id}
-                        onToggle={() => setActionMenuId((prev) => (prev === asset.id ? null : asset.id))}
-                        onClose={() => setActionMenuId(null)}
-                        triggerLabel={`Open actions for ${formatDisplay(asset.asset_tag) || asset.model || 'asset'}`}
-                        menuLabel={`Actions for ${formatDisplay(asset.asset_tag) || asset.model || 'asset'}`}
-                        triggerContent={<MoreActionsIcon />}
-                      >
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                setActionMenuId(null)
-                                void handleViewQR(e, asset)
-                              }}
-                              className="group flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm text-primary transition hover:bg-[color:var(--accent-soft)]/12 disabled:cursor-not-allowed disabled:opacity-50"
-                              disabled={qrLoading}
-                              role="menuitem"
-                              aria-label="View QR"
-                              title="View QR"
-                            >
-                              <MenuItemIcon icon={qrLoading ? 'refresh-cw' : 'scan'} spinning={qrLoading} />
-                              <span className="underline decoration-transparent underline-offset-4 transition group-hover:decoration-[color:var(--accent)]">
-                                {qrLoading ? 'Preparing QR...' : 'View QR'}
-                              </span>
-                            </button>
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                setActionMenuId(null)
-                                if (asset.asset_tag) navigate(`/assets/${asset.asset_tag}`)
-                              }}
-                              className="group flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm text-primary transition hover:bg-[color:var(--accent-soft)]/12"
-                              role="menuitem"
-                              aria-label="Edit"
-                              title="Edit"
-                            >
-                              <MenuItemIcon icon="edit" />
-                              <span className="underline decoration-transparent underline-offset-4 transition group-hover:decoration-[color:var(--accent)]">
-                                Edit
-                              </span>
-                            </button>
-                            <button
+          <div
+            className={`overflow-x-auto rounded-xl border border-base transition-opacity ${loading ? 'opacity-60 pointer-events-none' : ''}`}
+          >
+            <table className="w-full min-w-[1000px] text-left text-sm">
+              <thead className="bg-surface-2 text-subtle text-xs uppercase">
+                <tr>
+                  {[
+                    'S.No',
+                    ...(isAdmin ? (['Actions'] as const) : []),
+                    'Asset Tag',
+                    'Category',
+                    'Manufacturer',
+                    'Model',
+                    'Holder',
+                    'Holder active',
+                    'Inventory Status',
+                  ].map((header) => (
+                    <th key={header} className="px-4 py-3 whitespace-nowrap">{header}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {assets.map((asset, index) => (
+                  <tr
+                    key={asset.id}
+                    className="border-t border-base hover:bg-surface-3 transition cursor-pointer"
+                    onClick={() => {
+                      if (asset.asset_tag) navigate(`/assets/${asset.asset_tag}`)
+                    }}
+                  >
+                    <td className="px-4 py-3 text-muted">{(currentPage - 1) * pageSize + index + 1}</td>
+                    {isAdmin ? (
+                      <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                        <RowActionMenu
+                          open={actionMenuId === asset.id}
+                          onToggle={() => setActionMenuId((prev) => (prev === asset.id ? null : asset.id))}
+                          onClose={() => setActionMenuId(null)}
+                          triggerLabel={`Open actions for ${formatDisplay(asset.asset_tag) || asset.model || 'asset'}`}
+                          menuLabel={`Actions for ${formatDisplay(asset.asset_tag) || asset.model || 'asset'}`}
+                          triggerContent={<MoreActionsIcon />}
+                        >
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setActionMenuId(null)
+                              void handleViewQR(e, asset)
+                            }}
+                            className="group flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm text-primary transition hover:bg-[color:var(--accent-soft)]/12 disabled:cursor-not-allowed disabled:opacity-50"
+                            disabled={qrLoading}
+                            role="menuitem"
+                            aria-label="View QR"
+                            title="View QR"
+                          >
+                            <MenuItemIcon icon={qrLoading ? 'refresh-cw' : 'scan'} spinning={qrLoading} />
+                            <span className="underline decoration-transparent underline-offset-4 transition group-hover:decoration-[color:var(--accent)]">
+                              {qrLoading ? 'Preparing QR...' : 'View QR'}
+                            </span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setActionMenuId(null)
+                              if (asset.asset_tag) navigate(`/assets/${asset.asset_tag}`)
+                            }}
+                            className="group flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm text-primary transition hover:bg-[color:var(--accent-soft)]/12"
+                            role="menuitem"
+                            aria-label="Edit"
+                            title="Edit"
+                          >
+                            <MenuItemIcon icon="edit" />
+                            <span className="underline decoration-transparent underline-offset-4 transition group-hover:decoration-[color:var(--accent)]">
+                              Edit
+                            </span>
+                          </button>
+                          {/* <button
                               type="button"
                               onClick={(e) => {
                                 e.stopPropagation()
@@ -873,74 +925,72 @@ export default function AllAssets() {
                               <span className="underline decoration-transparent underline-offset-4 transition group-hover:decoration-[color:var(--accent)]">
                                 Delete
                               </span>
-                            </button>
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                setActionMenuId(null)
-                                void handleDirectDownloadQr(e, asset.asset_tag)
-                              }}
-                              className="group flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm text-primary transition hover:bg-[color:var(--accent-soft)]/12 disabled:cursor-not-allowed disabled:opacity-50"
-                              disabled={qrLoading}
-                              role="menuitem"
-                              aria-label="Download QR"
-                              title="Download QR"
-                            >
-                              <MenuItemIcon icon={qrLoading ? 'refresh-cw' : 'download'} spinning={qrLoading} />
-                              <span className="underline decoration-transparent underline-offset-4 transition group-hover:decoration-[color:var(--accent)]">
-                                {qrLoading ? 'Preparing QR...' : 'Download QR'}
-                              </span>
-                            </button>
-                      </RowActionMenu>
-                    </td>
-                  ) : null}
-                  <td className="px-4 py-3 text-accent font-medium">{formatDisplay(asset.asset_tag)}</td>
-                  <td className="px-4 py-3 text-muted">{formatDisplay(asset.category_name)}</td>
-                  <td className="px-4 py-3 text-muted">{formatDisplay(asset.manufacturer_name)}</td>
-                  <td className="px-4 py-3 text-muted">{formatDisplay(asset.model)}</td>
-                  <td className="px-4 py-3">{formatDisplay(asset.current_employee_name)}</td>
-                  <td className="px-4 py-3">
-                    {asset.current_employee_id ? (
-                      <span
-                        className={`inline-flex items-center gap-2 rounded-md border px-2 py-0.5 text-xs ${
-                          asset.current_employee_is_active
+                            </button> */}
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setActionMenuId(null)
+                              void handleDirectDownloadQr(e, asset.asset_tag)
+                            }}
+                            className="group flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm text-primary transition hover:bg-[color:var(--accent-soft)]/12 disabled:cursor-not-allowed disabled:opacity-50"
+                            disabled={qrLoading}
+                            role="menuitem"
+                            aria-label="Download QR"
+                            title="Download QR"
+                          >
+                            <MenuItemIcon icon={qrLoading ? 'refresh-cw' : 'download'} spinning={qrLoading} />
+                            <span className="underline decoration-transparent underline-offset-4 transition group-hover:decoration-[color:var(--accent)]">
+                              {qrLoading ? 'Preparing QR...' : 'Download QR'}
+                            </span>
+                          </button>
+                        </RowActionMenu>
+                      </td>
+                    ) : null}
+                    <td className="px-4 py-3 text-accent font-medium">{formatDisplay(asset.asset_tag)}</td>
+                    <td className="px-4 py-3 text-muted">{formatDisplay(asset.category_name)}</td>
+                    <td className="px-4 py-3 text-muted">{formatDisplay(asset.manufacturer_name)}</td>
+                    <td className="px-4 py-3 text-muted">{formatDisplay(asset.model)}</td>
+                    <td className="px-4 py-3">{formatDisplay(asset.current_employee_name)}</td>
+                    <td className="px-4 py-3">
+                      {asset.current_employee_id ? (
+                        <span
+                          className={`inline-flex items-center gap-2 rounded-md border px-2 py-0.5 text-xs ${asset.current_employee_is_active
                             ? 'border-emerald-500/40 bg-emerald-500/10 text-primary'
                             : 'border-red-500/40 bg-red-500/10 text-primary'
-                        }`}
-                        title={
-                          asset.current_employee_is_active
-                            ? 'Holder employee account is active'
-                            : 'Holder employee account is inactive'
-                        }
-                      >
-                        <span
-                          className={`h-2.5 w-2.5 shrink-0 rounded-full ${
-                            asset.current_employee_is_active ? 'bg-emerald-500' : 'bg-red-500'
-                          }`}
-                          aria-hidden
-                        />
-                        {asset.current_employee_is_active ? 'Active' : 'Inactive'}
-                      </span>
-                    ) : (
-                      <span className="text-subtle">-</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3">
-                    <InventoryStatusBadge status={asset.status} />
-                  </td>
-                </tr>
-              ))}
-              {assets.length === 0 && (
-                <tr>
-                  <td colSpan={isAdmin ? 9 : 8} className="text-center py-10 text-subtle">
-                    No assets, assigned to you
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+                            }`}
+                          title={
+                            asset.current_employee_is_active
+                              ? 'Holder employee account is active'
+                              : 'Holder employee account is inactive'
+                          }
+                        >
+                          <span
+                            className={`h-2.5 w-2.5 shrink-0 rounded-full ${asset.current_employee_is_active ? 'bg-emerald-500' : 'bg-red-500'
+                              }`}
+                            aria-hidden
+                          />
+                          {asset.current_employee_is_active ? 'Active' : 'Inactive'}
+                        </span>
+                      ) : (
+                        <span className="text-subtle">-</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <InventoryStatusBadge status={asset.status} />
+                    </td>
+                  </tr>
+                ))}
+                {assets.length === 0 && (
+                  <tr>
+                    <td colSpan={isAdmin ? 9 : 8} className="text-center py-10 text-subtle">
+                      No assets, assigned to you
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
           {isAdmin && (
             <div className="mt-auto">
               <DataPagination
@@ -1012,7 +1062,7 @@ export default function AllAssets() {
           </div>
         </div>
       )}
-      <ConfirmDialog
+      {/* <ConfirmDialog
         open={Boolean(deleteTarget)}
         title="Move Asset to Recycle Bin"
         message={`Move ${(deleteTarget?.asset_tag || deleteTarget?.model || 'this asset')} to Recycle Bin?`}
@@ -1021,15 +1071,15 @@ export default function AllAssets() {
         onConfirm={() => {
           if (deleteTarget) void handleSoftDeleteAsset(deleteTarget)
         }}
-      />
+      /> */}
 
       <ConfirmDialog
         open={Boolean(qrPdfTabFallback)}
         title="Couldn't open PDF in a new tab"
         message={
           qrPdfTabFallback?.emptyExport
-            ? 'Your browser may have blocked the popup, or a policy prevented it. Use Download PDF to save the summary file, or Close to discard it.'
-            : 'Your browser may have blocked the popup, or a policy prevented it. Use Download PDF to save the file, or Close to discard it.'
+            ? 'Download PDF to save the summary, or Close to cancel.'
+            : 'Download PDF to save the file, or Close to cancel.'
         }
         confirmLabel="Download PDF"
         cancelLabel="Close"

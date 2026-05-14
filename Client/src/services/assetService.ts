@@ -1,5 +1,8 @@
 import type { AssetDetailRecord, AssetInventoryRecord, PublicScanAsset } from '../types/api'
 import type { ListEnvelope } from '../api/apiClient'
+import type { AssetExportRow } from '../utils/assetXlsxExport'
+
+import { buildAssetsXlsx } from '../utils/assetXlsxExport'
 
 import { apiRequest } from '../api/apiClient'
 import api from '../utils/authNexus.api'
@@ -19,6 +22,7 @@ export type ScanAssetResponse =
   | Record<string, unknown>
 
 type ScanPublicFields = {
+  kind?: string
   asset_tag?: string | null
   category_name?: string | null
   status?: string | null
@@ -38,6 +42,7 @@ function toPublicScanAsset(ref: string, input: ScanPublicFields): PublicScanAsse
     typeof input.current_employee_business_id === 'string' ? input.current_employee_business_id : null
 
   return {
+    kind: input.kind,
     category_name: categoryName,
     asset_tag: assetTag,
     status,
@@ -103,6 +108,11 @@ export type ExportQrLabelsPdfResult = {
   exportedCount: number
 }
 
+export type ExportAssetsCsvResult = {
+  csvBlob: Blob
+  fileName: string
+}
+
 export async function exportAssetQrLabelsPdf(assetTags: string[]): Promise<ExportQrLabelsPdfResult> {
   const normalizedTags = []
   const seen = new Set<string>()
@@ -132,6 +142,66 @@ export async function exportAssetQrLabelsPdf(assetTags: string[]): Promise<Expor
   return { pdfBlob, fileName, emptyExport, exportedCount }
 }
 
+export async function exportAssetHistoryPdf(assetTag: string): Promise<{ pdfBlob: Blob; fileName: string }> {
+  const resp = await api.request<Blob>({
+    method: 'POST',
+    url: `/api/v1/assets/${encodeURIComponent(assetTag)}/history/pdf`,
+    responseType: 'blob',
+  })
+
+  const blob = resp.data
+  if (!(blob instanceof Blob) || !blob.size) {
+    throw new Error('History PDF export returned an empty file.')
+  }
+
+  const fileName = extractDownloadFileName(resp.headers['content-disposition'], `${assetTag}-history.pdf`)
+  const pdfBlob = new Blob([blob], { type: 'application/pdf' })
+  return { pdfBlob, fileName }
+}
+
+export async function exportAssetAuditTrailPdf(ref: string, options: { limit?: number } = {}): Promise<{ pdfBlob: Blob; fileName: string }> {
+  const normalized = ref.trim()
+  if (!normalized) throw new Error('Asset ref is required to export audit trail.')
+
+  const resp = await api.request<Blob>({
+    method: 'GET',
+    url: `/api/v1/assets/${encodeURIComponent(normalized)}/audit-trail/export`,
+    params: typeof options.limit === 'number' ? { limit: options.limit } : undefined,
+    responseType: 'blob',
+  })
+
+  const blob = resp.data
+  if (!(blob instanceof Blob) || !blob.size) {
+    throw new Error('Audit trail export returned an empty file.')
+  }
+
+  const fileName = extractDownloadFileName(resp.headers['content-disposition'], 'Audit Trail.pdf')
+  const pdfBlob = new Blob([blob], { type: 'application/pdf' })
+  return { pdfBlob, fileName }
+}
+
+export type ExportAssetsXlsxResult = {
+  xlsxBlob: Blob
+  fileName: string
+}
+
+export async function exportAssetsXlsx(): Promise<ExportAssetsXlsxResult> {
+  const resp = await api.request<{ data: AssetExportRow[] }>({
+    method: 'GET',
+    url: '/api/v1/assets/export.json',
+  })
+
+  const rows: AssetExportRow[] = resp.data?.data ?? []
+  if (!Array.isArray(rows) || rows.length === 0) {
+    throw new Error('Asset export returned no data.')
+  }
+
+  const today = new Date().toISOString().split('T')[0]!
+  const fileName = `assets-${today}.xlsx`
+  const xlsxBlob = buildAssetsXlsx(rows)
+  return { xlsxBlob, fileName }
+}
+
 export async function scanAsset(ref: string): Promise<ScanAssetResponse> {
   return apiRequest<ScanAssetResponse>({
     method: 'GET',
@@ -148,11 +218,41 @@ export async function publicScanAsset(ref: string): Promise<PublicScanAsset> {
   return toPublicScanAsset(ref, data)
 }
 
-export async function protectedScanAsset(ref: string): Promise<{ redirect: true; asset_tag: string; view_only?: boolean } | PublicScanAsset> {
+export type ScanReadyToLogResponse = {
+  kind: 'ready_to_log'
+  asset_tag: string
+  qr_reservation_id: string
+  batch_code?: string
+}
+
+export async function protectedScanAsset(
+  ref: string
+): Promise<
+  | { redirect: true; asset_tag: string; view_only?: boolean }
+  | ScanReadyToLogResponse
+  | PublicScanAsset
+> {
   const data = await scanAsset(ref)
-  if (data && typeof data === 'object' && 'redirect' in data && (data as { redirect?: unknown }).redirect === true) {
-    const redirect = data as { redirect: true; asset_tag: string; view_only?: boolean }
-    return redirect
+
+  if (data && typeof data === 'object') {
+    // Existing — unchanged
+    if ('redirect' in data && (data as { redirect?: unknown }).redirect === true) {
+      return data as { redirect: true; asset_tag: string; view_only?: boolean }
+    }
+
+    // NEW — preserve ready_to_log payload (qr_reservation_id must survive)
+    if ('kind' in data && (data as { kind?: unknown }).kind === 'ready_to_log') {
+      const d = data as { asset_tag?: unknown; qr_reservation_id?: unknown; batch_code?: unknown }
+      if (typeof d.asset_tag === 'string' && typeof d.qr_reservation_id === 'string') {
+        return {
+          kind: 'ready_to_log',
+          asset_tag: d.asset_tag,
+          qr_reservation_id: d.qr_reservation_id,
+          batch_code: typeof d.batch_code === 'string' ? d.batch_code : undefined,
+        }
+      }
+    }
   }
+
   return toPublicScanAsset(ref, data as ScanPublicFields)
 }

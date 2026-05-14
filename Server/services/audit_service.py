@@ -19,6 +19,8 @@ class AssetEventType(str, Enum):
     ASSET_DELETED = "asset_deleted"
     ASSET_RESTORED = "asset_restored"
     BULK_IMPORTED = "bulk_imported"
+    QR_BATCH_GENERATED = "qr_batch_generated"
+    QR_RESERVATION_CONSUMED = "qr_reservation_consumed"
 
 
 @dataclass(frozen=True)

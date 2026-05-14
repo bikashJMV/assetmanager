@@ -83,14 +83,14 @@ export default function OverviewAnalysis() {
 
       {accessState === 'denied' ? (
         <InlineStatePanel
-          title="Overview access required"
-          message="This section is available only to active Admin and IT Ops accounts. Sign in with an authorized employee profile to view organization-wide metrics."
+          title="Admin access required"
+          message="This section is only available to administrators. Please sign in with an admin account to see the full company summary."
         />
       ) : null}
 
       {error && !snapshot ? (
         <InlineStatePanel
-          title="Overview data is unavailable"
+          title="Summary data is not available"
           message={error}
           action={
             <button
@@ -106,7 +106,7 @@ export default function OverviewAnalysis() {
 
       {accessState === 'allowed' && error && snapshot ? (
         <InlineStatePanel
-          title="Showing the last loaded overview snapshot"
+          title="Showing the last available summary"
           message={error}
           tone="warning"
         />
@@ -114,32 +114,32 @@ export default function OverviewAnalysis() {
 
       {accessState === 'allowed' && !loading && snapshot && !hasAnyOverviewData ? (
         <InlineStatePanel
-          title="No overview data available"
-          message="No overview data is available right now."
+          title="No summary data available"
+          message="No data available at this time."
         />
       ) : null}
 
       {accessState === 'allowed' && snapshot && hasAnyOverviewData ? (
         <>
           <section className="grid lg:mb-4 grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <OverviewMetricCard label="Total Assets" value={snapshot.totalAssets} detail="All non-deleted assets in the current inventory view." />
-            <OverviewMetricCard label="Assigned Assets" value={snapshot.assignedAssets} detail="Assets with a current holder or open assignment." />
-            <OverviewMetricCard label="In Stock" value={snapshot.inStockAssets} detail="Assets currently marked with the in-stock inventory status." />
-            <OverviewMetricCard label="Active Employees" value={snapshot.activeEmployees} detail="Employees who are currently active in the organization." />
+            <OverviewMetricCard label="Total Assets" value={snapshot.totalAssets} detail="All active assets currently recorded." />
+            <OverviewMetricCard label="Assigned Assets" value={snapshot.assignedAssets} detail="Assets currently assigned to employees." />
+            <OverviewMetricCard label="Ready to Use" value={snapshot.inStockAssets} detail="Assets currently available for assignment" />
+            <OverviewMetricCard label="Active Employees" value={snapshot.activeEmployees} detail="Employees currently active in the company." />
           </section>
 
           <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1.1fr_1.1fr_0.9fr]">
             <BreakdownSection
-              title="Inventory Status"
-              subtitle="Current asset counts by inventory status."
+              title="Asset Status"
+              subtitle="Where the assets are right now."
               items={snapshot.statusBreakdown}
               emptyLabel="No status data available."
               labelFormatter={formatEnumLabel}
             />
 
             <BreakdownSection
-              title="Category Breakdown"
-              subtitle="Distribution of assets across asset categories."
+              title="Asset Categories"
+              subtitle="Types of assets we currently have."
               items={snapshot.categoryBreakdown}
               emptyLabel="No category data available."
             />
@@ -212,7 +212,7 @@ function BreakdownSection({
                     style={{ width: `${Math.min(Math.max(ratio, 0), 100)}%` }}
                   />
                 </div>
-                <p className="mt-2 text-xs text-subtle">{ratio}% of visible records</p>
+                <p className="mt-2 text-xs text-subtle">{ratio}% of all assets</p>
               </div>
             )
           })}
@@ -226,12 +226,12 @@ function EmployeeLoadSection({ rows }: { rows: OverviewAnalysisEmployeeLoad[] })
   return (
     <section className="rounded-xl border border-base bg-surface-2 p-5">
       <div>
-        <h3 className="text-lg font-semibold text-primary">Most Inventory Holders</h3>
-        <p className="mt-1 text-sm text-muted">Top current holders by assigned asset count.</p>
+        <h3 className="text-lg font-semibold text-primary">Employees with the most assets</h3>
+        <p className="mt-1 text-sm text-muted">Employees with the most number of assigned assets.</p>
       </div>
 
       {rows.length === 0 ? (
-        <p className="mt-6 text-sm text-subtle">No assigned employee load to show right now.</p>
+        <p className="mt-6 text-sm text-subtle">No employees with assigned assets found.</p>
       ) : (
         <div className="mt-5 space-y-3">
           {rows.map((row, index) => (
@@ -314,8 +314,8 @@ function InlineStatePanel({
   return (
     <section
       className={`rounded-xl border p-5 ${tone === 'warning'
-          ? 'border-accent-soft bg-[color:var(--accent-soft)]/10'
-          : 'border-base bg-surface-2'
+        ? 'border-accent-soft bg-[color:var(--accent-soft)]/10'
+        : 'border-base bg-surface-2'
         }`}
     >
       <p className="text-sm font-semibold text-primary">{title}</p>

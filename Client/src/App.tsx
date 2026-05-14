@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
-import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
+import { FEATURES } from './utils/featureFlags'
+import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { User } from 'oidc-client-ts'
 
 import Sidebar from './components/common/Sidebar'
@@ -34,6 +35,7 @@ const ScanPage = lazy(() => import('./components/pages/ScanPage'))
 const PageNotFound = lazy(() => import('./components/common/PageNotFound'))
 const Guide = lazy(() => import('./components/common/Guide'))
 const Analysis = lazy(() => import('./components/pages/Analysis'))
+const QrBatches = lazy(() => import('./components/pages/QrBatches'))
 const RecycleBin = lazy(() => import('./components/pages/RecycleBin'))
 const Notifications = lazy(() => import('./components/pages/Notifications'))
 const IdleWarningModal = lazy(() => import('./components/common/IdleWarningModal'))
@@ -226,7 +228,8 @@ function AppRoutes() {
                     <Route path="/employee" element={<Employee />} />
                     <Route path="/employee/new" element={<NewEmployee />} />
                     <Route path="/analysis" element={<Analysis />} />
-                    <Route path="/recycle-bin" element={<RecycleBin />} />
+                    <Route path="/qr-generate/batches" element={<QrBatches />} />
+                    {FEATURES.RECYCLE_BIN && <Route path="/recycle-bin" element={<RecycleBin />} />}
                   </Route>
                 </Route>
 
@@ -409,9 +412,12 @@ function AuthLoadingScreen() {
 
 function SignInScreen() {
   const [loading, setLoading] = useState(false)
+  const [searchParams] = useSearchParams()
+  const nextUrl = searchParams.get('next') || '/'
+
   const handleSignIn = () => {
     setLoading(true)
-    void userManager.signinRedirect()
+    void userManager.signinRedirect({ state: { returnTo: nextUrl } })
   }
 
   return (

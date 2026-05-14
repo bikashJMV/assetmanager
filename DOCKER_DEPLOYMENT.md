@@ -40,7 +40,7 @@ VITE_GRAFANA_DASHBOARD_URL_FOR_ITOPS=http://your-org-host:11200
 LOKI_BASE_URL=http://loki:3100
 ```
 
-Use `Observability/.env.observability` for the observability stack:
+Observability settings are loaded from `Observability/.env` (copy from `Observability/.env.observability.example`). The root compose file references this file for Grafana (see `docker-compose.yml`).
 
 ```env
 GRAFANA_PUBLISH_PORT=11200
@@ -49,17 +49,18 @@ OTEL_ALLOWED_ORIGIN=http://your-org-host:11000
 AMS_SERVER_METRICS_TARGET=ams-server:8000
 ```
 
-## Start Order
+## Start order
 
-Start observability first so Docker creates the shared `ams-observability` network:
+The stack is defined in a **single** file: `assetmanager/docker-compose.yml`. It includes Loki, Tempo, Prometheus, Grafana, Alloy, Postgres, the AMS server, the client, and pgAdmin. Docker creates the shared `ams-observability` network when you start services.
 
 ```bash
 cd assetmanager
-docker compose -f Observability/docker-compose.yml up -d
+cp Observability/.env.observability.example Observability/.env   # fill passwords / ports
+# ensure assetmanager/.env is configured (see Required Env Values above)
 docker compose up --build -d
 ```
 
-The main server joins `ams-observability` so it can query Loki at `http://loki:3100` without exposing Loki publicly.
+The server joins `ams-observability` so it can query Loki at `http://loki:3100` without exposing Loki on the public host.
 
 ## Client Image
 
@@ -77,8 +78,9 @@ http://your-org-host:11000
 http://your-org-host:11100/api/health
 http://your-org-host:11200
 http://your-org-host:11300
-http://your-org-host:11400/v1/traces
 ```
+
+For OTLP/HTTP traces, the SDK **POST**s to `http://your-org-host:11400/v1/traces`. Opening that URL in a browser often shows `404 page not found` (no `GET /` handler); that is expected for the collector.
 
 Also check that logs still load through the app via the backend `/observability/logs` endpoint.
 

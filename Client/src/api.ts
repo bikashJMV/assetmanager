@@ -360,7 +360,9 @@ export type AssetWriteInput = {
   status?: string
   custom_fields?: Record<string, unknown>
   metadata?: Record<string, unknown>
+  qr_reservation_id?: string
 }
+
 
 const ERP_ACTIVE_LABEL = 'ERP Active'
 const ERP_INACTIVE_LABEL = 'ERP Inactive'
@@ -968,6 +970,11 @@ export type FetchedQrLabelsPdf = {
   emptyExport: boolean
 }
 
+export type FetchedAuditTrailPdf = {
+  pdfBlob: Blob
+  fileName: string
+}
+
 export async function fetchAssetQrLabelsPdf(assetTags: string[]): Promise<FetchedQrLabelsPdf> {
   await assertActiveAdminAccess()
 
@@ -997,6 +1004,38 @@ export async function fetchAssetQrLabelsPdf(assetTags: string[]): Promise<Fetche
   const fileName = extractDownloadFileName(resp.headers.get('content-disposition'), 'Asset manager QRs.pdf')
   const pdfBlob = new Blob([blob], { type: 'application/pdf' })
   return { pdfBlob, fileName, emptyExport }
+}
+
+export async function fetchAssetAuditTrailPdf(ref: string, options: { limit?: number } = {}): Promise<FetchedAuditTrailPdf> {
+  const normalized = ref.trim()
+  if (!normalized) throw new Error('Asset ref is required to export audit trail.')
+
+  const params = new URLSearchParams()
+  if (typeof options.limit === 'number' && Number.isFinite(options.limit)) {
+    params.set('limit', String(options.limit))
+  }
+  const qs = params.toString()
+
+  const session = await getSession()
+  const headers = bffHeaders()
+  if (session?.access_token) headers['Authorization'] = `Bearer ${session.access_token}`
+
+  const resp = await fetch(`${getBffBaseUrl()}/api/v1/assets/${encodeURIComponent(normalized)}/audit-trail/export${qs ? `?${qs}` : ''}`, {
+    method: 'GET',
+    headers,
+  })
+
+  if (!resp.ok) {
+    const message = await readBffErrorMessage(resp, `Audit trail export failed (${resp.status}). Confirm the server is reachable.`)
+    throw new Error(message)
+  }
+
+  const blob = await resp.blob()
+  if (!blob.size) throw new Error('Audit trail export returned an empty file.')
+
+  const fileName = extractDownloadFileName(resp.headers.get('content-disposition'), 'Audit Trail.pdf')
+  const pdfBlob = new Blob([blob], { type: 'application/pdf' })
+  return { pdfBlob, fileName }
 }
 
 
@@ -1139,6 +1178,7 @@ export function subscribeDashboardRealtime() {
 
 /** Payload from `fn_public_scan_asset` (anonymous QR): tightly-scoped public scan details. */
 export type PublicScanAsset = {
+  kind?: string
   category_name: string
   asset_tag: string
   status: string

@@ -32,19 +32,17 @@ Observability/
 
 ## Local setup
 
+Observability services are defined in the **root** [`docker-compose.yml`](../docker-compose.yml) (Loki, Tempo, Prometheus, Grafana, Alloy). Configure variables in `Observability/.env` first:
+
 ```bash
-cd Observability
-cp .env.observability.example .env   # fill in passwords and ports
-docker compose up -d
+cd assetmanager
+cp Observability/.env.observability.example Observability/.env   # fill in passwords and ports
+docker compose up -d loki tempo prometheus grafana alloy
 ```
 
-After startup:
+To run the **full** stack (Postgres + AMS + observability), use `docker compose up --build -d` from `assetmanager/` as described in [`../DOCKER_DEPLOYMENT.md`](../DOCKER_DEPLOYMENT.md).
 
-- **Grafana:** `http://localhost:3000` (or `GRAFANA_PUBLISH_PORT`)
-- **Prometheus:** `http://localhost:9090`
-- **Loki:** `http://localhost:3100`
-- **Tempo:** `http://localhost:3200`
-- **Alloy UI:** `http://localhost:12345`
+After startup, **Grafana** is the main entry point on the host: `http://localhost:${GRAFANA_PUBLISH_PORT}` (see `Observability/.env`; commonly `11200` → container `3000`). Prometheus, Loki, and Tempo are on the Docker network by default (no host port in the root `docker-compose.yml`) — query them through Grafana datasources. **OTLP/HTTP** for browser traces is published as **`OTLP_HTTP_PUBLISH_PORT`** → container `4318` (often `11400` on the host).
 
 ## Environment variables
 
@@ -176,9 +174,13 @@ To correlate logs with traces: find the `request_id` in a log line, then use the
 | Tempo | 30 days / 720 hours (`tempo-config.yaml`) |
 | Prometheus | Default (no explicit retention set in `prometheus.yml`) |
 
+## OTLP HTTP (`11400`) and “page not found”
+
+The published **`OTLP_HTTP_PUBLISH_PORT`** (often `11400`) is for the **collector** (Grafana Alloy). Browser and server SDKs **POST** OTLP payloads (for example to `/v1/traces`). There is usually **no HTML** on **`GET /`**, so opening `http://host:11400/` in a browser may show **404** — that is normal and does not mean the stack is down.
+
 ## Troubleshooting checklist
 
-- **No logs in Loki:** confirm `logs/ams_server.log` exists and the server is writing to it. Check Alloy UI at `http://localhost:12345` for pipeline errors.
+- **No logs in Loki:** confirm `logs/ams_server.log` exists and the server is writing to it. Check Alloy container logs (`docker logs alloy`) or add a host port mapping for the Alloy UI if you use it.
 - **No traces in Tempo:** confirm `OTEL_GRAFANA_ENABLED=true` on the server and `VITE_OTEL_GRAFANA_ENABLED=true` on the client. Check CORS config in `alloy/config.alloy` matches the client origin.
 - **No metrics in Prometheus:** confirm `OTEL_GRAFANA_ENABLED=true` on the server and `AMS_SERVER_METRICS_TARGET` is set correctly in the Observability `.env`.
 - **`GET /observability/logs` returns 403:** the signed-in employee must have `role = 'it_ops'`.

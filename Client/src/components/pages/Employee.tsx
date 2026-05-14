@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { FEATURES } from '../../utils/featureFlags'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import EmployeeForm from '../form/EmployeeForm'
 import Error from '../common/Error'
@@ -15,6 +16,7 @@ import IconActionButton from '../common/IconActionButton'
 import AnimatedNavIcon, { type IconName } from '../common/AnimatedNavIcon'
 import RowActionMenu from '../common/RowActionMenu'
 import type { EmployeeRecord, EmployeeRole, EmployeeUpsertInput } from '../../types/api'
+
 import {
   listEmployees,
   createEmployee,
@@ -199,13 +201,14 @@ export default function Employee() {
   const [actionMenuEmployeeId, setActionMenuEmployeeId] = useState<string | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<EmployeeRecord | null>(null)
   const [deleteLoading, setDeleteLoading] = useState(false)
+  const [createDialogOpen, setCreateDialogOpen] = useState(false)
   const [grantAdminTarget, setGrantAdminTarget] = useState<EmployeeRecord | null>(null)
   const [revokeAdminTarget, setRevokeAdminTarget] = useState<EmployeeRecord | null>(null)
   const [adminPrivilegeLoading, setAdminPrivilegeLoading] = useState(false)
   const { showToast } = useToast()
 
   const canManageEmployees = accessResolved && isAdmin
-  const canManageAdminRole = isAdmin || isItOps
+  const canManageAdminRole = accessResolved && (isAdmin || isItOps)
   const activeAdvancedFilterCount = getActiveAdvancedFilterCount(filtersInput)
   const headerActions = canManageEmployees
     ? [
@@ -213,7 +216,10 @@ export default function Employee() {
           id: 'new-employee',
           label: 'New Employee',
           icon: 'plus' as const,
-          onClick: () => navigate('/employee/new'),
+          onClick: () => {
+            setEditEmployee(null)
+            setCreateDialogOpen(true)
+          },
         },
       ]
     : []
@@ -445,6 +451,7 @@ export default function Employee() {
         })
       }
       setEditEmployee(null)
+      setCreateDialogOpen(false)
       showToast({ message: 'Employee saved successfully.', variant: 'success' })
       await fetchEmployees(toApiFilters(filtersInput), { page: currentPage, pageSize })
     } catch (err) {
@@ -792,7 +799,10 @@ export default function Employee() {
                             )
                           }
                           onMenuClose={() => setActionMenuEmployeeId(null)}
-                          onEdit={setEditEmployee}
+                          onEdit={(employee) => {
+                            setCreateDialogOpen(false)
+                            setEditEmployee(employee)
+                          }}
                           onSetRole={openRoleChange}
                           onGrantAdmin={openGrantAdminConfirm}
                           onRevokeAdmin={openRevokeAdminConfirm}
@@ -893,7 +903,10 @@ export default function Employee() {
                       sessionEmployeeId={sessionEmployeeId}
                       showQrDownload={SHOW_EMPLOYEE_ROW_QR_DOWNLOAD}
                       bulkQrEmployeeId={null}
-                      onEdit={setEditEmployee}
+                      onEdit={(employee) => {
+                        setCreateDialogOpen(false)
+                        setEditEmployee(employee)
+                      }}
                       onSetRole={openRoleChange}
                       onGrantAdmin={openGrantAdminConfirm}
                       onRevokeAdmin={openRevokeAdminConfirm}
@@ -944,6 +957,19 @@ export default function Employee() {
                 is_active: editEmployee.is_active,
               }}
               onClose={() => setEditEmployee(null)}
+              onSubmit={handleUpsertEmployee}
+              canManageAdminRole={canManageAdminRole}
+            />
+          </div>
+        </div>
+      )}
+
+      {createDialogOpen && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-start justify-center z-50 overflow-y-auto py-10 px-4">
+          <div className="w-full max-w-4xl">
+            <EmployeeForm
+              departmentOptions={departments}
+              onClose={() => setCreateDialogOpen(false)}
               onSubmit={handleUpsertEmployee}
               canManageAdminRole={canManageAdminRole}
             />
@@ -1100,7 +1126,7 @@ function EmployeeActions({
   menuOpen = false,
   onMenuToggle,
   onMenuClose,
-  onEdit,
+  // onEdit,
   onSetRole,
   onGrantAdmin,
   onRevokeAdmin,
@@ -1111,7 +1137,7 @@ function EmployeeActions({
   const dangerOutlineButtonClass =
     'border border-base text-accent py-1.5 px-3 rounded-lg hover:border-accent-soft hover:bg-[color:var(--accent-soft)]/15 transition text-xs disabled:opacity-50 disabled:cursor-not-allowed'
   const isSelfRow = employee.id === sessionEmployeeId
-  const canManageAdminRole = isAdmin || isItOps
+  const canManageAdminRole = isAdmin || isItOps;
 
   const showMakeAdmin = canManageAdminRole && employee.role === 'employee'
   const showRevokeAdmin = canManageAdminRole && employee.role === 'admin'
@@ -1171,12 +1197,14 @@ function EmployeeActions({
 
   // Only allow edit and delete actions for admins or IT Ops
   if (canManageAdminRole) {
+    /*
     actionItems.push({
       key: 'edit',
       label: 'Edit',
       icon: 'edit',
       onSelect: () => onEdit(employee),
     })
+    */
 
     if (showQrDownload) {
       actionItems.push({
@@ -1190,13 +1218,15 @@ function EmployeeActions({
       })
     }
 
-    actionItems.push({
-      key: 'delete',
-      label: 'Delete',
-      icon: 'trash',
-      onSelect: () => onDelete(employee),
-      disabled: isSelfRow,
-    })
+    if (FEATURES.RECYCLE_BIN) {
+      actionItems.push({
+        key: 'delete',
+        label: 'Delete',
+        icon: 'trash',
+        onSelect: () => onDelete(employee),
+        disabled: isSelfRow,
+      })
+    }
   } else if (showQrDownload) {
     actionItems.push({
       key: 'download-qr',
@@ -1306,14 +1336,14 @@ function EmployeeActions({
           Revoke IT Ops
         </button>
       ) : null}
-{canManageAdminRole && (
+{/* {canManageAdminRole && (
         <IconActionButton
           icon="edit"
           label="Edit"
           onClick={() => onEdit(employee)}
           variant="base"
         />
-      )}
+      )} */}
       {showQrDownload ? (
         <button
           type="button"
@@ -1331,7 +1361,7 @@ function EmployeeActions({
           <span>QR</span>
         </button>
       ) : null}
-      {canManageAdminRole && (
+      {canManageAdminRole && FEATURES.RECYCLE_BIN && (
         <IconActionButton
           icon="trash"
           label="Delete"

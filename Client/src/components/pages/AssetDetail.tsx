@@ -6,6 +6,7 @@ import type { AssetAssignmentRecord, AssetDetailRecord, EmployeeRecord } from '.
 import { useAdminAccessQuery } from '../../queries/authz'
 import { useAssetDetailQuery, useProtectedAssetScanQuery } from '../../queries/assets'
 import { assignAsset, returnAsset } from '../../services/assignmentService'
+import { exportAssetAuditTrailPdf, exportAssetHistoryPdf } from '../../services/assetService'
 import { softDeleteAsset } from '../../services/assetService'
 import { buildAssetQrDataUri } from '../../utils/qr'
 import AssetForm from '../form/AssetForm'
@@ -19,6 +20,7 @@ import InventoryStatusBadge from '../common/InventoryStatusBadge'
 import AnimatedNavIcon, { type IconName } from '../common/AnimatedNavIcon'
 import { useToast } from '../../hooks/useToast'
 import EmployeeAssignLookup from '../common/EmployeeAssignLookup'
+import { FEATURES } from '../../utils/featureFlags'
 
 
 const ASSIGNABLE_STATUSES = new Set(['in_stock', 'assigned'])
@@ -52,6 +54,8 @@ export default function AssetDetail() {
   const [error, setError] = useState('')
   const [errorDebug, setErrorDebug] = useState<string | undefined>(undefined)
   const [showEdit, setShowEdit] = useState(false)
+  const [historyPdfExporting, setHistoryPdfExporting] = useState(false)
+  const [auditTrailPdfExporting, setAuditTrailPdfExporting] = useState(false)
   const [assignQuery, setAssignQuery] = useState('')
   const [selectedAssignee, setSelectedAssignee] = useState<EmployeeRecord | null>(null)
   const [assignNotes, setAssignNotes] = useState('')
@@ -116,6 +120,7 @@ export default function AssetDetail() {
   const currentHolderCode = openAssignment?.employee?.employee_id.trim().toUpperCase() ?? ''
   const selectedAssigneeCode = selectedAssignee?.employee_id.trim().toUpperCase() ?? ''
   const isAssignableStatus = ASSIGNABLE_STATUSES.has(detail?.asset.status ?? '')
+  const hasAssignmentHistory = (detail?.assignments.length ?? 0) > 0
   const visibleLifecycleEvents = useMemo(
     () =>
       detail?.lifecycle_events.filter(
@@ -254,6 +259,48 @@ export default function AssetDetail() {
     }
   }
 
+  const handleExportHistoryPdf = async () => {
+    if (!detail?.asset.asset_tag) return
+    setHistoryPdfExporting(true)
+    try {
+      const { pdfBlob, fileName } = await exportAssetHistoryPdf(detail.asset.asset_tag)
+      const url = URL.createObjectURL(pdfBlob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = fileName
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      logDevError('assetDetail.exportHistoryPdf', err)
+      showToast({ message: getUserFacingMessage(err, 'Unable to export history PDF.'), variant: 'error' })
+    } finally {
+      setHistoryPdfExporting(false)
+    }
+  }
+
+  const handleExportAuditTrailPdf = async () => {
+    if (!detailRef) return
+    setAuditTrailPdfExporting(true)
+    try {
+      const { pdfBlob, fileName } = await exportAssetAuditTrailPdf(detailRef, { limit: 100 })
+      const url = URL.createObjectURL(pdfBlob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = fileName
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      logDevError('assetDetail.exportAuditTrailPdf', err)
+      showToast({ message: getUserFacingMessage(err, 'Unable to export audit trail PDF.'), variant: 'error' })
+    } finally {
+      setAuditTrailPdfExporting(false)
+    }
+  }
+
   const handleSoftDelete = async () => {
     if (!detail?.asset.id || !canManage) return
     setActionLoading(true)
@@ -321,6 +368,7 @@ export default function AssetDetail() {
         <div className="flex flex-wrap items-center gap-2">
           <h1 className="sr-only">{formatDisplay(asset.asset_tag)}</h1>
           <div className="flex items-center gap-2 ml-auto">
+            Actions:
             {canManage ? (
               <HeaderActionButton
                 icon="edit"
@@ -329,7 +377,7 @@ export default function AssetDetail() {
                 disabled={actionLoading}
               />
             ) : null}
-            {canManage ? (
+            {canManage && FEATURES.RECYCLE_BIN ? (
               <HeaderActionButton
                 icon="trash"
                 label="Delete Asset"
@@ -343,12 +391,36 @@ export default function AssetDetail() {
               onClick={() => void refresh()}
               disabled={actionLoading}
             />
-            <HeaderActionButton
+            <HeaderActionLabelButton
               icon="download"
-              label="Download QR"
+              label="QRs"
               onClick={handleDownloadQr}
               disabled={actionLoading || !qrDataUri}
             />
+            {canManage ? (
+              <>
+                <HeaderActionLabelButton
+                  icon="download"
+                  label="Audit trail"
+                  onClick={() => void handleExportAuditTrailPdf()}
+                  disabled={actionLoading || auditTrailPdfExporting}
+                />
+                {/* <HeaderActionLabelButton
+                  icon="download"
+                  label="Asset history"
+                  onClick={() => void handleExportHistoryPdf()}
+                  disabled={actionLoading || historyPdfExporting}
+                /> */}
+                {hasAssignmentHistory ? (
+                  <HeaderActionLabelButton
+                    icon="download"
+    label="Asset history"
+    onClick={() => void handleExportHistoryPdf()}
+    disabled={actionLoading || historyPdfExporting}
+  />
+) : null}
+              </>
+            ) : null}
           </div>
         </div>
       </div>
@@ -502,7 +574,7 @@ export default function AssetDetail() {
           </section>
         ) : null}
 
-        {asset.current_employee_id ? (
+        {/* {asset.current_employee_id ? (
           <Section
             title="Assignment Summary"
             description="Current holder, employee ID, and when the assignment started."
@@ -513,7 +585,7 @@ export default function AssetDetail() {
               <AssignmentSummaryField label="Assigned At" value={formatDateTime(asset.assigned_at)} />
             </dl>
           </Section>
-        ) : null}
+        ) : null} */}
 
         {detail.components.length > 0 && (
           <Section
@@ -555,6 +627,23 @@ export default function AssetDetail() {
           <Section
             title="Assignment History"
             description="All assigns/returns in order with holder ERP status."
+            action={
+              hasAssignmentHistory ? (
+                <button
+                  type="button"
+                  onClick={handleExportHistoryPdf}
+                  disabled={actionLoading || historyPdfExporting}
+                  className="inline-flex items-center gap-2 rounded-lg border border-base bg-surface px-3 py-1.5 text-xs font-medium text-primary transition hover:border-accent-soft hover:bg-[color:var(--accent-soft)]/15 hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+                  aria-label="Export History PDF"
+                  title="Export History PDF"
+                >
+                  <span className="flex h-4 w-4 items-center justify-center">
+                    <AnimatedNavIcon name="download" />
+                  </span>
+                  <span>{historyPdfExporting ? 'Exporting...' : 'Export PDF'}</span>
+                </button>
+              ) : null
+            }
           >
             <div className="overflow-x-auto rounded-lg border border-base">
               <table className="w-full min-w-[720px] text-sm">
@@ -589,6 +678,21 @@ export default function AssetDetail() {
                 Append-only timeline of changes, assignments, and returns.
               </>
             }
+            action={
+              <button
+                type="button"
+                onClick={() => void handleExportAuditTrailPdf()}
+                disabled={actionLoading || auditTrailPdfExporting}
+                className="inline-flex items-center gap-2 rounded-lg border border-base bg-surface px-3 py-1.5 text-xs font-medium text-primary transition hover:border-accent-soft hover:bg-[color:var(--accent-soft)]/15 hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+                aria-label="Download audit trail PDF"
+                title="Download audit trail PDF"
+              >
+                <span className="flex h-4 w-4 items-center justify-center">
+                  <AnimatedNavIcon name="download" />
+                </span>
+                <span>{auditTrailPdfExporting ? 'Downloading...' : 'Download PDF'}</span>
+              </button>
+            }
           >
             <AssetChangeHistory events={visibleLifecycleEvents} isCapped={detail.lifecycle_is_capped} />
           </Section>
@@ -597,6 +701,7 @@ export default function AssetDetail() {
 
       {canManage && showEdit && (
         <AssetForm
+          isStatusDisabled={asset.status === 'assigned'}
           prefill={{
             asset_tag: asset.asset_tag || undefined,
             category_slug: asset.category_slug,
@@ -641,25 +746,28 @@ export default function AssetDetail() {
           void handleReturn()
         }}
       />
-      <ConfirmDialog
-        open={deleteDialogOpen}
-        title="Move Asset to Recycle Bin"
-        message={`Move ${detail.asset.asset_tag || 'this asset'} to Recycle Bin?`}
-        confirmLabel="Delete"
-        loading={actionLoading}
-        onClose={() => setDeleteDialogOpen(false)}
-        onConfirm={() => {
-          void handleSoftDelete()
-        }}
-      />
+      {FEATURES.RECYCLE_BIN && (
+        <ConfirmDialog
+          open={deleteDialogOpen}
+          title="Move Asset to Recycle Bin"
+          message={`Move ${detail.asset.asset_tag || 'this asset'} to Recycle Bin?`}
+          confirmLabel="Delete"
+          loading={actionLoading}
+          onClose={() => setDeleteDialogOpen(false)}
+          onConfirm={() => { void handleSoftDelete() }}
+        />
+      )}
     </main>
   )
 }
 
-function Section({ title, description, children }: { title: string; description?: ReactNode; children: ReactNode }) {
+function Section({ title, description, action, children }: { title: string; description?: ReactNode; action?: ReactNode; children: ReactNode }) {
   return (
     <section className="bg-surface border border-base rounded-xl p-4 sm:p-5">
-      <h2 className={`text-sm font-semibold uppercase tracking-[0.14em] text-muted ${description ? 'mb-2' : 'mb-3'}`}>{title}</h2>
+      <div className="flex items-center justify-between mb-2">
+        <h2 className="text-sm font-semibold uppercase tracking-[0.14em] text-muted">{title}</h2>
+        {action}
+      </div>
       {description ? (
         <div className="text-xs text-subtle mb-3 leading-relaxed">
           {description}
@@ -697,15 +805,43 @@ function HeaderActionButton({
   )
 }
 
-
-function AssignmentSummaryField({ label, value }: { label: string; value: string }) {
+function HeaderActionLabelButton({
+  icon,
+  label,
+  onClick,
+  disabled = false,
+}: {
+  icon: IconName
+  label: string
+  onClick: () => void
+  disabled?: boolean
+}) {
   return (
-    <div className="flex items-baseline gap-1.5 px-4 first:pl-0 last:pr-0">
-      <dt className="text-[11px] uppercase tracking-[0.12em] text-subtle shrink-0">{label}:</dt>
-      <dd className="text-sm text-primary">{value}</dd>
-    </div>
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={label}
+      title={label}
+      className="inline-flex h-9 items-center gap-2 rounded-xl border border-base bg-surface px-3 text-sm font-semibold text-primary transition hover:border-accent-soft hover:bg-[color:var(--accent-soft)]/15 hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+    >
+      <span className="flex h-5 w-5 items-center justify-center">
+        <AnimatedNavIcon name={icon} />
+      </span>
+      <span className="whitespace-nowrap">{label}</span>
+    </button>
   )
 }
+
+
+// function AssignmentSummaryField({ label, value }: { label: string; value: string }) {
+//   return (
+//     <div className="flex items-baseline gap-1.5 px-4 first:pl-0 last:pr-0">
+//       <dt className="text-[11px] uppercase tracking-[0.12em] text-subtle shrink-0">{label}:</dt>
+//       <dd className="text-sm text-primary">{value}</dd>
+//     </div>
+//   )
+// }
 
 function InfoRow({ label, value }: { label: string; value: string }) {
   return (
@@ -783,7 +919,7 @@ function AssignmentRow({ entry }: { entry: AssetAssignmentRecord }) {
       <td className="px-3 py-2 text-primary">{formatDisplay(entry.employee?.name)}</td>
       <td className="px-3 py-2 text-primary">{formatDisplay(entry.employee?.employee_id)}</td>
       <td className="px-3 py-2 text-primary">{formatDateTime(entry.assigned_at)}</td>
-      <td className="px-3 py-2 text-primary">{entry.returned_at ? formatDateTime(entry.returned_at) : <span className="text-amber-500 font-medium">Not yet returned</span>}</td>
+      <td className="px-3 py-2 text-primary">{entry.returned_at ? formatDateTime(entry.returned_at) : <span className="text-amber-500 font-medium">With Employee</span>}</td>
     </tr>
   )
 }

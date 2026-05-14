@@ -72,6 +72,11 @@ class Settings:
         default_factory=lambda: os.getenv("OTEL_GRAFANA_ENABLED", "false").strip().lower() == "true"
     )
 
+    # Admin-only CSV export for all assets (set false to disable).
+    ASSET_EXPORT_ENABLED: bool = field(
+        default_factory=lambda: os.getenv("ASSET_EXPORT_ENABLED", "true").strip().lower() == "true"
+    )
+
     # Observability (Loki Integration)
     LOKI_BASE_URL: str = field(
         default_factory=lambda: os.getenv("LOKI_BASE_URL", "http://localhost:3100").rstrip("/")

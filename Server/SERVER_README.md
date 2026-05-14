@@ -2,7 +2,7 @@
 
 FastAPI 0.136 backend for the Asset Manager System. The application factory is in `main.py` (`app = create_app()`); `app.py` re-exports `from main import app` for compatibility with older `uvicorn app:app` invocations.
 
-All client-facing API routes are versioned under **`/api/v1/*`**, plus **`GET /api/health`** and **`GET /observability/logs`** (not under `/api/v1`).
+All client-facing JSON API routes are versioned under **`/api/v1/*`**, plus **`GET /api/health`**, **`POST /api/auth/refresh`** (BFF cookie refresh — response body matches authNexus, not the AMS envelope), and **`GET /observability/logs`** (not under `/api/v1`).
 
 ## What this service does
 
@@ -41,6 +41,7 @@ Server/
 │
 ├── routers/                 # HTTP route handlers (one file per resource)
 │   ├── health.py            # GET /api/health
+│   ├── api_auth.py          # POST /api/auth/refresh — BFF refresh via HttpOnly cookie
 │   ├── api_v1_assets.py     # /api/v1/assets — CRUD, assign, return, scan, QR, bulk, logs
 │   ├── api_v1_employees.py  # /api/v1/employees — CRUD, role change, portfolio, bulk
 │   ├── api_v1_assignments.py# /api/v1/assignments — assign / return (dedicated router)
@@ -102,6 +103,7 @@ All routes return the standard envelope: `{status, status_code, message, timesta
 | --- | --- | --- | --- |
 | GET | `/` | Public | Liveness check — returns `{message, env}` |
 | GET | `/api/health` | Public | Health check including Postgres `SELECT 1` |
+| POST | `/api/auth/refresh` | Public (cookie) | Exchanges `nexus_refresh_token` cookie with authNexus; returns raw JSON (`access_token`, `expires_in`, …). Does not use the AMS success envelope. Requires `AUTH_AUTHORITY`. |
 | GET | `/metrics` | Public | Prometheus metrics (only if `OTEL_GRAFANA_ENABLED=true`) |
 
 ### Assets — `/api/v1/assets`
@@ -211,11 +213,13 @@ Use either `DATABASE_URL` (full DSN) **or** the individual `POSTGRES_*` vars. If
 | `AUTH_ENABLED` | No (default `false`) | Enable JWT validation |
 | `AUTH_JWKS_URL` | When `AUTH_ENABLED=true` | JWKS endpoint for RS256 key fetch |
 | `AUTH_PROJECT_ID` | When `AUTH_ENABLED=true` | JWT project scope claim value |
-| `AUTH_ISSUER` | No | JWT issuer for validation |
-| `AUTH_AUDIENCE` | No | JWT audience for validation |
+| `AUTH_ISSUER` | No | Expected JWT `iss`; should match your authNexus issuer URL when validating |
+| `AUTH_AUDIENCE` | No | Expected JWT `aud`. If set, must match the access token audience or verification fails with `Audience doesn't match` / 401 |
 | `AUTH_PROJECT_ID_CLAIM` | No (default `project_id`) | JWT claim name for project ID |
 | `AUTH_CLOCK_SKEW_SECONDS` | No (default `30`) | Leeway for JWT expiry checks |
-| `AUTH_AUTHORITY` | No | Used by legacy `core/auth.py` helpers |
+| `AUTH_AUTHORITY` | **Yes for refresh** | authNexus base URL (no trailing slash); used by `POST /api/auth/refresh` and may fall back from `VITE_AUTH_AUTHORITY` in settings |
+
+**Troubleshooting:** Decode a test access token and compare `iss` / `aud` with `AUTH_ISSUER` / `AUTH_AUDIENCE`. SPA clients often receive `aud` from the OAuth **web** or **API** application — the API must expect the same value the IdP puts on the token.
 
 ### Server and integrations
 
@@ -281,9 +285,9 @@ Middleware is added in `main.py` in reverse execution order (last added = outerm
 CORS → EnvelopeMiddleware → AuthMiddleware → RequestIdMiddleware → route handler
 ```
 
-- **CORS:** reads `settings.ALLOWED_ORIGINS`; always includes `http://localhost:11000`.
+- **CORS:** reads `settings.ALLOWED_ORIGINS`; always includes `http://localhost:11000`. Add `http://localhost:5174` when using the Vite dev server against a local API on another origin.
 - **EnvelopeMiddleware:** wraps responses only for `/v2/*` paths or when `X-Response-Envelope: true` is sent. Standard `/api/v1/*` responses are **not** wrapped by this middleware — handlers call `success_response` / `error_response` directly.
-- **AuthMiddleware:** validates Bearer token and attaches `EmployeeContext` to `request.state.employee`. Exempt paths: `/docs`, `/redoc`, `/openapi.json`, `/health`, `/api/health`, `/metrics`, `/`.
+- **AuthMiddleware:** validates Bearer token and attaches `EmployeeContext` to `request.state.employee`. Exempt paths: `/docs`, `/redoc`, `/openapi.json`, `/health`, `/api/health`, `/metrics`, `/`, and exactly **`/api/auth/refresh`**.
 - **RequestIdMiddleware:** attaches `x-request-id` to every response and logs `request_completed` with method, path, status, and elapsed ms.
 
 ## Response envelope format

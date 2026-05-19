@@ -295,9 +295,9 @@ export default function InventoryBulkUpdateModal({ open, onClose, onSuccess }: P
             type="button"
             disabled={busy}
             onClick={() => inputRef.current?.click()}
-            className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-accent-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:pointer-events-none disabled:opacity-50 sm:w-auto"
+            className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-on-accent shadow-sm transition hover:bg-accent-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:pointer-events-none disabled:opacity-50 sm:w-auto"
           >
-            <span className="inline-flex h-5 w-5 shrink-0 text-white" aria-hidden="true">
+            <span className="inline-flex h-5 w-5 shrink-0 text-on-accent" aria-hidden="true">
               <AnimatedNavIcon name="upload" className="h-5 w-5 text-[color:var(--on-accent)]" />
             </span>
             <span>{busy ? 'Updating…' : 'Upload Excel file'}</span>

@@ -46,19 +46,32 @@ const processQueue = (error: unknown, token: string | null = null) => {
 }
 
 const refreshTokenViaBFF = async (): Promise<string> => {
+  console.debug('[authNexus][refreshTokenViaBFF] STEP 1 — calling POST /api/auth/refresh...')
+
   const response = await fetch(`/api/auth/refresh`, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
   })
 
+  console.debug('[authNexus][refreshTokenViaBFF] STEP 1 response status:', response.status)
+
   if (!response.ok) {
+    const body = await response.text()
+    console.error('[authNexus][refreshTokenViaBFF] FAILED STEP 1 — /api/auth/refresh returned', response.status, '| body:', body)
     throw new Error(`Token refresh failed: ${response.status}`)
   }
 
   const data = await response.json()
+  console.debug('[authNexus][refreshTokenViaBFF] STEP 2 — response keys:', Object.keys(data), '| has_access_token:', !!data.access_token, '| expires_in:', data.expires_in)
+
   const newAccessToken: string = data.access_token
   const expiresIn: number = data.expires_in ?? 900
+
+  if (!newAccessToken) {
+    console.error('[authNexus][refreshTokenViaBFF] FAILED STEP 2 — access_token missing in response. Full data:', data)
+    throw new Error('No access_token in refresh response')
+  }
 
   setAuthNexusAccessToken(newAccessToken)
 
@@ -67,6 +80,9 @@ const refreshTokenViaBFF = async (): Promise<string> => {
     user.access_token = newAccessToken
     user.expires_at = Math.floor(Date.now() / 1000) + expiresIn
     await userManager.storeUser(user)
+    console.debug('[authNexus][refreshTokenViaBFF] STEP 3 OK — token stored. new expires_at:', user.expires_at)
+  } else {
+    console.warn('[authNexus][refreshTokenViaBFF] STEP 3 WARNING — no OIDC user in session to update.')
   }
 
   return newAccessToken
@@ -141,7 +157,7 @@ api.interceptors.request.use(async (config) => {
     isRefreshing = true
 
     try {
-      console.log("[authNexus.api] REQUEST INTERCEPTOR: Token expired or expiring - calling refreshTokenViaBFF()");
+      console.debug("[authNexus.api] REQUEST INTERCEPTOR: Token expired or expiring - calling refreshTokenViaBFF()");
       const newToken = await refreshTokenViaBFF()
       processQueue(null, newToken)
       user = await userManager.getUser()
@@ -186,14 +202,14 @@ api.interceptors.response.use(
       isRefreshing = true
 
       try {
-        console.log("[authNexus.api] RESPONSE INTERCEPTOR: 401 error - calling refreshTokenViaBFF() to refresh");
+        console.debug("[authNexus.api] RESPONSE INTERCEPTOR: 401 error - calling refreshTokenViaBFF() to refresh");
         const newToken = await refreshTokenViaBFF()
         processQueue(null, newToken)
         originalRequest.headers.set('Authorization', `Bearer ${newToken}`)
         return api(originalRequest)
       } catch (refreshError) {
         console.error("[authNexus.api] RESPONSE INTERCEPTOR: Failed to refresh token -", refreshError);
-        console.log("[authNexus.api] RESPONSE INTERCEPTOR: Calling removeUser() and redirecting to /login");
+        console.debug("[authNexus.api] RESPONSE INTERCEPTOR: Calling removeUser() and redirecting to /login");
         processQueue(refreshError, null)
         await userManager.removeUser()
         clearAuthNexusAccessToken()

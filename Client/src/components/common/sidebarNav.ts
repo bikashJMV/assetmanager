@@ -1,7 +1,7 @@
 import type { IconName } from './AnimatedNavIcon'
 import { FEATURES } from '../../utils/featureFlags'
 
-export type SidebarNavVisibility = 'always' | 'authenticated' | 'manage'
+export type SidebarNavVisibility = 'always' | 'authenticated' | 'manage' | 'it_ops'
 
 type SidebarNavCommon = {
   id: string
@@ -114,6 +114,21 @@ export const sidebarSections: SidebarNavSection[] = [
             ],
           },
         ],
+      },
+    ],
+  },
+  {
+    id: 'it-ops',
+    title: 'IT Ops',
+    items: [
+      {
+        id: 'logs',
+        type: 'link',
+        label: 'Logs',
+        to: '/logs',
+        icon: 'bell',
+        visibility: 'it_ops',
+        matchPrefix: true,
       },
     ],
   },

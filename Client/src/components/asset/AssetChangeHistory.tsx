@@ -75,7 +75,7 @@ function ViewToggleButton({
       onClick={onClick}
       className={`h-8 w-8 rounded-md border flex items-center justify-center transition ${
         pressed
-          ? 'border-accent bg-accent text-white'
+          ? 'border-accent bg-accent text-on-accent'
           : 'border-base bg-surface text-muted hover:border-accent-soft hover:bg-[color:var(--accent-soft)]/15 hover:text-accent'
       }`}
     >

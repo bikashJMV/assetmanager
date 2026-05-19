@@ -86,6 +86,7 @@ class AssetWriteRepository:
         created_by_employee_id: Optional[str] = None,
         source: str = "direct",
         qr_reservation_id: Optional[str] = None,
+        department_id: Optional[uuid.UUID] = None,
         conn: Any = None,
     ) -> dict[str, Any]:
         """
@@ -100,12 +101,14 @@ class AssetWriteRepository:
                 model, serial_number, status, purchase_date,
                 warranty_expiry, custom_fields, metadata, qr_code,
                 created_by_employee_id, source, qr_reservation_id,
+                department_id,
                 created_at, updated_at
             ) values (
                 $1, $2::uuid, $3::uuid, $4::uuid,
                 $5, $6, $7, $8::date,
                 $9::date, $10::jsonb, $11::jsonb, $12,
                 $13::uuid, $14, $15::uuid,
+                $16::uuid,
                 now(), now()
             ) returning id::text as id, asset_tag, serial_number
         """
@@ -114,6 +117,7 @@ class AssetWriteRepository:
             model, serial_number, status, purchase_date,
             warranty_expiry, custom_fields or {}, metadata or {}, qr_code,
             created_by_employee_id, source, qr_reservation_id,
+            str(department_id) if department_id else None,
         )
 
         if conn is not None:
@@ -200,9 +204,10 @@ class AssetWriteRepository:
             args = []
             
             updatable_fields = [
-                "asset_tag", "model", "serial_number", "status", 
+                "model", "serial_number", "status", 
                 "purchase_date", "warranty_expiry", "custom_fields", 
-                "metadata", "qr_code", "category_id", "manufacturer_id", "location_id"
+                "metadata", "qr_code", "category_id", "manufacturer_id", "location_id",
+                "department_id"
             ]
             
             for field in updatable_fields:

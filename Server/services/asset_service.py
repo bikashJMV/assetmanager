@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
+import asyncpg
+
 from core.asset_db_types import AssetDateCoercionError, normalize_asset_date_fields_inplace
 from core.authnexus import EmployeeContext
 from repositories.asset_write_repository import AssetWriteRepository
@@ -135,113 +137,146 @@ class AssetService:
             )
 
         # ─────────────────────────────────────────────────────────────
-        # PATH A — QR scan-to-log (atomic TX: consume reservation + insert asset)
+        # PATH A — QR scan-to-log (atomic TX: generate tag + insert asset + link QR)
         # ─────────────────────────────────────────────────────────────
         if qr_reservation_id:
-            async with pool().acquire() as conn:
-                async with conn.transaction():
-                    # 1. Atomically consume reservation (throws if already consumed/missing)
-                    reservation = await QrRepository.consume_reservation_in_tx(
-                        conn=conn,
-                        reservation_id=str(qr_reservation_id),
-                    )
-                    
-                    # 2. Use the reserved tag (override any client-supplied tag)
-                    reserved_tag = reservation["asset_tag"]
-                    
-                    # 3. Insert asset with source='qr_scan' + qr_reservation_id FK
-                    asset = await AssetWriteRepository.create_asset(
-                        asset_tag=reserved_tag,
-                        category_id=category_id,
-                        manufacturer_id=manufacturer_id,
-                        location_id=location_id,
-                        model=payload.get("model"),
-                        serial_number=payload["serial_number"],
-                        status=payload.get("status"),
-                        purchase_date=payload.get("purchase_date"),
-                        warranty_expiry=payload.get("warranty_expiry"),
-                        custom_fields=payload.get("custom_fields"),
-                        metadata=payload.get("metadata"),
-                        qr_code=payload.get("qr_code"),
-                        created_by_employee_id=actor.id,
-                        source="qr_scan",
-                        qr_reservation_id=str(qr_reservation_id),
-                        conn=conn,
-                    )
-                    
-                    # 4. Update reservation's consumed_by_asset_id to actual asset id
-                    await conn.execute(
-                        """
-                        update qr_tag_reservations
-                           set consumed_by_asset_id = $2::uuid
-                         where id = $1::uuid
-                        """,
-                        str(qr_reservation_id),
-                        asset["id"],
-                    )
-                    
-                    # 5. Audit — asset created (same event as Path B)
-                    await audit_service.write_asset_event(
-                        asset_id=asset["id"],
-                        event_type=AssetEventType.ASSET_CREATED,
-                        actor=actor,
-                        payload={
-                            "asset_tag": asset["asset_tag"],
-                            "category_id": category_id,
-                            "source": "qr_scan",
-                            "qr_reservation_id": str(qr_reservation_id),
-                        },
-                        ip_address=ip_address,
-                        user_agent=user_agent,
-                        conn=conn,
-                    )
-                    
-                    # 6. Audit — reservation consumed (Path A specific event)
-                    await audit_service.write_asset_event(
-                        asset_id=asset["id"],
-                        event_type=AssetEventType.QR_RESERVATION_CONSUMED,
-                        actor=actor,
-                        payload={
-                            "qr_reservation_id": str(qr_reservation_id),
-                            "asset_tag": asset["asset_tag"],
-                        },
-                        ip_address=ip_address,
-                        user_agent=user_agent,
-                        conn=conn,
-                    )
-                    
-                    # 7. Audit log entry
-                    await audit_service.write_asset_log(
-                        asset_id=asset["id"],
-                        actor=actor,
-                        note=payload.get("log_note") or "Asset created via QR scan.",
-                        metadata={"op": "asset.create", "source": "qr_scan"},
-                        conn=conn,
-                    )
-                    
-                    return asset
+            for _attempt in range(3):
+                try:
+                    async with pool().acquire() as conn:
+                        async with conn.transaction():
+                            # 1. Lock the reservation row; verify it is still unlinked
+                            reservation = await conn.fetchrow(
+                                """
+                                SELECT id, status FROM qr_tag_reservations
+                                 WHERE id = $1::uuid AND status = 'unlinked'
+                                 FOR UPDATE
+                                """,
+                                str(qr_reservation_id),
+                            )
+                            if not reservation:
+                                from repositories.errors import NotFoundError
+                                raise NotFoundError("QR reservation not found or already linked.")
+
+                            # 2. Resolve alias_code from category, generate asset tag inside TX
+                            row = await conn.fetchrow(
+                                "SELECT alias_code FROM asset_categories WHERE id = $1::uuid",
+                                category_id,
+                            )
+                            alias_code = row["alias_code"] if row and row["alias_code"] else None
+                            if not alias_code:
+                                raise ValidationError(f"Category {category_id} has no alias_code mapping.")
+                            generated_tag = await conn.fetchval("SELECT fn_next_asset_tag($1)", alias_code)
+
+                            # 3. Insert asset with source='qr_scan' + qr_reservation_id FK
+                            asset = await AssetWriteRepository.create_asset(
+                                asset_tag=generated_tag,
+                                category_id=category_id,
+                                manufacturer_id=manufacturer_id,
+                                location_id=location_id,
+                                model=payload.get("model"),
+                                serial_number=payload["serial_number"],
+                                status=payload.get("status"),
+                                purchase_date=payload.get("purchase_date"),
+                                warranty_expiry=payload.get("warranty_expiry"),
+                                custom_fields=payload.get("custom_fields"),
+                                metadata=payload.get("metadata"),
+                                qr_code=payload.get("qr_code"),
+                                created_by_employee_id=actor.id,
+                                source="qr_scan",
+                                qr_reservation_id=str(qr_reservation_id),
+                                department_id=payload.get("department_id"),
+                                conn=conn,
+                            )
+
+                            # 4. Link reservation — writes asset_tag + asset_id, status → linked
+                            await QrRepository.link_reservation_in_tx(
+                                conn=conn,
+                                reservation_id=str(qr_reservation_id),
+                                asset_tag=generated_tag,
+                                asset_id=asset["id"],
+                            )
+
+                            # 5. Audit — asset created
+                            await audit_service.write_asset_event(
+                                asset_id=asset["id"],
+                                event_type=AssetEventType.ASSET_CREATED,
+                                actor=actor,
+                                payload={
+                                    "asset_tag": asset["asset_tag"],
+                                    "category_id": category_id,
+                                    "source": "qr_scan",
+                                    "qr_reservation_id": str(qr_reservation_id),
+                                },
+                                ip_address=ip_address,
+                                user_agent=user_agent,
+                                conn=conn,
+                            )
+
+                            # 6. Audit — QR reservation linked
+                            await audit_service.write_asset_event(
+                                asset_id=asset["id"],
+                                event_type=AssetEventType.QR_RESERVATION_LINKED,
+                                actor=actor,
+                                payload={
+                                    "qr_reservation_id": str(qr_reservation_id),
+                                    "asset_tag": asset["asset_tag"],
+                                },
+                                ip_address=ip_address,
+                                user_agent=user_agent,
+                                conn=conn,
+                            )
+
+                            # 7. Audit log entry
+                            await audit_service.write_asset_log(
+                                asset_id=asset["id"],
+                                actor=actor,
+                                note=payload.get("log_note") or "Asset created via QR scan.",
+                                metadata={"op": "asset.create", "source": "qr_scan"},
+                                conn=conn,
+                            )
+
+                            return asset
+                except asyncpg.UniqueViolationError:
+                    if _attempt == 2:
+                        raise
+                    continue
 
         # ─────────────────────────────────────────────────────────────
-        # PATH B — Direct form submit (EXISTING FLOW, BYTE-IDENTICAL)
+        # PATH B — Direct form submit
         # ─────────────────────────────────────────────────────────────
-        asset_tag = (payload.get("asset_tag") or "").strip() or await _AR.get_next_asset_tag()
-
-        asset = await AssetWriteRepository.create_asset(
-            asset_tag=asset_tag,
-            category_id=category_id,
-            manufacturer_id=manufacturer_id,
-            location_id=location_id,
-            model=payload.get("model"),
-            serial_number=payload["serial_number"],
-            status=payload.get("status"),
-            purchase_date=payload.get("purchase_date"),
-            warranty_expiry=payload.get("warranty_expiry"),
-            custom_fields=payload.get("custom_fields"),
-            metadata=payload.get("metadata"),
-            qr_code=payload.get("qr_code"),
-            created_by_employee_id=actor.id,
-            # source defaults to 'direct' in repo; explicit for clarity
-        )
+        asset_tag = (payload.get("asset_tag") or "").strip()
+        asset: dict[str, Any] | None = None
+        for _attempt in range(3):
+            if not asset_tag:
+                async with pool().acquire() as conn:
+                    row = await conn.fetchrow("SELECT alias_code FROM asset_categories WHERE id = $1::uuid", category_id)
+                    alias_code = row["alias_code"] if row and row["alias_code"] else None
+                    if not alias_code:
+                        raise ValidationError(f"Category {category_id} has no alias_code mapping.")
+                    asset_tag = await conn.fetchval("SELECT fn_next_asset_tag($1);", alias_code)
+            try:
+                asset = await AssetWriteRepository.create_asset(
+                    asset_tag=asset_tag,
+                    category_id=category_id,
+                    manufacturer_id=manufacturer_id,
+                    location_id=location_id,
+                    model=payload.get("model"),
+                    serial_number=payload["serial_number"],
+                    status=payload.get("status"),
+                    purchase_date=payload.get("purchase_date"),
+                    warranty_expiry=payload.get("warranty_expiry"),
+                    custom_fields=payload.get("custom_fields"),
+                    metadata=payload.get("metadata"),
+                    qr_code=payload.get("qr_code"),
+                    created_by_employee_id=actor.id,
+                    department_id=payload.get("department_id"),
+                )
+                break
+            except asyncpg.UniqueViolationError:
+                if _attempt == 2:
+                    raise
+                asset_tag = ""  # force tag regeneration on next attempt
+                continue
 
         await audit_service.write_asset_event(
             asset_id=asset["id"],
@@ -278,7 +313,7 @@ class AssetService:
         count = 0
         failed_rows: list[str] = []
 
-        for row in rows:
+        for i, row in enumerate(rows):
             try:
                 await AssetService.create_asset(
                     payload=row,
@@ -289,17 +324,12 @@ class AssetService:
                 )
                 count += 1
             except Exception as exc:
-                tag = row.get("asset_tag") or row.get("serial_number") or "unknown"
-                failed_rows.append(f"{tag}: {exc}")
+                tag = row.get("asset_tag") or row.get("serial_number") or f"row {i + 1}"
+                reason = str(exc)
+                failed_rows.append(f"{tag}: {reason}")
                 logger.error("[bulk_insert] Row failed — %s: %s", tag, exc, exc_info=True)
 
-        if count == 0 and failed_rows:
-            # All rows failed — surface the first real error to the router
-            raise ValidationError(
-                f"All {len(failed_rows)} row(s) failed. First error: {failed_rows[0]}"
-            )
-
-        return count
+        return {"inserted": count, "failed_rows": failed_rows}
 
 
     @staticmethod

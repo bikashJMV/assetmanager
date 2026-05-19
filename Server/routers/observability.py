@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException, status
 from pydantic import BaseModel
 
 from core.settings import settings
-from core.auth import require_it_ops_access
+from core.authz import require_it_ops
 
 router = APIRouter(prefix="/observability/logs", tags=["Observability"])
 
@@ -30,7 +30,7 @@ async def get_logs(
     service: str = Query("all", description="'ams-server', 'telemetry-server', or 'all'"),
     level: str = Query("", description="error, warn, info, debug"),
     cursor: str = Query("", description="For forward pagination"),
-    _=Depends(require_it_ops_access)
+    _=Depends(require_it_ops)
 ):
     """
     Purpose: Query Loki and return recent logs for IT Ops troubleshooting.

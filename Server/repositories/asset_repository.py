@@ -38,12 +38,14 @@ class AssetRepository:
             where.append(rendered)
 
         if search and search.strip():
-            s = f"%{search.strip()}%"
+            escaped = search.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            s = f"%{escaped}%"
             add_raw(
                 "("
-                "asset_tag ilike ? or serial_number ilike ? or model ilike ? or manufacturer_name ilike ? "
-                "or location_name ilike ? or current_employee_name ilike ? or current_employee_business_id ilike ? "
-                "or category_name ilike ?"
+                "asset_tag ilike ? escape '\\' or serial_number ilike ? escape '\\' "
+                "or model ilike ? escape '\\' or manufacturer_name ilike ? escape '\\' "
+                "or location_name ilike ? escape '\\' or current_employee_name ilike ? escape '\\' "
+                "or current_employee_business_id ilike ? escape '\\' or category_name ilike ? escape '\\'"
                 ")",
                 s,
                 s,
@@ -71,16 +73,20 @@ class AssetRepository:
             add_raw("current_employee_id::text = ?", employee_id.strip())
 
         where_sql = " and ".join(where) if where else "1=1"
+        args.append(p.offset)
+        args.append(p.limit)
+        offset_param = f"${len(args) - 1}"
+        limit_param = f"${len(args)}"
         sql = (
             "select * from v_asset_inventory "
             f"where {where_sql} "
-            "order by updated_at desc "
-            f"offset {p.offset} limit {p.limit}"
+            f"order by updated_at desc "
+            f"offset {offset_param} limit {limit_param}"
         )
-        count_sql = "select count(*)::bigint from v_asset_inventory " f"where {where_sql}"
+        count_sql = f"select count(*)::bigint from v_asset_inventory where {where_sql}"
 
         async with pool().acquire() as conn:
-            total = int(await conn.fetchval(count_sql, *args))
+            total = int(await conn.fetchval(count_sql, *args[:-2]))
             rows = await fetch_dicts(conn, sql, *args)
         return rows, p, total
 

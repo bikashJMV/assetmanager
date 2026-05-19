@@ -66,7 +66,7 @@ export default function QrBatches() {
           </div>
           <button
             onClick={() => setModalOpen(true)}
-            className="inline-flex h-11 shrink-0 items-center gap-2 rounded-xl border border-transparent bg-accent px-4 text-sm font-semibold text-white shadow-sm hover:bg-accent-hover transition"
+            className="inline-flex h-11 shrink-0 items-center gap-2 rounded-xl border border-transparent bg-accent px-4 text-sm font-semibold text-on-accent shadow-sm hover:bg-accent-hover transition"
           >
             Generate New Batch
           </button>
@@ -90,7 +90,6 @@ export default function QrBatches() {
                     {/* <th className="px-5 py-3 font-semibold">Batch Code</th> */}
                     <th className="px-5 py-3 font-semibold">Date Created</th>
                     <th className="px-5 py-3 font-semibold">Count</th>
-                    <th className="px-5 py-3 font-semibold">Range</th>
                     <th className="px-5 py-3 font-semibold">Status</th>
                     <th className="px-5 py-3 font-semibold text-right">Actions</th>
                   </tr>
@@ -101,10 +100,7 @@ export default function QrBatches() {
                       <td className="px-5 py-4 font-medium text-primary">{i + 1}</td>
                       {/* <td className="px-5 py-4 font-medium text-primary">{batch.batch_code}</td> */}
                       <td className="px-5 py-4 text-subtle">{formatDateTime(batch.created_at)}</td>
-                      <td className="px-5 py-4 text-primary">{batch.requested_count ?? batch.count ?? '-'}</td>
-                      <td className="px-5 py-4 text-subtle font-mono text-xs">
-                        {batch.start_tag && batch.end_tag ? `${batch.start_tag} - ${batch.end_tag}` : '-'}
-                      </td>
+                      <td className="px-5 py-4 text-primary">{batch.requested_count ?? '-'}</td>
                       <td className="px-5 py-4">{renderStatus(batch.status)}</td>
                       <td className="px-5 py-4 text-right">
                         {batch.status === 'generated' && (

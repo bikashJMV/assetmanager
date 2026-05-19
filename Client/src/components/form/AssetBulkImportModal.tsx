@@ -27,7 +27,7 @@ type Phase =
   | { name: 'preview'; rows: AssetImportParsedRow[]; mapping: HeaderMappingEntry[]; fileName: string }
   | { name: 'importing' }
   | { name: 'error'; errors: string[]; mapping?: HeaderMappingEntry[] }
-  | { name: 'success'; inserted: number }
+  | { name: 'success'; inserted: number; failed_rows: string[] }
 
 type Props = {
   open: boolean
@@ -120,12 +120,15 @@ export default function AssetBulkImportModal({ open, onClose, onSuccess, default
       if (!mountedRef.current) return
 
       if (result.inserted === 0) {
-        setPhase({ name: 'error', errors: ['No assets were saved. All rows failed on the server.'] })
+        const errors = result.failed_rows?.length
+          ? result.failed_rows
+          : ['No assets were saved. All rows failed on the server.']
+        setPhase({ name: 'error', errors })
         showToast({ variant: 'error', title: 'Import failed', message: 'No assets were saved.', durationMs: 0 })
         return
       }
 
-      setPhase({ name: 'success', inserted: result.inserted })
+      setPhase({ name: 'success', inserted: result.inserted, failed_rows: result.failed_rows ?? [] })
       showToast({ variant: 'success', message: `Imported ${result.inserted} new asset${result.inserted === 1 ? '' : 's'}.` })
       onSuccess()
     } catch (err) {
@@ -188,9 +191,9 @@ export default function AssetBulkImportModal({ open, onClose, onSuccess, default
               <button
                 type="button"
                 onClick={() => inputRef.current?.click()}
-                className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-accent-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent sm:w-auto"
+                className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-on-accent shadow-sm transition hover:bg-accent-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent sm:w-auto"
               >
-                <span className="inline-flex h-5 w-5 shrink-0 text-white" aria-hidden="true">
+                <span className="inline-flex h-5 w-5 shrink-0 text-on-accent" aria-hidden="true">
                   <AnimatedNavIcon name="upload" className="h-5 w-5 text-[color:var(--on-accent)]" />
                 </span>
                 <span>Choose Excel file</span>
@@ -245,7 +248,7 @@ export default function AssetBulkImportModal({ open, onClose, onSuccess, default
                 <button
                   type="button"
                   onClick={() => void runImport()}
-                  className="flex-1 bg-accent text-white font-semibold py-2 rounded-lg hover:bg-accent-hover transition text-sm shadow-accent"
+                  className="flex-1 bg-accent text-on-accent font-semibold py-2 rounded-lg hover:bg-accent-hover transition text-sm shadow-accent"
                 >
                   Import {phase.rows.length} asset{phase.rows.length === 1 ? '' : 's'}
                 </button>
@@ -266,15 +269,35 @@ export default function AssetBulkImportModal({ open, onClose, onSuccess, default
 
           {/* ── Success ── */}
           {phase.name === 'success' && (
-            <div className="rounded-xl border border-green-500/30 bg-green-500/[0.06] dark:bg-green-400/[0.08] px-4 py-4 text-center">
-              <p className="text-lg font-semibold text-primary">
-                {phase.inserted} asset{phase.inserted === 1 ? '' : 's'} imported
-              </p>
-              <p className="text-sm text-muted mt-1">All rows were saved successfully.</p>
+            <div className="space-y-3">
+              <div className="rounded-xl border border-green-500/30 bg-green-500/[0.06] dark:bg-green-400/[0.08] px-4 py-4 text-center">
+                <p className="text-lg font-semibold text-primary">
+                  {phase.inserted} asset{phase.inserted === 1 ? '' : 's'} imported
+                </p>
+                <p className="text-sm text-muted mt-1">
+                  {phase.failed_rows.length === 0
+                    ? 'All rows were saved successfully.'
+                    : `${phase.failed_rows.length} row${phase.failed_rows.length === 1 ? '' : 's'} failed — see details below.`}
+                </p>
+              </div>
+              {phase.failed_rows.length > 0 && (
+                <div
+                  className="max-h-52 overflow-y-auto rounded-xl border border-red-500/35 bg-red-500/[0.06] py-3 pl-4 pr-3 dark:border-red-400/35 dark:bg-red-400/[0.08]"
+                  role="region"
+                  aria-label="Failed rows"
+                >
+                  <p className="text-sm font-semibold text-primary">Rows not saved</p>
+                  <ul className="mt-2.5 list-disc space-y-2 pl-5 text-sm leading-snug text-muted marker:text-red-600 dark:marker:text-red-400">
+                    {phase.failed_rows.map((line, idx) => (
+                      <li key={idx} className="break-words pl-0.5">{line}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               <button
                 type="button"
                 onClick={handleClose}
-                className="mt-4 bg-accent text-white font-semibold px-6 py-2 rounded-lg hover:bg-accent-hover transition text-sm shadow-accent"
+                className="w-full bg-accent text-on-accent font-semibold px-6 py-2 rounded-lg hover:bg-accent-hover transition text-sm shadow-accent"
               >
                 Done
               </button>

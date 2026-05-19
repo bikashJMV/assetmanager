@@ -21,6 +21,9 @@ class AssetEventType(str, Enum):
     BULK_IMPORTED = "bulk_imported"
     QR_BATCH_GENERATED = "qr_batch_generated"
     QR_RESERVATION_CONSUMED = "qr_reservation_consumed"
+    QR_RESERVATION_LINKED = "qr_reservation_linked"
+    ASSET_DEPT_AUTO_UPDATED = "asset_dept_auto_updated"
+    ASSET_ASSIGNMENT_BLOCKED = "asset_assignment_blocked"
 
 
 @dataclass(frozen=True)

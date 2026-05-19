@@ -1,7 +1,9 @@
+import type { ReactNode } from 'react'
+
 type ConfirmDialogProps = {
   open: boolean
   title: string
-  message: string
+  message: ReactNode
   confirmLabel?: string
   cancelLabel?: string
   loading?: boolean
@@ -47,7 +49,7 @@ export default function ConfirmDialog({
           </button>
         ) : null}
         <h3 className="text-lg font-semibold text-primary">{title}</h3>
-        <p className="mt-2 text-sm text-muted">{message}</p>
+        <div className="mt-2 text-sm text-muted">{message}</div>
         <div className="mt-5 flex items-center justify-end gap-2">
           <button
             type="button"
@@ -61,7 +63,7 @@ export default function ConfirmDialog({
             type="button"
             onClick={onConfirm}
             disabled={loading}
-            className="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white transition hover:bg-accent-hover disabled:opacity-60"
+            className="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-on-accent transition hover:bg-accent-hover disabled:opacity-60"
           >
             {loading ? 'Please wait...' : confirmLabel}
           </button>

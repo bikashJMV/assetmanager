@@ -35,11 +35,11 @@ const ScanPage = lazy(() => import('./components/pages/ScanPage'))
 const PageNotFound = lazy(() => import('./components/common/PageNotFound'))
 const Guide = lazy(() => import('./components/common/Guide'))
 const Analysis = lazy(() => import('./components/pages/Analysis'))
+const LogsPage = lazy(() => import('./components/pages/LogsPage'))
 const QrBatches = lazy(() => import('./components/pages/QrBatches'))
 const RecycleBin = lazy(() => import('./components/pages/RecycleBin'))
 const Notifications = lazy(() => import('./components/pages/Notifications'))
-const IdleWarningModal = lazy(() => import('./components/common/IdleWarningModal'))
-import { useIdleTimeout } from './hooks/useIdleTimeout'
+
 const Employee = lazy(() => import('./components/pages/Employee'))
 const EmployeeDetail = lazy(() => import('./components/pages/EmployeeDetail'))
 const NewEmployee = lazy(() => import('./components/pages/NewEmployee'))
@@ -153,12 +153,6 @@ function AppRoutes() {
     }
   }
 
-  const { isWarning, stayLoggedIn, logoutNow } = useIdleTimeout({
-    isAuthenticated: Boolean(user && !user.expired),
-    onWarn: () => { },
-    onIdle: () => void handleSignOut(),
-  })
-
   const breadcrumbStore = useMemo(() => createBreadcrumbStore(), [])
   useEffect(() => { breadcrumbStore.set(null) }, [location.pathname, breadcrumbStore])
 
@@ -170,12 +164,6 @@ function AppRoutes() {
 
   return (
     <div className="min-h-screen bg-app text-primary flex flex-col">
-      {isWarning && user && (
-        <Suspense fallback={null}>
-          <IdleWarningModal onStayLoggedIn={stayLoggedIn} onLogoutNow={logoutNow} />
-        </Suspense>
-      )}
-
       {showTopBar && (
         <TopBar
           onToggleSidebar={() => setSidebarCollapsed((v) => !v)}
@@ -230,6 +218,10 @@ function AppRoutes() {
                     <Route path="/analysis" element={<Analysis />} />
                     <Route path="/qr-generate/batches" element={<QrBatches />} />
                     {FEATURES.RECYCLE_BIN && <Route path="/recycle-bin" element={<RecycleBin />} />}
+                  </Route>
+
+                  <Route element={<RequireItOps sessionEmployee={sessionEmployee} />}>
+                    <Route path="/logs" element={<LogsPage />} />
                   </Route>
                 </Route>
 
@@ -340,7 +332,7 @@ function TopBar({
                       navigate('/login')
                     }
                   }}
-                  className="w-full rounded-lg bg-accent text-white text-sm font-semibold py-1 hover:bg-accent-hover transition"
+                  className="w-full rounded-lg bg-accent text-on-accent text-sm font-semibold py-1 hover:bg-accent-hover transition"
                 >
                   {hasOidcSession ? 'Sign out' : 'Sign in'}
                 </button>
@@ -372,7 +364,7 @@ function TopBar({
                     ))}
                   </div>
                   <div className="p-2 border-t border-base">
-                    <button type="button" onClick={() => { setNotifOpen(false); navigate('/notifications') }} className="w-full rounded-lg bg-accent text-white text-sm font-semibold py-1.5 hover:bg-accent-hover transition">
+                    <button type="button" onClick={() => { setNotifOpen(false); navigate('/notifications') }} className="w-full rounded-lg bg-accent text-on-accent text-sm font-semibold py-1.5 hover:bg-accent-hover transition">
                       View all
                     </button>
                   </div>
@@ -395,8 +387,13 @@ function RequireAuth({ user, profileLoading, sessionEmployee }: { user: User | n
 }
 
 function RequirePrivileged({ sessionEmployee }: { sessionEmployee: SessionEmployee | null }) {
-  const isPrivileged = sessionEmployee?.is_active && sessionEmployee.role !== 'employee'
+  const isPrivileged = sessionEmployee && sessionEmployee.role !== 'employee'
   return isPrivileged ? <Outlet /> : <Navigate to="/assets" replace />
+}
+
+function RequireItOps({ sessionEmployee }: { sessionEmployee: SessionEmployee | null }) {
+  const isItOps = sessionEmployee && sessionEmployee.role === 'it_ops'
+  return isItOps ? <Outlet /> : <Navigate to="/assets" replace />
 }
 
 function AuthLoadingScreen() {
@@ -428,7 +425,7 @@ function SignInScreen() {
         <button
           onClick={handleSignIn}
           disabled={loading}
-          className="w-full bg-accent text-white font-bold py-3 rounded-xl hover:bg-accent-hover transition-all flex items-center justify-center gap-3"
+          className="w-full bg-accent text-on-accent font-bold py-3 rounded-xl hover:bg-accent-hover transition-all flex items-center justify-center gap-3"
         >
           {loading ? 'Redirecting...' : 'Sign in with authNexus'}
         </button>

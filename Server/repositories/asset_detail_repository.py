@@ -100,7 +100,7 @@ class AssetDetailRepository:
                        e.id::text as employee_uuid,
                        e.employee_id,
                        e.name as employee_name,
-                       coalesce(e.is_active, true) as employee_is_active,
+                       true as employee_is_active,
                        d.name as employee_department,
                        coalesce(e.role, 'employee') as employee_role
                   from asset_assignments aa

@@ -35,12 +35,13 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
   const detectorRef = useRef<BarcodeDetectorInstance | null>(null)
   const frameRef = useRef<number | null>(null)
   const scannerBusyRef = useRef(false)
+  const scannerActiveRef = useRef(false)
   const [manualTag, setManualTag] = useState('')
   const [scannerActive, setScannerActive] = useState(false)
   const [scannerError, setScannerError] = useState('')
   const ref = (id || '').trim()
   const publicScan = usePublicAssetScanQuery(ref)
-  const protectedScan = useProtectedAssetScanQuery(ref)
+  const protectedScan = useProtectedAssetScanQuery(ref, protectedRoute && Boolean(ref))
   const activeScan = protectedRoute ? protectedScan : publicScan
 
   useEffect(() => {
@@ -55,14 +56,13 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
     const data = protectedScan.data
     if (!data || typeof data !== 'object') return
 
-    // NEW — ready_to_log redirect (Path A scan-to-log)
+    // ready_to_log redirect — QR is unlinked, send to new asset form with reservation ID only
     if ('kind' in data && (data as { kind?: unknown }).kind === 'ready_to_log') {
-      const d = data as { asset_tag?: unknown; qr_reservation_id?: unknown }
-      const tag = typeof d.asset_tag === 'string' ? d.asset_tag : ref
+      const d = data as { qr_reservation_id?: unknown }
       const reservationId = typeof d.qr_reservation_id === 'string' ? d.qr_reservation_id : ''
-      if (tag && reservationId) {
+      if (reservationId) {
         void navigate(
-          `/assets/new?tag=${encodeURIComponent(tag)}&reservation_id=${encodeURIComponent(reservationId)}`,
+          `/assets/new?reservation_id=${encodeURIComponent(reservationId)}`,
           { replace: true }
         )
         return
@@ -101,7 +101,7 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
     e.preventDefault()
     const trimmed = manualTag.trim()
     if (!trimmed) return
-    const resolved = extractAssetTagFromScanValue(trimmed)
+    const resolved = extractScanRefFromValue(trimmed)
     if (!resolved) {
       setScannerError('Unable to resolve asset tag from input.')
       return
@@ -112,6 +112,7 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
   }
 
   const stopScanner = () => {
+    scannerActiveRef.current = false
     if (frameRef.current !== null) {
       cancelAnimationFrame(frameRef.current)
       frameRef.current = null
@@ -126,10 +127,12 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
   }
 
   const detectFrame = async () => {
-    if (!videoRef.current || !scannerActive || !detectorRef.current || scannerBusyRef.current) {
-      frameRef.current = requestAnimationFrame(() => {
-        void detectFrame()
-      })
+    if (!scannerActiveRef.current || !videoRef.current || !detectorRef.current || scannerBusyRef.current) {
+      if (scannerActiveRef.current) {
+        frameRef.current = requestAnimationFrame(() => {
+          void detectFrame()
+        })
+      }
       return
     }
 
@@ -138,7 +141,7 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
       const barcodes = await detectorRef.current.detect(videoRef.current)
       if (Array.isArray(barcodes) && barcodes.length > 0) {
         const rawValue = String(barcodes[0]?.rawValue || '').trim()
-        const resolved = extractAssetTagFromScanValue(rawValue)
+        const resolved = extractScanRefFromValue(rawValue)
         if (resolved) {
           stopScanner()
           const target = protectedRoute ? `/assets/scan/${encodeURIComponent(resolved)}` : `/scan/${encodeURIComponent(resolved)}`
@@ -150,9 +153,11 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
       // Keep scanning loop running unless explicitly stopped.
     } finally {
       scannerBusyRef.current = false
-      frameRef.current = requestAnimationFrame(() => {
-        void detectFrame()
-      })
+      if (scannerActiveRef.current) {
+        frameRef.current = requestAnimationFrame(() => {
+          void detectFrame()
+        })
+      }
     }
   }
 
@@ -181,6 +186,7 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
         videoRef.current.srcObject = stream
         await videoRef.current.play()
       }
+      scannerActiveRef.current = true
       setScannerActive(true)
       frameRef.current = requestAnimationFrame(() => {
         void detectFrame()
@@ -215,7 +221,7 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
                 onClick={() => {
                   void startScanner()
                 }}
-                className="w-full bg-accent text-white font-semibold px-4 py-2.5 rounded-lg hover:bg-accent-hover transition text-sm"
+                className="w-full bg-accent text-on-accent font-semibold px-4 py-2.5 rounded-lg hover:bg-accent-hover transition text-sm"
               >
                 Start Camera Scanner
               </button>
@@ -246,7 +252,7 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
             />
             <button
               type="submit"
-              className="bg-accent text-white font-semibold px-4 py-2.5 rounded-lg hover:bg-accent-hover transition text-sm"
+              className="bg-accent text-on-accent font-semibold px-4 py-2.5 rounded-lg hover:bg-accent-hover transition text-sm"
             >
               Lookup
             </button>
@@ -317,39 +323,55 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
   const publicAsset = asset as PublicScanAsset
   const heading = formatDisplay(publicAsset.category_name) || formatDisplay(publicAsset.asset_tag) || '-'
 
-  if ((activeScan.data as any)?.kind === 'reserved') {
+  if (typeof activeScan.data === 'object' && activeScan.data !== null && 'kind' in activeScan.data && (activeScan.data as { kind: unknown }).kind === 'unlinked') {
     return (
-      <main className="min-h-screen bg-app text-primary px-4 py-8">
-        <div className="text-center mb-8 mt-12">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-accent/10 text-accent mb-4">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-8 h-8">
-              <path d="M4 8V5h3" />
-              <path d="M20 8V5h-3" />
-              <path d="M4 16v3h3" />
-              <path d="M20 16v3h-3" />
-              <rect x="9" y="9" width="6" height="6" rx="1" />
-            </svg>
+      <main className="min-h-screen bg-app text-primary flex flex-col items-center justify-center px-4 py-12">
+        {/* Card */}
+        <div className="w-full max-w-sm bg-surface border border-base rounded-2xl shadow-xl overflow-hidden">
+          {/* Header strip */}
+          <div className="bg-accent/10 border-b border-accent/20 px-6 py-5 flex flex-col items-center gap-2">
+            <div className="inline-flex items-center justify-center w-14 h-14 rounded-full bg-accent/15 text-accent">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-7 h-7">
+                <path d="M4 8V5h3" /><path d="M20 8V5h-3" />
+                <path d="M4 16v3h3" /><path d="M20 16v3h-3" />
+                <rect x="9" y="9" width="6" height="6" rx="1" />
+              </svg>
+            </div>
+            <p className="text-accent text-xs font-semibold uppercase tracking-widest">Unregistered QR</p>
+            <h1 className="text-xl font-bold text-primary text-center">This QR is ready to log</h1>
           </div>
-          <p className="text-accent text-xs uppercase tracking-widest mb-1">New Asset</p>
-          <h1 className="text-2xl font-bold">{publicAsset.asset_tag}</h1>
+
+          {/* Body */}
+          <div className="px-6 py-6 flex flex-col gap-5">
+            <div className="flex flex-col gap-2">
+              <div className="flex items-start gap-3">
+                <span className="mt-0.5 flex-shrink-0 w-5 h-5 rounded-full bg-accent/10 text-accent flex items-center justify-center text-xs font-bold">1</span>
+                <p className="text-sm text-subtle">Sign in as Administrator.</p>
+              </div>
+              <div className="flex items-start gap-3">
+                <span className="mt-0.5 flex-shrink-0 w-5 h-5 rounded-full bg-accent/10 text-accent flex items-center justify-center text-xs font-bold">2</span>
+                <p className="text-sm text-subtle">Fill in the asset details in the form.</p>
+              </div>
+              <div className="flex items-start gap-3">
+                <span className="mt-0.5 flex-shrink-0 w-5 h-5 rounded-full bg-accent/10 text-accent flex items-center justify-center text-xs font-bold">3</span>
+                <p className="text-sm text-subtle">Submit — the asset tag is auto-generated and this QR gets linked permanently.</p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                const next = `/assets/scan/${encodeURIComponent(ref)}`
+                navigate(`/login?next=${encodeURIComponent(next)}`)
+              }}
+              className="w-full bg-accent text-on-accent font-semibold py-3 rounded-xl hover:bg-accent-hover transition shadow-accent text-sm"
+            >
+              Sign In to Log Asset
+            </button>
+          </div>
         </div>
 
-        <div className="max-w-md mx-auto p-6 text-center">
-          <p className="text-sm text-subtle mb-6">
-            Note: <b className="text-accent font-bold">Unassigned QR Tag</b> - This QR tag is ready to be assigned to a new asset. Please sign in to assign it to a new asset.
-          </p>
-          <button
-            type="button"
-            onClick={() => {
-              const next = `/assets/scan/${publicAsset.asset_tag}`
-              navigate(`/login?next=${encodeURIComponent(next)}`)
-            }}
-            className="bg-accent text-white font-semibold px-6 py-3 rounded-xl hover:bg-accent-hover transition shadow-accent"
-          >
-            Sign In to Log Asset
-          </button>
-        </div>
-        <p className="text-center text-subtle text-xs mt-10">Powered by Asset Manager</p>
+        <p className="text-subtle text-xs mt-8">Powered by Asset Manager</p>
       </main>
     )
   }
@@ -391,7 +413,7 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
               const next = `/assets/${publicAsset.asset_tag}`
               navigate(`/login?next=${encodeURIComponent(next)}`)
             }}
-            className="bg-accent text-white font-semibold px-6 py-2.5 rounded-lg hover:bg-accent-hover transition text-sm shadow-accent"
+            className="bg-accent text-on-accent font-semibold px-6 py-2.5 rounded-lg hover:bg-accent-hover transition text-sm shadow-accent"
           >
            Login / See More
           </button>
@@ -403,7 +425,7 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
   )
 }
 
-function extractAssetTagFromScanValue(raw: string): string | null {
+function extractScanRefFromValue(raw: string): string | null {
   const value = raw.trim()
   if (!value) return null
 

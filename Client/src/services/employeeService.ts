@@ -7,7 +7,6 @@ export type ListEmployeesParams = {
   page: number
   limit: number
   search?: string
-  status?: 'true' | 'false' | 'all'
   department?: string
   role?: string
 }
@@ -46,7 +45,7 @@ export async function getEmployeePortfolio(id: string): Promise<EmployeePortfoli
 }
 
 /** Create a new employee (admin/it_ops only). */
-export async function createEmployee(input: Omit<EmployeeUpsertInput, 'id'>): Promise<EmployeeRecord> {
+export async function createEmployee(input: Omit<EmployeeUpsertInput, 'id' | 'is_active'>): Promise<EmployeeRecord> {
   return apiRequest<EmployeeRecord>({
     method: 'POST',
     url: '/api/v1/employees',
@@ -56,13 +55,12 @@ export async function createEmployee(input: Omit<EmployeeUpsertInput, 'id'>): Pr
       email: input.email?.trim() || null,
       department: input.department?.trim() || null,
       role: input.role ?? 'employee',
-      is_active: input.is_active ?? true,
     },
   })
 }
 
 /** Update an existing employee (admin/it_ops only). */
-export async function updateEmployee(id: string, input: Omit<EmployeeUpsertInput, 'id'>): Promise<EmployeeRecord> {
+export async function updateEmployee(id: string, input: Omit<EmployeeUpsertInput, 'id' | 'is_active'>): Promise<EmployeeRecord> {
   return apiRequest<EmployeeRecord>({
     method: 'PUT',
     url: `/api/v1/employees/${encodeURIComponent(id)}`,
@@ -72,7 +70,6 @@ export async function updateEmployee(id: string, input: Omit<EmployeeUpsertInput
       email: input.email?.trim() || null,
       department: input.department?.trim() || null,
       role: input.role ?? 'employee',
-      is_active: input.is_active ?? true,
     },
   })
 }
@@ -83,14 +80,6 @@ export async function changeEmployeeRole(id: string, role: EmployeeRole): Promis
     method: 'PATCH',
     url: `/api/v1/employees/${encodeURIComponent(id)}/role`,
     data: { role },
-  })
-}
-
-/** Soft-delete an employee — moves to Recycle Bin (admin/it_ops only). */
-export async function softDeleteEmployee(id: string): Promise<{ employee_id: string; recycle_bin_id: string }> {
-  return apiRequest<{ employee_id: string; recycle_bin_id: string }>({
-    method: 'POST',
-    url: `/api/v1/employees/${encodeURIComponent(id)}/soft-delete`,
   })
 }
 
@@ -107,7 +96,6 @@ export async function searchAssignableEmployees(
     page: 1,
     limit,
     search: trimmed,
-    status: 'true',
   })
 
   return (result.items ?? []).filter((row) => row.employee_id.trim().length > 0)

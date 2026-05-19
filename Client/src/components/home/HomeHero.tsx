@@ -29,13 +29,13 @@ export default function HomeHero({ isAuthenticated }: { isAuthenticated: boolean
         <div className="mt-8 flex flex-wrap justify-center gap-3">
           <Link
             to="/assets"
-            className="rounded-full bg-accent px-6 py-3 text-sm font-semibold text-white transition hover:bg-accent-hover shadow-accent"
+            className="rounded-full bg-accent px-6 py-3 text-sm font-semibold text-on-accent transition hover:bg-accent-hover shadow-accent"
           >
             View Assets
           </Link>
           <Link
             to="/employee"
-            className="rounded-full bg-accent px-6 py-3 text-sm font-semibold text-white transition hover:bg-accent-hover shadow-accent"
+            className="rounded-full bg-accent px-6 py-3 text-sm font-semibold text-on-accent transition hover:bg-accent-hover shadow-accent"
           >
               Quick Views
           </Link>

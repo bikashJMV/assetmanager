@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { createAsset, listCategories, slugifyCategoryLabel } from '../../api'
+import { createAsset, listCategories, slugifyCategoryLabel, type CategoryRecord } from '../../api'
 import { getUserFacingMessage, logDevError } from '../../utils/errors'
 import { useToast } from '../../hooks/useToast'
 
@@ -9,19 +9,21 @@ type Props = {
   onClose: () => void
   onSuccess: (result: unknown) => void
   variant?: 'modal' | 'panel'
-  reservedTag?: string
   reservationId?: string
+  initialCategories?: CategoryRecord[]
 }
 
 const emptyRow = (): KvRow => ({ key: '', value: '' })
 
-export default function OtherAssetForm({ onClose, onSuccess, variant = 'panel', reservedTag, reservationId }: Props) {
+export default function OtherAssetForm({ onClose, onSuccess, variant = 'panel', reservationId, initialCategories }: Props) {
   const isPanel = variant === 'panel'
   const [categoryName, setCategoryName] = useState('')
   const [assetTitle, setAssetTitle] = useState('')
   const [serialNumber, setSerialNumber] = useState('')
   const [rows, setRows] = useState<KvRow[]>([])
-  const [existingSlugs, setExistingSlugs] = useState<Set<string>>(new Set())
+  const [existingSlugs, setExistingSlugs] = useState<Set<string>>(
+    initialCategories ? new Set(initialCategories.map((c) => c.slug.toLowerCase())) : new Set()
+  )
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState('')
   const [error, setError] = useState('')
@@ -30,6 +32,7 @@ export default function OtherAssetForm({ onClose, onSuccess, variant = 'panel', 
   const slugPreview = useMemo(() => slugifyCategoryLabel(categoryName), [categoryName])
 
   useEffect(() => {
+    if (initialCategories) return
     let mounted = true
     void (async () => {
       try {
@@ -45,7 +48,7 @@ export default function OtherAssetForm({ onClose, onSuccess, variant = 'panel', 
     return () => {
       mounted = false
     }
-  }, [])
+  }, [initialCategories])
 
   const addRow = () => setRows((r) => [...r, emptyRow()])
 
@@ -136,10 +139,10 @@ export default function OtherAssetForm({ onClose, onSuccess, variant = 'panel', 
       <form onSubmit={handleSubmit} className="px-3 sm:px-4 py-3 sm:py-4 space-y-3">
         {loadError ? <p className="text-xs text-accent">{loadError}</p> : null}
 
-        {reservedTag && (
+        {reservationId && (
           <div className="bg-surface-2 border border-base rounded-lg px-4 py-3">
             <p className="text-sm text-primary">
-              Logging reserved tag: <strong className="text-accent">{reservedTag}</strong>
+              Logging via QR scan — asset tag will be auto-generated on submit.
             </p>
           </div>
         )}
@@ -261,7 +264,7 @@ export default function OtherAssetForm({ onClose, onSuccess, variant = 'panel', 
           <button
             type="submit"
             disabled={loading}
-            className="flex-1 bg-accent text-white font-semibold py-2 rounded-lg hover:bg-accent-hover transition text-sm disabled:opacity-60 shadow-accent"
+            className="flex-1 bg-accent text-on-accent font-semibold py-2 rounded-lg hover:bg-accent-hover transition text-sm disabled:opacity-60 shadow-accent"
           >
             {loading ? 'Creating…' : 'Create asset'}
           </button>

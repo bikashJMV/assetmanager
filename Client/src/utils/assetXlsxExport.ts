@@ -26,7 +26,6 @@ export type AssetExportRow = {
   current_employee_name: string | null
   current_employee_business_id: string | null
   current_employee_department: string | null
-  current_employee_is_active: boolean | null
   custom_fields: Record<string, unknown> | null
 }
 
@@ -47,11 +46,6 @@ function formatStatus(raw: string | null): string {
     .split('_')
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
     .join(' ')
-}
-
-function formatActive(value: boolean | null): string {
-  if (value === null || value === undefined) return EMPTY
-  return value ? 'Yes' : 'No'
 }
 
 function todayIso(): string {
@@ -97,7 +91,6 @@ export function buildAssetsXlsx(rows: AssetExportRow[]): Blob {
     'Current Holder',
     'Employee ID',
     'Department',
-    'Holder Active',
     // Custom fields (alphabetical)
     ...customKeys.map((k) =>
       k
@@ -128,7 +121,6 @@ export function buildAssetsXlsx(rows: AssetExportRow[]): Blob {
       safeStr(row.current_employee_name),
       safeStr(row.current_employee_business_id),
       safeStr(row.current_employee_department),
-      formatActive(row.current_employee_is_active),
       ...customValues,
       exportDate,
     ]

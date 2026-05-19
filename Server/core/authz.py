@@ -5,8 +5,7 @@ from typing import Literal, Optional
 from fastapi import HTTPException, Request, status
 
 from core.authnexus import EmployeeContext
-
-Role = Literal["employee", "admin", "it_ops"]
+from core.roles import PRIVILEGED_ROLES
 
 
 def get_current_employee(request: Request) -> Optional[EmployeeContext]:
@@ -23,7 +22,7 @@ def require_authenticated(request: Request) -> EmployeeContext:
 
 def require_privileged(request: Request) -> EmployeeContext:
     employee = require_authenticated(request)
-    if employee.role not in {"admin", "it_ops"}:
+    if employee.role not in PRIVILEGED_ROLES:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin or IT Ops role required.")
     return employee
 

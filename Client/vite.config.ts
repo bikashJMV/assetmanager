@@ -1,12 +1,13 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import basicSsl from '@vitejs/plugin-basic-ssl'
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), basicSsl()],
   // Listen on all interfaces for LAN access to the dev UI (QR scan links still default to production origin in `api.ts`).
   server: {
     host: true,
-    port: 5174,
+    port: 11000,
     proxy: {
       '/nexus-proxy/': {
         target: process.env.VITE_AUTH_AUTHORITY,
@@ -14,6 +15,10 @@ export default defineConfig({
         rewrite: (path) => path.replace(/^\/nexus-proxy/, ''),
       },
       '/api/': {
+        target: process.env.VITE_API_URL,
+        changeOrigin: true,
+      },
+      '/observability/': {
         target: process.env.VITE_API_URL,
         changeOrigin: true,
       }

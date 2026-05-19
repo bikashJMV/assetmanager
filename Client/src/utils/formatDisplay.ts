@@ -38,9 +38,9 @@ export function formatRoleLabel(role: string): string {
  */
 export function roleBadgeClass(role: string): string {
   const normalized = role.trim().toLowerCase()
-  if (normalized === 'it_ops') return 'bg-orange-500 text-white'
-  if (normalized === 'admin') return 'bg-blue-600 text-white'
-  return 'bg-gray-500 text-white'
+  if (normalized === 'it_ops') return 'bg-orange-500 text-on-accent'
+  if (normalized === 'admin') return 'bg-blue-600 text-on-accent'
+  return 'bg-gray-500 text-on-accent'
 }
 
 /**

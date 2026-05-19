@@ -12,7 +12,7 @@ export default function StoryNote({ label, className = '', tone = 'neutral', chi
     tone === 'accent'
       ? {
           shell: 'border-accent-soft bg-surface-2',
-          chip: 'bg-accent text-white',
+          chip: 'bg-accent text-on-accent',
           dot: 'bg-accent',
           body: 'text-primary',
           edge: 'border-l-accent',

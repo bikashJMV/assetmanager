@@ -7,7 +7,6 @@ import {
   getEmployeePortfolio,
   getSessionEmployeeProfile,
   listEmployees,
-  softDeleteEmployee,
   updateEmployee,
   type ListEmployeesParams,
 } from '../services/employeeService'
@@ -75,16 +74,6 @@ export function useChangeEmployeeRoleMutation() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ id, role }: { id: string; role: EmployeeRole }) => changeEmployeeRole(id, role),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: employeeQueryKeys.all })
-    },
-  })
-}
-
-export function useSoftDeleteEmployeeMutation() {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: (id: string) => softDeleteEmployee(id),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: employeeQueryKeys.all })
     },

@@ -6,6 +6,7 @@ from fastapi.responses import JSONResponse
 from core.api_response import error_response, success_response
 from core.authnexus import EmployeeContext
 from core.authz import require_authenticated
+from core.roles import PRIVILEGED_ROLES
 
 router = APIRouter(prefix="/api/v1/authz", tags=["AuthZ (v1)"])
 
@@ -35,7 +36,7 @@ async def has_admin_access(
     Notes: Authenticated (`require_authenticated`); frontend uses this for UI gating only (backend still enforces).
     """
     try:
-        allowed = employee.is_active and employee.role in {"admin", "it_ops"}
+        allowed = employee.role in PRIVILEGED_ROLES
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content=success_response(
@@ -60,7 +61,7 @@ async def has_it_ops_access(
     Notes: Authenticated (`require_authenticated`); backend endpoints should still use `require_it_ops` for enforcement.
     """
     try:
-        allowed = employee.is_active and employee.role == "it_ops"
+        allowed = employee.role == "it_ops"
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content=success_response(

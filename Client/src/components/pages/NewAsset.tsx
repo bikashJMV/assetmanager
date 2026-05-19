@@ -4,7 +4,6 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import AssetBulkImportModal from '../form/AssetBulkImportModal'
 import AssetForm from '../form/AssetForm'
 import CategoryPickerGrid from '../form/CategoryPickerGrid'
-import OtherAssetForm from '../form/OtherAssetForm'
 import AnimatedNavIcon from '../common/AnimatedNavIcon'
 import InfoHint from '../common/InfoHint'
 import { hasActiveAdminAccess, listCategories, type AssetInventoryRecord, type CategoryRecord } from '../../api'
@@ -14,11 +13,11 @@ import {
 } from '../../utils/assetBulkImport'
 import { filterCategoriesForNewAssetPicker } from '../../utils/newAssetCategoryPolicy'
 import { getUserFacingMessage, logDevError } from '../../utils/errors'
+import { useToast } from '../../hooks/useToast'
 
 export default function NewAsset() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
-  const urlTag = searchParams.get('tag')
   const urlReservationId = searchParams.get('reservation_id')
 
   const [accessState, setAccessState] = useState<'loading' | 'allowed' | 'denied'>('loading')
@@ -95,12 +94,15 @@ export default function NewAsset() {
     return pickerCategories.find((c) => c.slug === baselineSlug)?.name ?? null
   }, [pickerCategories, baselineSlug])
 
+  const { showToast } = useToast()
+
   const handleCreated = (result: unknown) => {
-    const tag = (result as AssetInventoryRecord)?.asset_tag ?? urlTag
+    const tag = (result as AssetInventoryRecord)?.asset_tag
     if (tag) {
       void navigate(`/assets/${encodeURIComponent(tag)}`)
       return
     }
+    showToast({ message: 'Asset created, but no tag was returned. Check the asset list.', variant: 'warning' })
     void navigate('/assets')
   }
 
@@ -271,20 +273,12 @@ export default function NewAsset() {
           <p className="text-sm text-subtle text-center py-6">No categories found. Add categories in the database first.</p>
         ) : null}
 
-        {effectiveSlug === 'other' ? (
-          <OtherAssetForm
-            variant="panel"
-            onClose={() => setSelectedSlug(null)}
-            onSuccess={handleCreated}
-            reservedTag={urlTag || undefined}
-            reservationId={urlReservationId || undefined}
-          />
-        ) : effectiveSlug ? (
+        {effectiveSlug ? (
           <>
-            {urlTag && (
+            {urlReservationId && (
               <div className="bg-surface-2 border border-base rounded-lg px-4 py-3 mb-4">
                 <p className="text-sm text-primary">
-                  Logging reserved tag: <strong className="text-accent">{urlTag}</strong>
+                  Logging via QR scan — asset tag will be auto-generated on submit.
                 </p>
               </div>
             )}
@@ -293,6 +287,7 @@ export default function NewAsset() {
               variant="panel"
               categoryLocked
               lockedCategoryLabel={activeCategory?.name}
+              initialCategories={categories}
               prefill={{
                 status: 'in_stock',
                 category_slug: effectiveSlug,

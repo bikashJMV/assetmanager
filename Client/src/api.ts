@@ -83,8 +83,6 @@ export type SessionEmployee = {
   email: string | null
   department: string | null
   role: EmployeeRole
-  /** Employee / account active (employment). */
-  is_active: boolean
 }
 
 export type EmployeeRecord = {
@@ -94,7 +92,6 @@ export type EmployeeRecord = {
   email: string | null
   department: string | null
   role: EmployeeRole
-  is_active: boolean
 }
 
 export type EmployeeAssetCountMap = Record<string, number>
@@ -123,7 +120,6 @@ export type RecycleBinEntry = {
 
 export type EmployeeListFilters = {
   search?: string
-  is_active?: boolean | 'all'
   department?: string
   role?: string
 }
@@ -144,6 +140,7 @@ export type CategoryRecord = {
   id: string
   slug: string
   name: string
+  alias_code?: string
 }
 
 export type CustomFieldDefinition = {
@@ -180,8 +177,6 @@ export type AssetInventoryRecord = {
   current_employee_business_id: string | null
   current_employee_name: string | null
   current_employee_email: string | null
-  /** Holder employee account active (`employees.is_active`). */
-  current_employee_is_active: boolean | null
   current_employee_department: string | null
   created_at: string
   updated_at: string
@@ -201,7 +196,6 @@ export type AssetAssignmentRecord = {
     id: string
     employee_id: string
     name: string
-    is_active: boolean
     department: string | null
     role: string | null
   } | null
@@ -361,11 +355,11 @@ export type AssetWriteInput = {
   custom_fields?: Record<string, unknown>
   metadata?: Record<string, unknown>
   qr_reservation_id?: string
+  department_id?: string
 }
 
 
 const ERP_ACTIVE_LABEL = 'ERP Active'
-const ERP_INACTIVE_LABEL = 'ERP Inactive'
 
 /** Aligns with DB slug normalization in `fn_create_asset_with_log`. */
 export function slugifyCategoryLabel(input: string): string {
@@ -411,17 +405,22 @@ function resetAuthDerivedCache() {
 
 export async function signOut() {
   resetAuthDerivedCache()
+  try {
+    await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' })
+  } catch (err) {
+    console.error('[api] failed to call /api/auth/logout:', err)
+  }
   await userManager.signoutRedirect()
 }
 
 async function getActiveAdminAccessState(): Promise<{ allowed: boolean; reason?: string }> {
   const profile = await getSessionEmployee()
-  if (profile && profile.is_active && (profile.role === 'admin' || profile.role === 'it_ops')) {
+  if (profile && (profile.role === 'admin' || profile.role === 'it_ops')) {
     return { allowed: true }
   }
   return {
     allowed: false,
-    reason: 'Signed-in account must be linked to an active admin/IT Ops employee record.'
+    reason: 'Signed-in account must be linked to an admin/IT Ops employee record.'
   }
 }
 
@@ -433,14 +432,14 @@ export async function hasActiveAdminAccess(): Promise<boolean> {
 async function assertActiveAdminAccess() {
   const state = await getActiveAdminAccessState()
   if (!state.allowed) {
-    throw new Error(state.reason || 'Signed-in account must be linked to an active admin/IT Ops employee record.')
+    throw new Error(state.reason || 'Signed-in account must be linked to an admin/IT Ops employee record.')
   }
 }
 
 /** Soft check for UI (does not throw on transient RPC errors). */
 export async function hasActiveItOpsAccess(): Promise<boolean> {
   const profile = await getSessionEmployee()
-  return Boolean(profile?.is_active && profile.role === 'it_ops')
+  return Boolean(profile && profile.role === 'it_ops')
 }
 
 
@@ -508,6 +507,15 @@ export async function listDepartments(): Promise<string[]> {
   })
 }
 
+export type DepartmentRecord = { id: string; name: string }
+
+export async function listDepartmentObjects(): Promise<DepartmentRecord[]> {
+  return await requestBackend<DepartmentRecord[]>({
+    url: '/api/v1/meta/departments-with-ids',
+    method: 'GET'
+  })
+}
+
 
 
 export async function listEmployees(filters: EmployeeListFilters = {}): Promise<EmployeeRecord[]> {
@@ -532,7 +540,6 @@ export async function listEmployeesPage(
       page: Math.floor((options.offset ?? 0) / (options.limit ?? 50)) + 1,
       limit: options.limit ?? 50,
       search: filters.search,
-      status: filters.is_active === true ? 'true' : filters.is_active === false ? 'false' : 'all',
       department: filters.department,
       role: filters.role
     }
@@ -570,7 +577,7 @@ export async function searchAssignableEmployees(
   if (!trimmed) return []
 
   const res = await listEmployeesPage(
-    { search: trimmed, is_active: true },
+    { search: trimmed },
     { offset: 0, limit: Math.max(1, options.limit ?? 8) }
   )
 
@@ -584,7 +591,6 @@ export type EmployeeUpsertInput = {
   email?: string | null
   department?: string | null
   role?: EmployeeRole
-  is_active: boolean
 }
 
 export async function upsertEmployee(input: EmployeeUpsertInput) {
@@ -597,7 +603,6 @@ export async function upsertEmployee(input: EmployeeUpsertInput) {
         name: input.name,
         email: input.email,
         department: input.department,
-        is_active: input.is_active,
         role: input.role
       }
     })
@@ -610,7 +615,6 @@ export async function upsertEmployee(input: EmployeeUpsertInput) {
         name: input.name,
         email: input.email,
         department: input.department,
-        is_active: input.is_active,
         role: input.role
       }
     })
@@ -627,7 +631,6 @@ export async function insertEmployeeNew(input: EmployeeUpsertInput) {
       name: input.name,
       email: input.email,
       department: input.department,
-      is_active: input.is_active,
       role: input.role
     }
   })
@@ -728,8 +731,8 @@ export async function createAsset(payload: AssetWriteInput) {
   })
 }
 
-export async function bulkInsertAssets(rows: AssetWriteInput[]): Promise<{ inserted: number }> {
-  return await requestBackend<{ inserted: number }>({
+export async function bulkInsertAssets(rows: AssetWriteInput[]): Promise<{ inserted: number; failed_rows: string[] }> {
+  return await requestBackend<{ inserted: number; failed_rows: string[] }>({
     url: '/api/v1/assets/bulk',
     method: 'POST',
     data: rows
@@ -1119,7 +1122,7 @@ async function buildAssetQrDataUri(assetTag: string): Promise<string> {
 
 export async function scanAsset(assetTag: string) {
   const [asset, sessionEmp] = await Promise.all([getAsset(assetTag), getSessionEmployee()])
-  const isPrivileged = Boolean(sessionEmp?.is_active && sessionEmp?.role !== 'employee')
+  const isPrivileged = Boolean(sessionEmp && sessionEmp?.role !== 'employee')
   // is_own_asset: true for admin/IT Ops, or if the asset is assigned to the signed-in employee.
   // false means employee is viewing an asset not assigned to them — caller shows limited view via ScanPage.
   const isOwnAsset =
@@ -1136,9 +1139,7 @@ export async function scanAsset(assetTag: string) {
     status: asset.status,
     location: asset.location_name,
     holder: asset.current_employee_name,
-    holder_erp_status: asset.current_employee_id
-      ? (asset.current_employee_is_active ? ERP_ACTIVE_LABEL : ERP_INACTIVE_LABEL)
-      : 'N/A',
+    holder_erp_status: asset.current_employee_id ? ERP_ACTIVE_LABEL : 'N/A',
     custom_fields: asset.custom_fields,
   }
 }
@@ -1196,4 +1197,4 @@ export async function getPublicScanAsset(assetTag: string): Promise<PublicScanAs
   })
 }
 
-export { ERP_ACTIVE_LABEL, ERP_INACTIVE_LABEL }
+export { ERP_ACTIVE_LABEL }

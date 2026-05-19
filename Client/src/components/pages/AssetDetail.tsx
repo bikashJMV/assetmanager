@@ -5,9 +5,8 @@ import type { AssetAssignmentRecord, AssetDetailRecord, EmployeeRecord } from '.
 
 import { useAdminAccessQuery } from '../../queries/authz'
 import { useAssetDetailQuery, useProtectedAssetScanQuery } from '../../queries/assets'
-import { assignAsset, returnAsset } from '../../services/assignmentService'
+import { assignAsset, returnAsset, validateAssignment, type AssignValidateResult } from '../../services/assignmentService'
 import { exportAssetAuditTrailPdf, exportAssetHistoryPdf } from '../../services/assetService'
-import { softDeleteAsset } from '../../services/assetService'
 import { buildAssetQrDataUri } from '../../utils/qr'
 import AssetForm from '../form/AssetForm'
 import Error from '../common/Error'
@@ -20,8 +19,6 @@ import InventoryStatusBadge from '../common/InventoryStatusBadge'
 import AnimatedNavIcon, { type IconName } from '../common/AnimatedNavIcon'
 import { useToast } from '../../hooks/useToast'
 import EmployeeAssignLookup from '../common/EmployeeAssignLookup'
-import { FEATURES } from '../../utils/featureFlags'
-
 
 const ASSIGNABLE_STATUSES = new Set(['in_stock', 'assigned'])
 
@@ -62,10 +59,11 @@ export default function AssetDetail() {
   const [actionLoading, setActionLoading] = useState(false)
   const [assignDialogOpen, setAssignDialogOpen] = useState(false)
   const [returnDialogOpen, setReturnDialogOpen] = useState(false)
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+
   const [qrDataUri, setQrDataUri] = useState<string | null>(null)
   const [qrLoading, setQrLoading] = useState(false)
   const [qrError, setQrError] = useState<string | null>(null)
+  const [deptValidation, setDeptValidation] = useState<AssignValidateResult | null>(null)
   const { showToast } = useToast()
 
   useEffect(() => {
@@ -147,8 +145,9 @@ export default function AssetDetail() {
     }
   }, [adminAccessQuery, detailQuery, protectedScan])
 
-  const openAssignDialog = () => {
-    if (!detail?.asset.asset_tag) return
+  const openAssignDialog = async () => {
+    const assetTag = detail?.asset.asset_tag
+    if (!assetTag) return
     if (!canManage) {
       setError('Active admin access is required to assign assets')
       return
@@ -164,32 +163,48 @@ export default function AssetDetail() {
     if (currentHolderCode && selectedAssigneeCode === currentHolderCode) {
       setError(
         openAssignment?.employee?.name?.trim()
-          ? `${detail.asset.asset_tag || 'This asset'} is already assigned to ${openAssignment.employee.name.trim()}.`
+          ? `${assetTag || 'This asset'} is already assigned to ${openAssignment.employee.name.trim()}.`
           : 'This asset is already assigned to the selected employee.',
       )
       return
     }
     setError('')
     setErrorDebug(undefined)
+    setActionLoading(true)
+    try {
+      const result = await validateAssignment({
+        asset_tag: assetTag,
+        employee_id: selectedAssignee.employee_id.trim(),
+      })
+      setDeptValidation(result)
+    } catch (err) {
+      logDevError('assetDetail.validateAssignment', err)
+      setDeptValidation(null)
+    } finally {
+      setActionLoading(false)
+    }
     setAssignDialogOpen(true)
   }
 
   const closeAssignDialog = () => {
     if (actionLoading) return
     setAssignDialogOpen(false)
+    setDeptValidation(null)
   }
 
-  const handleAssign = async () => {
-    if (!detail?.asset.asset_tag) return
+  const handleAssign = async (force_dept_move = false) => {
+    const assetTag = detail?.asset.asset_tag
+    if (!assetTag) return
     if (!selectedAssignee?.employee_id.trim()) return
     setActionLoading(true)
     setError('')
     setErrorDebug(undefined)
     try {
       const result = await assignAsset({
-        asset_tag: detail.asset.asset_tag,
+        asset_tag: assetTag,
         employee_id: selectedAssignee.employee_id.trim(),
         notes: assignNotes.trim() || undefined,
+        force_dept_move,
       })
       const msg =
         typeof result?.message === 'string' && result.message.trim()
@@ -197,12 +212,14 @@ export default function AssetDetail() {
           : 'Asset assigned successfully.'
       showToast({ message: msg, variant: 'success' })
       setAssignDialogOpen(false)
+      setDeptValidation(null)
       setAssignQuery('')
       setSelectedAssignee(null)
       setAssignNotes('')
       await refresh()
     } catch (err) {
       setAssignDialogOpen(false)
+      setDeptValidation(null)
       logDevError('assetDetail.assign', err)
       setError(getUserFacingMessage(err, 'Unable to assign this asset right now.'))
       setErrorDebug(getErrorDebugDetail(err))
@@ -232,13 +249,14 @@ export default function AssetDetail() {
   }
 
   const handleReturn = async () => {
-    if (!detail?.asset.asset_tag) return
+    const assetTag = detail?.asset.asset_tag
+    if (!assetTag) return
     setActionLoading(true)
     setError('')
     setErrorDebug(undefined)
     try {
       const result = await returnAsset({
-        asset_tag: detail.asset.asset_tag,
+        asset_tag: assetTag,
         notes: assignNotes.trim() || undefined,
       })
       const msg =
@@ -301,26 +319,6 @@ export default function AssetDetail() {
     }
   }
 
-  const handleSoftDelete = async () => {
-    if (!detail?.asset.id || !canManage) return
-    setActionLoading(true)
-    setError('')
-    setErrorDebug(undefined)
-    try {
-      await softDeleteAsset(detail.asset.id)
-      setDeleteDialogOpen(false)
-      showToast({ message: 'Asset moved to Recycle Bin.', variant: 'success' })
-      navigate('/recycle-bin')
-    } catch (err) {
-      logDevError('assetDetail.soft_delete', err)
-      setDeleteDialogOpen(false)
-      showToast({ message: getUserFacingMessage(err, 'Unable to delete this asset right now.'), variant: 'error' })
-      setErrorDebug(getErrorDebugDetail(err))
-    } finally {
-      setActionLoading(false)
-    }
-  }
-
   const pageLoadError = error || fetchError
   const pageLoadDebug = error ? errorDebug : fetchErrorDebug
 
@@ -377,14 +375,6 @@ export default function AssetDetail() {
                 disabled={actionLoading}
               />
             ) : null}
-            {canManage && FEATURES.RECYCLE_BIN ? (
-              <HeaderActionButton
-                icon="trash"
-                label="Delete Asset"
-                onClick={() => setDeleteDialogOpen(true)}
-                disabled={actionLoading}
-              />
-            ) : null}
             <HeaderActionButton
               icon="refresh-cw"
               label="Refresh"
@@ -405,20 +395,14 @@ export default function AssetDetail() {
                   onClick={() => void handleExportAuditTrailPdf()}
                   disabled={actionLoading || auditTrailPdfExporting}
                 />
-                {/* <HeaderActionLabelButton
-                  icon="download"
-                  label="Asset history"
-                  onClick={() => void handleExportHistoryPdf()}
-                  disabled={actionLoading || historyPdfExporting}
-                /> */}
                 {hasAssignmentHistory ? (
                   <HeaderActionLabelButton
                     icon="download"
-    label="Asset history"
-    onClick={() => void handleExportHistoryPdf()}
-    disabled={actionLoading || historyPdfExporting}
-  />
-) : null}
+                    label="Asset history"
+                    onClick={() => void handleExportHistoryPdf()}
+                    disabled={actionLoading || historyPdfExporting}
+                  />
+                ) : null}
               </>
             ) : null}
           </div>
@@ -433,11 +417,6 @@ export default function AssetDetail() {
             </p>
             <div className="flex flex-wrap items-center gap-2">
               <InventoryStatusBadge status={asset.status} size="md" />
-              {asset.current_employee_id ? (
-                <span className={`px-3 text-xs font-semibold rounded-full ${asset.current_employee_is_active ? 'bg-surface border border-base text-muted' : 'bg-surface border border-base text-accent'}`}>
-                  Holder: {asset.current_employee_is_active ? 'Active' : 'Inactive'}
-                </span>
-              ) : null}
             </div>
             <div>
               <p className="text-muted text-xs uppercase tracking-wide">Inventory</p>
@@ -493,6 +472,7 @@ export default function AssetDetail() {
               <InfoRow label="Model" value={formatDisplay(asset.model)} />
               <InfoRow label="Serial Number" value={formatDisplay(asset.serial_number)} />
               <InfoRow label="Location" value={formatDisplay(asset.location_name)} />
+              <InfoRow label="Department" value={formatDisplay(asset.asset_department_name)} />
               <InfoRow label="Inventory Status" value={formatEnumLabel(asset.status)} />
               <InfoRow label="Purchase Date" value={formatDisplay(asset.purchase_date)} />
               <InfoRow label="Warranty Expiry" value={formatDisplay(asset.warranty_expiry)} />
@@ -552,7 +532,7 @@ export default function AssetDetail() {
                 <button
                   onClick={openAssignDialog}
                   disabled={actionLoading}
-                  className="flex-1 bg-accent text-white font-semibold px-3 py-2.5 rounded-lg text-sm disabled:opacity-60"
+                  className="flex-1 bg-accent text-on-accent font-semibold px-3 py-2.5 rounded-lg text-sm disabled:opacity-60"
                   type="button"
                 >
                   Assign
@@ -725,13 +705,45 @@ export default function AssetDetail() {
       <ConfirmDialog
         open={assignDialogOpen}
         title="Assign Asset"
-        message={`Assign ${detail.asset.asset_tag || 'this asset'} to ${selectedAssigneeLabel || assignQuery.trim()}?${assignNotes.trim() ? ` Notes: ${assignNotes.trim()}` : ''}`}
-        confirmLabel="Confirm Assign"
+        message={
+          deptValidation?.case === 'mismatch' ? (
+            <div className="space-y-4">
+              <div className="bg-amber-500/10 border border-amber-500/20 text-amber-600 dark:text-amber-400 p-3 rounded-lg text-xs leading-relaxed space-y-1.5">
+                <p className="font-semibold flex items-center gap-1.5 text-sm">
+                  ⚠️ Department Mismatch Detected
+                </p>
+                <div className="grid grid-cols-2 gap-2 text-xs pt-1">
+                  <div>
+                    <span className="block text-subtle text-[10px] uppercase font-semibold">Asset Department</span>
+                    <span className="font-bold">{deptValidation.asset_dept_name || 'N/A'}</span>
+                  </div>
+                  <div>
+                    <span className="block text-subtle text-[10px] uppercase font-semibold">Employee Department</span>
+                    <span className="font-bold">{deptValidation.employee_dept_name || 'N/A'}</span>
+                  </div>
+                </div>
+                <p className="text-[11px] pt-1.5 border-t border-amber-500/10">
+                  Confirming will move this asset to the employee's department (<strong>{deptValidation.employee_dept_name || 'N/A'}</strong>) and complete the assignment.
+                </p>
+              </div>
+              <p className="text-sm">
+                Assign <strong>{detail.asset.asset_tag || 'this asset'}</strong> to <strong>{selectedAssigneeLabel || assignQuery.trim()}</strong>?
+                {assignNotes.trim() && <span className="block mt-2 text-xs italic">Notes: {assignNotes.trim()}</span>}
+              </p>
+            </div>
+          ) : (
+            <p className="text-sm">
+              Assign <strong>{detail.asset.asset_tag || 'this asset'}</strong> to <strong>{selectedAssigneeLabel || assignQuery.trim()}</strong>?
+              {assignNotes.trim() && <span className="block mt-2 text-xs italic">Notes: {assignNotes.trim()}</span>}
+            </p>
+          )
+        }
+        confirmLabel={deptValidation?.case === 'mismatch' ? 'Confirm & Move Dept' : 'Confirm Assign'}
         loading={actionLoading}
         showDismissIcon
         onClose={closeAssignDialog}
         onConfirm={() => {
-          void handleAssign()
+          void handleAssign(deptValidation?.case === 'mismatch')
         }}
       />
       <ConfirmDialog
@@ -746,17 +758,6 @@ export default function AssetDetail() {
           void handleReturn()
         }}
       />
-      {FEATURES.RECYCLE_BIN && (
-        <ConfirmDialog
-          open={deleteDialogOpen}
-          title="Move Asset to Recycle Bin"
-          message={`Move ${detail.asset.asset_tag || 'this asset'} to Recycle Bin?`}
-          confirmLabel="Delete"
-          loading={actionLoading}
-          onClose={() => setDeleteDialogOpen(false)}
-          onConfirm={() => { void handleSoftDelete() }}
-        />
-      )}
     </main>
   )
 }

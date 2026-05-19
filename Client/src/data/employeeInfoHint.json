@@ -8,7 +8,7 @@
         "Use Make Admin or Revoke Admin on Employee and Admin rows.",
         "You cannot change IT Ops users or assign the IT Ops role; only IT Ops can do that.",
         "Revoke Admin is disabled on your own row so you cannot remove your own admin access here.",
-        "Edit employee details (including Active/Inactive status), download QR codes for assigned assets, and move others to the Recycle Bin from this list. Permanent database removal is only from the Recycle Bin after that step. Delete is blocked on your own row."
+        "Edit employee details, download QR codes for assigned assets, and move others to the Recycle Bin from this list. Permanent database removal is only from the Recycle Bin after that step. Delete is blocked on your own row."
       ]
     },
     {
@@ -17,7 +17,7 @@
         "Use Set Employee, Set Admin, and Set IT Ops (with confirmations) to set roles on rows you are allowed to manage.",
         "Use Revoke Admin on users who are already Admin. Make Admin is not shown for you—use Set Admin instead.",
         "You cannot revoke admin on your own row from this page.",
-        "Edit (including Active/Inactive), QR download, and Recycle Bin follow the same rules as for admins. Permanent removal is only from the Recycle Bin after soft-delete."
+        "Edit, QR download, and Recycle Bin follow the same rules as for admins. Permanent removal is only from the Recycle Bin after soft-delete."
       ]
     }
   ]

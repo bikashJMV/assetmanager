@@ -112,7 +112,7 @@ export default function AllAssets() {
   const accessResolved = adminAccessQuery.isFetched
 
   const sessionEmployeeQuery = useSessionEmployeeQuery()
-  const isStrictAdmin = Boolean(sessionEmployeeQuery.data?.is_active && sessionEmployeeQuery.data?.role === 'admin')
+  const isStrictAdmin = Boolean(sessionEmployeeQuery.data && sessionEmployeeQuery.data?.role === 'admin')
 
   const categoriesQuery = useCategoriesQuery()
   const categories: CategoryRecord[] = categoriesQuery.data ?? []
@@ -668,7 +668,7 @@ export default function AllAssets() {
                 </span>
                 <span>Filters</span>
                 {activeAdvancedFilterCount > 0 ? (
-                  <span className="inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-accent px-1.5 py-0.5 text-[11px] font-semibold text-white">
+                  <span className="inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-accent px-1.5 py-0.5 text-[11px] font-semibold text-on-accent">
                     {activeAdvancedFilterCount}
                   </span>
                 ) : null}
@@ -847,7 +847,6 @@ export default function AllAssets() {
                     'Manufacturer',
                     'Model',
                     'Holder',
-                    'Holder active',
                     'Inventory Status',
                   ].map((header) => (
                     <th key={header} className="px-4 py-3 whitespace-nowrap">{header}</th>
@@ -953,30 +952,6 @@ export default function AllAssets() {
                     <td className="px-4 py-3 text-muted">{formatDisplay(asset.model)}</td>
                     <td className="px-4 py-3">{formatDisplay(asset.current_employee_name)}</td>
                     <td className="px-4 py-3">
-                      {asset.current_employee_id ? (
-                        <span
-                          className={`inline-flex items-center gap-2 rounded-md border px-2 py-0.5 text-xs ${asset.current_employee_is_active
-                            ? 'border-emerald-500/40 bg-emerald-500/10 text-primary'
-                            : 'border-red-500/40 bg-red-500/10 text-primary'
-                            }`}
-                          title={
-                            asset.current_employee_is_active
-                              ? 'Holder employee account is active'
-                              : 'Holder employee account is inactive'
-                          }
-                        >
-                          <span
-                            className={`h-2.5 w-2.5 shrink-0 rounded-full ${asset.current_employee_is_active ? 'bg-emerald-500' : 'bg-red-500'
-                              }`}
-                            aria-hidden
-                          />
-                          {asset.current_employee_is_active ? 'Active' : 'Inactive'}
-                        </span>
-                      ) : (
-                        <span className="text-subtle">-</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3">
                       <InventoryStatusBadge status={asset.status} />
                     </td>
                   </tr>
@@ -1051,7 +1026,7 @@ export default function AllAssets() {
               </button>
               <button
                 onClick={() => setQrModal(null)}
-                className="bg-accent text-white font-semibold px-6 py-2 rounded-lg hover:bg-accent-hover transition text-sm w-full shadow-accent inline-flex items-center justify-center"
+                className="bg-accent text-on-accent font-semibold px-6 py-2 rounded-lg hover:bg-accent-hover transition text-sm w-full shadow-accent inline-flex items-center justify-center"
                 type="button"
                 aria-label="Close"
                 title="Close"
@@ -1062,20 +1037,10 @@ export default function AllAssets() {
           </div>
         </div>
       )}
-      {/* <ConfirmDialog
-        open={Boolean(deleteTarget)}
-        title="Move Asset to Recycle Bin"
-        message={`Move ${(deleteTarget?.asset_tag || deleteTarget?.model || 'this asset')} to Recycle Bin?`}
-        confirmLabel="Delete"
-        onClose={() => setDeleteTarget(null)}
-        onConfirm={() => {
-          if (deleteTarget) void handleSoftDeleteAsset(deleteTarget)
-        }}
-      /> */}
 
       <ConfirmDialog
         open={Boolean(qrPdfTabFallback)}
-        title="Couldn't open PDF in a new tab"
+        title="PDF Ready"
         message={
           qrPdfTabFallback?.emptyExport
             ? 'Download PDF to save the summary, or Close to cancel.'

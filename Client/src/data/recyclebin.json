@@ -5,9 +5,8 @@
     {
       "heading": "Employee lifecycle (strict).",
       "bullets": [
-        "Active and Inactive: switch only via Edit Employee on All Employees (employment status). Do not use Delete to make someone inactive.",
         "Move to bin: soft-delete from All Employees only. The person leaves the main directory until restored; the row still exists for restore or permanent removal.",
-        "Restore: only from this Recycle Bin. Restored employees appear again on All Employees (their Active/Inactive flag is unchanged by delete/restore).",
+        "Restore: only from this Recycle Bin. Restored employees appear again on All Employees.",
         "Permanent delete: only from this page, and only after the employee was soft-deleted into the bin. Not available from the employee profile."
       ]
     },

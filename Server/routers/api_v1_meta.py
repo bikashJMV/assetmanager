@@ -107,6 +107,30 @@ async def list_departments(
     except Exception as exc:
         return _json_error(500, message="Failed to retrieve departments.", code="INTERNAL_ERROR", details=str(exc))
 
+
+@router.get("/departments-with-ids")
+async def list_departments_with_ids(
+    employee: EmployeeContext = Depends(require_authenticated),
+) -> JSONResponse:
+    """
+    Purpose: List departments with IDs for asset department assignment.
+    Method/Route: GET /api/v1/meta/departments-with-ids
+    Response: 200 envelope `{data:[{id,name},...]}`
+    """
+    _ = employee
+    try:
+        departments = await MetaRepository.list_department_objects()
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content=success_response(
+                message="Departments retrieved successfully.",
+                data=departments,
+                status_code=200,
+            ),
+        )
+    except Exception as exc:
+        return _json_error(500, message="Failed to retrieve departments.", code="INTERNAL_ERROR", details=str(exc))
+
 @router.get("/warranty-notifications")
 async def list_warranty_notifications(
     days_ahead: int = Query(default=30, ge=1, le=365, alias="limit"),
@@ -182,9 +206,8 @@ async def get_dashboard_stats(
             total_assets = await conn.fetchval("select count(*)::int from assets where coalesce(is_deleted,false)=false")
             assigned_assets = await conn.fetchval("select count(*)::int from asset_assignments where returned_at is null")
             
-            # Active employees count
-            active_employees = await conn.fetchval("select count(*)::int from employees where coalesce(is_active,true)=true")
-            total_employees = await conn.fetchval("select count(*)::int from employees")
+            active_employees = await conn.fetchval("select count(*)::int from employees")
+            total_employees = active_employees
             
         return JSONResponse(
             status_code=status.HTTP_200_OK,
@@ -262,8 +285,7 @@ async def get_overview_analysis(
                 "select status, category_name, current_employee_id, current_employee_name, current_employee_business_id, current_employee_department from v_asset_inventory",
             )
             
-            # 2. Active employees count
-            active_count = await conn.fetchval("select count(*)::int from employees where is_active = true")
+            active_count = await conn.fetchval("select count(*)::int from employees")
             
         # Perform aggregation (mirroring frontend logic for now)
         status_map = {}

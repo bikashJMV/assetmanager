@@ -46,9 +46,11 @@ function hasVisibilityAccess(
   visibility: SidebarNavVisibility | undefined,
   isAuthenticated: boolean,
   canManage: boolean,
+  isItOps: boolean,
 ) {
   if (visibility === 'authenticated') return isAuthenticated
   if (visibility === 'manage') return canManage
+  if (visibility === 'it_ops') return isItOps
   return true
 }
 
@@ -56,14 +58,15 @@ function filterGroupChildren(
   children: SidebarNavGroupChild[],
   isAuthenticated: boolean,
   canManage: boolean,
+  isItOps: boolean,
 ): SidebarNavGroupChild[] {
   return children
     .map((child): SidebarNavGroupChild | null => {
-      if (!hasVisibilityAccess(child.visibility, isAuthenticated, canManage)) return null
+      if (!hasVisibilityAccess(child.visibility, isAuthenticated, canManage, isItOps)) return null
 
       if (child.type === 'nested-group') {
         const nestedChildren = child.children.filter((nestedChild) =>
-          hasVisibilityAccess(nestedChild.visibility, isAuthenticated, canManage),
+          hasVisibilityAccess(nestedChild.visibility, isAuthenticated, canManage, isItOps),
         )
         if (!nestedChildren.length) return null
         return { ...child, children: nestedChildren }
@@ -98,6 +101,7 @@ function applyEmployeeRouteOverride(
 function filterSidebarSections(
   isAuthenticated: boolean,
   canManage: boolean,
+  isItOps: boolean,
 ): SidebarNavSection[] {
   return sidebarSections
     .map((section) => ({
@@ -105,13 +109,13 @@ function filterSidebarSections(
       items: section.items
         .map((item): SidebarNavEntry | null => {
           if (item.type === 'group') {
-            if (!hasVisibilityAccess(item.visibility, isAuthenticated, canManage)) return null
-            const children = filterGroupChildren(item.children, isAuthenticated, canManage)
+            if (!hasVisibilityAccess(item.visibility, isAuthenticated, canManage, isItOps)) return null
+            const children = filterGroupChildren(item.children, isAuthenticated, canManage, isItOps)
             if (!children.length) return null
             return { ...item, children }
           }
 
-          return hasVisibilityAccess(item.visibility, isAuthenticated, canManage) ? item : null
+          return hasVisibilityAccess(item.visibility, isAuthenticated, canManage, isItOps) ? item : null
         })
         .filter((item): item is SidebarNavEntry => item !== null),
     }))
@@ -768,7 +772,7 @@ export default function Sidebar({
   collapsed: boolean
   onSetCollapsed: (value: boolean) => void
   topOffset?: number
-  sessionEmployee?: { id: string; role: string; is_active: boolean } | null
+  sessionEmployee?: { id: string; role: string; is_active?: boolean } | null
 }) {
   const { pathname, search } = useLocation()
   const [mobileOpen, setMobileOpen] = useState(false)
@@ -779,7 +783,8 @@ export default function Sidebar({
 
   // Derive admin/employee state directly from the already-resolved prop —
   // no async fetch needed; AppRoutes waits for profileLoading before rendering.
-  const isAdmin = Boolean(sessionEmployee?.is_active && sessionEmployee.role !== 'employee')
+  const isAdmin = Boolean(sessionEmployee && sessionEmployee.role !== 'employee')
+  const isItOps = Boolean(sessionEmployee && sessionEmployee.role === 'it_ops')
   const sessionEmployeeId = sessionEmployee?.id ?? null
 
   const query = useMemo(() => new URLSearchParams(search), [search])
@@ -787,11 +792,11 @@ export default function Sidebar({
   const canManage = isAuthenticated && isAdmin
   const visibleSections = useMemo(
     () => applyEmployeeRouteOverride(
-      filterSidebarSections(isAuthenticated, canManage),
+      filterSidebarSections(isAuthenticated, canManage, isItOps),
       canManage,
       sessionEmployeeId,
     ),
-    [isAuthenticated, canManage, sessionEmployeeId],
+    [isAuthenticated, canManage, isItOps, sessionEmployeeId],
   )
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() =>
     getDefaultOpenGroups(sidebarSections),
@@ -814,11 +819,11 @@ export default function Sidebar({
     })
   }, [visibleSections, pathname, query])
 
-  useEffect(() => {
-    if (density === 'normal') return
-    setDensity('normal')
-    localStorage.setItem('ams-density', 'normal')
-  }, [density])
+  // useEffect(() => {
+  //   if (density === 'normal') return
+  //   setDensity('normal')
+  //   localStorage.setItem('ams-density', 'normal')
+  // }, [density])
 
   useEffect(() => {
     applyDocumentPreferences(theme, density, font, textScale)
@@ -886,7 +891,7 @@ export default function Sidebar({
   return (
     <>
       <button
-        className="sm:hidden fixed top-3 left-4 z-30 flex h-10 w-10 items-center justify-center rounded-2xl border border-white/15 bg-slate-950/85 p-2 text-white shadow-[0_14px_36px_rgba(15,23,42,0.34)] backdrop-blur transition hover:bg-slate-900"
+        className="sm:hidden fixed top-3 left-4 z-30 flex h-10 w-10 items-center justify-center rounded-2xl border border-white/15 bg-slate-950/85 p-2 text-on-accent shadow-[0_14px_36px_rgba(15,23,42,0.34)] backdrop-blur transition hover:bg-slate-900"
         onClick={() => setMobileOpen(true)}
         aria-label="Open navigation"
         title="Open navigation"

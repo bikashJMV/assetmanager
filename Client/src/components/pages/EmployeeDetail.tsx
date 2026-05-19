@@ -12,16 +12,6 @@ import { useSessionEmployeeQuery } from '../../queries/employees'
 import { getUserFacingMessage } from '../../utils/errors'
 import { formatDateTime, formatDisplay, formatRoleLabel } from '../../utils/formatDisplay'
 
-function statusBadgeClass(isActive: boolean): string {
-  return isActive
-    ? 'border-emerald-500/40 bg-emerald-500/10 text-primary'
-    : 'border-red-500/40 bg-red-500/10 text-primary'
-}
-
-function statusDotClass(isActive: boolean): string {
-  return isActive ? 'bg-emerald-500' : 'bg-red-500'
-}
-
 export default function EmployeeDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
@@ -55,9 +45,8 @@ export default function EmployeeDetail() {
 
   useEffect(() => {
     if (!detail) return
-    const { name, employee_id, is_active } = detail.employee
-    const statusLabel = is_active ? 'Active' : 'Inactive'
-    setBreadcrumb(employee_id ? `${name} (${employee_id} / ${statusLabel})` : name)
+    const { name, employee_id } = detail.employee
+    setBreadcrumb(employee_id ? `${name} (${employee_id})` : name)
   }, [detail, setBreadcrumb])
 
   const isViewingOwnProfile = sessionEmployeeId === id && sessionEmployeeRole === 'employee'
@@ -121,40 +110,15 @@ export default function EmployeeDetail() {
         }
       />
 
-      <section className="grid grid-cols-1 gap-3 xl:grid-cols-[1.2fr_0.8fr]">
+      <section className="w-full">
         <div className="rounded-xl border border-base bg-surface-2 p-4">
           <SectionHeading icon="users" label="Employee Summary" />
-          <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <Info label="Employee ID" value={detail.employee.employee_id} />
             <Info label="Email" value={formatDisplay(detail.employee.email)} />
             <Info label="Department" value={formatDisplay(detail.employee.department)} />
             <Info label="Role" value={formatRoleLabel(detail.employee.role)} />
           </div>
-        </div>
-
-        <div className="rounded-xl border border-base bg-surface-2 p-4">
-          <SectionHeading icon="settings" label="Access Status" />
-          <div className="mt-3 flex flex-wrap gap-2">
-            <span className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm ${statusBadgeClass(detail.employee.is_active)}`}>
-              <span className={`h-2.5 w-2.5 rounded-full ${statusDotClass(detail.employee.is_active)}`} aria-hidden="true" />
-              {detail.employee.is_active ? 'Active Employee' : 'Inactive Employee'}
-            </span>
-          </div>
-          {/* {showRecycleBinRemovalHint ? (
-            <div className="mt-4 border-t border-base pt-4">
-              <p className="text-xs text-subtle">
-                To mark someone Active or Inactive only, use Edit on{' '}
-                <Link to="/employee" className="font-medium text-accent underline-offset-2 hover:underline">
-                  All Employees
-                </Link>
-                . To remove them from the directory, soft-delete from that list (Recycle Bin). To erase a record permanently, use permanent delete on the{' '}
-                <Link to="/recycle-bin" className="font-medium text-accent underline-offset-2 hover:underline">
-                  Recycle Bin
-                </Link>{' '}
-                after assignments are returned or reassigned as required.
-              </p>
-            </div>
-          ) : null} */}
         </div>
       </section>
 

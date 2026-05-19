@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react'
-import { FEATURES } from '../../utils/featureFlags'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import EmployeeForm from '../form/EmployeeForm'
 import Error from '../common/Error'
@@ -22,7 +21,6 @@ import {
   createEmployee,
   updateEmployee,
   changeEmployeeRole,
-  softDeleteEmployee,
   getSessionEmployeeProfile,
 } from '../../services/employeeService'
 import { hasAdminAccess } from '../../services/authzService'
@@ -42,7 +40,6 @@ const EMPLOYEE_PAGE_INFO_HINT = employeeInfoHint as EmployeePageInfoHint
 
 type EmployeeListFilters = {
   search?: string
-  is_active?: boolean | 'all'
   department?: string
   role?: string
 }
@@ -53,13 +50,7 @@ const PAGE_SIZE_OPTIONS = [10, 25, 50, 100]
 
 /** Per-employee "Download QR" (bulk asset QRs). Set `true` to show again. */
 const SHOW_EMPLOYEE_ROW_QR_DOWNLOAD = false
-const FILTER_STATUS_ALL = 'all' as const
 const ROLE_ALL = 'all' as const
-const EMPLOYEE_STATUS_OPTIONS: FilterSelectOption[] = [
-  { value: 'all', label: 'All employees' },
-  { value: 'active', label: 'Active employee', dotClassName: 'bg-emerald-500' },
-  { value: 'inactive', label: 'Inactive employee', dotClassName: 'bg-red-500' },
-]
 const ROLE_OPTIONS: FilterSelectOption[] = [
   { value: 'all', label: 'All roles' },
   { value: 'admin', label: 'Admin' },
@@ -69,7 +60,6 @@ const ROLE_OPTIONS: FilterSelectOption[] = [
 
 type EmployeeFiltersInput = {
   search: string
-  employeeStatus: 'all' | 'active' | 'inactive'
   department: string
   role: string
 }
@@ -85,7 +75,6 @@ function getInitialEmployeeViewMode(): EmployeeViewMode {
 
 function getActiveAdvancedFilterCount(input: EmployeeFiltersInput): number {
   let count = 0
-  if (input.employeeStatus !== FILTER_STATUS_ALL) count += 1
   if (input.department.trim()) count += 1
   if (input.role.trim() && input.role !== ROLE_ALL) count += 1
   return count
@@ -111,31 +100,15 @@ function getRoleChangeDialogMessage(employee: EmployeeRecord, nextRole: Employee
   return `Are you sure you want to set ${employee.name} as ${formatRoleLabel(nextRole)}? Employee ID: ${employee.employee_id}.`
 }
 
-function employeeStatusBadgeClass(isActive: boolean): string {
-  return isActive
-    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-    : 'bg-red-50 text-red-700 border border-red-200'
-}
-
-function employeeStatusDotClass(isActive: boolean): string {
-  return isActive ? 'bg-emerald-500' : 'bg-red-500'
-}
-
 function getAssignedAssetDisplay(count: number | undefined): string {
   return (count ?? 0) > 0 ? String(count) : 'N/A'
 }
 
 function toApiFilters(input: EmployeeFiltersInput): EmployeeListFilters {
-  const filters: EmployeeListFilters = { is_active: 'all' }
+  const filters: EmployeeListFilters = {}
 
   if (input.search.trim()) {
     filters.search = input.search.trim()
-  }
-
-  if (input.employeeStatus === 'active') {
-    filters.is_active = true
-  } else if (input.employeeStatus === 'inactive') {
-    filters.is_active = false
   }
 
   if (input.department.trim()) {
@@ -162,13 +135,11 @@ export default function Employee() {
   const [departments, setDepartments] = useState<string[]>([])
 
   const searchParam = searchParams.get('search') || ''
-  const statusParam = (searchParams.get('status') as 'all' | 'active' | 'inactive') || FILTER_STATUS_ALL
   const departmentParam = searchParams.get('department') || ''
   const roleParam = searchParams.get('role') || ROLE_ALL
 
   const filtersInput: EmployeeFiltersInput = {
     search: searchParam,
-    employeeStatus: statusParam,
     department: departmentParam,
     role: roleParam,
   }
@@ -180,7 +151,6 @@ export default function Employee() {
   }, [searchParam])
   const [draftFiltersInput, setDraftFiltersInput] = useState<EmployeeFiltersInput>({
     search: '',
-    employeeStatus: FILTER_STATUS_ALL,
     department: '',
     role: ROLE_ALL,
   })
@@ -199,8 +169,6 @@ export default function Employee() {
   const [filtersOpen, setFiltersOpen] = useState(false)
   const [viewMode, setViewMode] = useState<EmployeeViewMode>(getInitialEmployeeViewMode)
   const [actionMenuEmployeeId, setActionMenuEmployeeId] = useState<string | null>(null)
-  const [deleteTarget, setDeleteTarget] = useState<EmployeeRecord | null>(null)
-  const [deleteLoading, setDeleteLoading] = useState(false)
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
   const [grantAdminTarget, setGrantAdminTarget] = useState<EmployeeRecord | null>(null)
   const [revokeAdminTarget, setRevokeAdminTarget] = useState<EmployeeRecord | null>(null)
@@ -238,15 +206,10 @@ export default function Employee() {
     setErrorDebug(undefined)
 
     try {
-      const activeStatusParam =
-        filters.is_active === true ? 'true' :
-        filters.is_active === false ? 'false' : 'all'
-
       const result = await listEmployees({
         page: targetPage,
         limit: targetPageSize,
         search: filters.search,
-        status: activeStatusParam as 'true' | 'false' | 'all',
         department: filters.department,
         role: filters.role,
       })
@@ -315,7 +278,7 @@ export default function Employee() {
     const apiFilters = toApiFilters(filtersInput)
     void fetchEmployees(apiFilters, { page: currentPage, pageSize })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [accessResolved, currentPage, pageSize, searchParam, statusParam, departmentParam, roleParam])
+  }, [accessResolved, currentPage, pageSize, searchParam, departmentParam, roleParam])
 
   useEffect(() => {
     if (!accessResolved) return
@@ -343,13 +306,9 @@ export default function Employee() {
   }
 
   const handleFilterChange = (
-    partial: Partial<Pick<EmployeeFiltersInput, 'employeeStatus' | 'department' | 'role'>>,
+    partial: Partial<Pick<EmployeeFiltersInput, 'department' | 'role'>>,
   ) => {
     setSearchParams(prev => {
-      if (partial.employeeStatus !== undefined) {
-        if (partial.employeeStatus !== FILTER_STATUS_ALL) prev.set('status', partial.employeeStatus)
-        else prev.delete('status')
-      }
       if (partial.department !== undefined) {
         if (partial.department.trim()) prev.set('department', partial.department.trim())
         else prev.delete('department')
@@ -374,14 +333,13 @@ export default function Employee() {
   }
 
   const handleDraftFilterChange = (
-    partial: Partial<Pick<EmployeeFiltersInput, 'employeeStatus' | 'department' | 'role'>>,
+    partial: Partial<Pick<EmployeeFiltersInput, 'department' | 'role'>>,
   ) => {
     setDraftFiltersInput((current) => ({ ...current, ...partial }))
   }
 
   const handleApplyDraftFilters = () => {
     handleFilterChange({
-      employeeStatus: draftFiltersInput.employeeStatus,
       department: draftFiltersInput.department,
       role: draftFiltersInput.role,
     })
@@ -391,14 +349,12 @@ export default function Employee() {
   const handleClearDraftFilters = () => {
     setDraftFiltersInput((current) => ({
       ...current,
-      employeeStatus: FILTER_STATUS_ALL,
       department: '',
       role: ROLE_ALL,
     }))
   }
 
   const hasDraftAdvancedChanges =
-    draftFiltersInput.employeeStatus !== filtersInput.employeeStatus ||
     draftFiltersInput.department !== filtersInput.department ||
     draftFiltersInput.role !== filtersInput.role
   const draftAdvancedFilterCount = getActiveAdvancedFilterCount(draftFiltersInput)
@@ -438,7 +394,6 @@ export default function Employee() {
           email: employee.email,
           department: employee.department,
           role: employee.role,
-          is_active: employee.is_active,
         })
       } else {
         await createEmployee({
@@ -447,7 +402,6 @@ export default function Employee() {
           email: employee.email,
           department: employee.department,
           role: employee.role,
-          is_active: employee.is_active,
         })
       }
       setEditEmployee(null)
@@ -559,30 +513,7 @@ export default function Employee() {
     }
   }
 
-  const handleSoftDeleteEmployee = async (employee: EmployeeRecord) => {
-    setDeleteLoading(true)
-    try {
-      await softDeleteEmployee(employee.id)
-      // Immediately remove from local state so the row disappears without waiting for refetch
-      setEmployees(prev => prev.filter(e => e.id !== employee.id))
-      setTotalEmployees(prev => Math.max(0, prev - 1))
-      setDeleteTarget(null)
-      showToast({ message: `${employee.name} moved to Recycle Bin.`, variant: 'success' })
-      // Background refetch to sync pagination totals and any server-side changes
-      const nextTotal = Math.max(0, totalEmployees - 1)
-      const lastPage = Math.max(1, Math.ceil(nextTotal / pageSize))
-      await fetchEmployees(toApiFilters(filtersInput), {
-        page: Math.min(currentPage, lastPage),
-        pageSize,
-      })
-    } catch (err) {
-      logDevError('employees.soft_delete', err)
-      setError(getUserFacingMessage(err, 'Unable to delete employee right now.'))
-      setErrorDebug(getErrorDebugDetail(err))
-    } finally {
-      setDeleteLoading(false)
-    }
-  }
+
 
   return (
     <main className="flex min-h-screen flex-col bg-app px-4 py-6 text-primary sm:px-6 sm:py-8">
@@ -634,7 +565,7 @@ export default function Employee() {
                 </span>
                 <span>Filters</span>
                 {activeAdvancedFilterCount > 0 && (
-                  <span className="inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-accent px-1.5 py-0.5 text-[11px] font-semibold text-white">
+                  <span className="inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-accent px-1.5 py-0.5 text-[11px] font-semibold text-on-accent">
                     {activeAdvancedFilterCount}
                   </span>
                 )}
@@ -657,7 +588,7 @@ export default function Employee() {
                 title="Table layout"
                 onClick={() => setViewMode('table')}
                 className={`inline-flex h-8 w-8 items-center justify-center rounded-md transition ${viewMode === 'table'
-                  ? 'bg-accent text-white'
+                  ? 'bg-accent text-on-accent'
                   : 'text-muted hover:bg-[color:var(--accent-soft)]/15 hover:text-accent'
                   }`}
               >
@@ -669,7 +600,7 @@ export default function Employee() {
                 title="Grid layout"
                 onClick={() => setViewMode('grid')}
                 className={`inline-flex h-8 w-8 items-center justify-center rounded-md transition ${viewMode === 'grid'
-                  ? 'bg-accent text-white'
+                  ? 'bg-accent text-on-accent'
                   : 'text-muted hover:bg-[color:var(--accent-soft)]/15 hover:text-accent'
                   }`}
               >
@@ -718,7 +649,7 @@ export default function Employee() {
                 <p className="text-xs text-subtle uppercase tracking-[0.12em]">Asset</p>
                 <p className="text-sm font-semibold text-primary mt-1">{formatDisplay(asset.asset_tag)}</p>
                 <p className="text-xs text-muted mt-1">{formatDisplay(asset.model)}</p>
-                <span className="inline-flex mt-2 text-[11px] px-2 py-0.5 rounded bg-accent text-white">{asset.status}</span>
+                <span className="inline-flex mt-2 text-[11px] px-2 py-0.5 rounded bg-accent text-on-accent">{asset.status}</span>
               </div>
             ))}
           </div>
@@ -762,7 +693,6 @@ export default function Employee() {
                   <th className="px-4 py-3">Employee ID</th>
                   <th className="px-4 py-3">Department</th>
                   <th className="px-4 py-3">Role</th>
-                  <th className="px-4 py-3">Employee</th>
                 </tr>
               </thead>
               <tbody>
@@ -807,7 +737,6 @@ export default function Employee() {
                           onGrantAdmin={openGrantAdminConfirm}
                           onRevokeAdmin={openRevokeAdminConfirm}
                           onDownloadQrs={async () => {}}
-                          onDelete={setDeleteTarget}
                         />
                       </td>
                     )}
@@ -828,17 +757,6 @@ export default function Employee() {
                     <td className="px-4 py-3 text-muted">{formatDisplay(employee.employee_id)}</td>
                     <td className="px-4 py-3 text-muted">{formatDisplay(employee.department)}</td>
                     <td className="px-4 py-3 text-muted">{formatRoleLabel(employee.role)}</td>
-                    <td className="px-4 py-3">
-                      <span
-                        className={`inline-flex items-center gap-2 text-xs px-2 py-1 rounded ${employeeStatusBadgeClass(employee.is_active)}`}
-                      >
-                        <span
-                          className={`h-2.5 w-2.5 rounded-full ${employeeStatusDotClass(employee.is_active)}`}
-                          aria-hidden="true"
-                        />
-                        <span>{employee.is_active ? 'Active' : 'Inactive'}</span>
-                      </span>
-                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -867,12 +785,6 @@ export default function Employee() {
                       {employee.name}
                     </span>
                     <p className="text-sm text-muted">{formatDisplay(employee.email)}</p>
-                  </div>
-                  <div className="flex flex-col items-end gap-1 shrink-0">
-                    <span className={`inline-flex items-center gap-2 text-xs px-2 py-1 rounded ${employeeStatusBadgeClass(employee.is_active)}`}>
-                      <span className={`h-2.5 w-2.5 rounded-full ${employeeStatusDotClass(employee.is_active)}`} aria-hidden="true" />
-                      <span>{employee.is_active ? 'Active employee' : 'Not active employee'}</span>
-                    </span>
                   </div>
                 </div>
                 <div className="mt-4 space-y-1 text-sm">
@@ -911,7 +823,6 @@ export default function Employee() {
                       onGrantAdmin={openGrantAdminConfirm}
                       onRevokeAdmin={openRevokeAdminConfirm}
                       onDownloadQrs={async () => {}}
-                      onDelete={setDeleteTarget}
                     />
                   </div>
                 )}
@@ -954,7 +865,6 @@ export default function Employee() {
                 email: editEmployee.email,
                 department: editEmployee.department,
                 role: editEmployee.role,
-                is_active: editEmployee.is_active,
               }}
               onClose={() => setEditEmployee(null)}
               onSubmit={handleUpsertEmployee}
@@ -990,18 +900,6 @@ export default function Employee() {
           onClose={closeFiltersPopup}
         >
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <FilterSelect
-              label="Employee status"
-              ariaLabel="Filter by employment status (employees.is_active)"
-              title="Employment / account active (employees.is_active)."
-              value={draftFiltersInput.employeeStatus}
-              options={EMPLOYEE_STATUS_OPTIONS}
-              onChange={(value) =>
-                handleDraftFilterChange({
-                  employeeStatus: (value || FILTER_STATUS_ALL) as EmployeeFiltersInput['employeeStatus'],
-                })
-              }
-            />
             <FilterSelect
               label="Department"
               ariaLabel="Filter by department"
@@ -1073,22 +971,7 @@ export default function Employee() {
           void handleConfirmRevokeAdmin()
         }}
       />
-      <ConfirmDialog
-        open={Boolean(deleteTarget)}
-        title="Move Employee to Recycle Bin"
-        message={
-          deleteTarget
-            ? `Move ${deleteTarget.name} (${deleteTarget.employee_id}) to Recycle Bin?`
-            : 'Move employee to Recycle Bin?'
-        }
-        confirmLabel="Delete"
-        loading={deleteLoading}
-        showDismissIcon
-        onClose={() => { if (!deleteLoading) setDeleteTarget(null) }}
-        onConfirm={() => {
-          if (deleteTarget) void handleSoftDeleteEmployee(deleteTarget)
-        }}
-      />
+
     </main>
   )
 } 
@@ -1111,7 +994,6 @@ type EmployeeActionsProps = {
   onGrantAdmin: (employee: EmployeeRecord) => void
   onRevokeAdmin: (employee: EmployeeRecord) => void
   onDownloadQrs?: (employee: EmployeeRecord) => Promise<void>
-  onDelete: (employee: EmployeeRecord) => void
 }
 
 function EmployeeActions({
@@ -1131,9 +1013,8 @@ function EmployeeActions({
   onGrantAdmin,
   onRevokeAdmin,
   onDownloadQrs = async () => {},
-  onDelete,
 }: EmployeeActionsProps) {
-  const primaryButtonClass = 'bg-accent text-white py-1.5 px-3 rounded-lg hover:bg-accent-hover transition text-xs'
+  const primaryButtonClass = 'bg-accent text-on-accent py-1.5 px-3 rounded-lg hover:bg-accent-hover transition text-xs'
   const dangerOutlineButtonClass =
     'border border-base text-accent py-1.5 px-3 rounded-lg hover:border-accent-soft hover:bg-[color:var(--accent-soft)]/15 transition text-xs disabled:opacity-50 disabled:cursor-not-allowed'
   const isSelfRow = employee.id === sessionEmployeeId
@@ -1218,15 +1099,7 @@ function EmployeeActions({
       })
     }
 
-    if (FEATURES.RECYCLE_BIN) {
-      actionItems.push({
-        key: 'delete',
-        label: 'Delete',
-        icon: 'trash',
-        onSelect: () => onDelete(employee),
-        disabled: isSelfRow,
-      })
-    }
+
   } else if (showQrDownload) {
     actionItems.push({
       key: 'download-qr',
@@ -1361,15 +1234,7 @@ function EmployeeActions({
           <span>QR</span>
         </button>
       ) : null}
-      {canManageAdminRole && FEATURES.RECYCLE_BIN && (
-        <IconActionButton
-          icon="trash"
-          label="Delete"
-          onClick={() => onDelete(employee)}
-          disabled={isSelfRow}
-          variant="danger"
-        />
-      )}
+
     </div>
   )
 }

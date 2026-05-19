@@ -1,11 +1,12 @@
 import hmac
 import httpx
-from typing import List, Literal, Optional
+from typing import List, Optional
 
 from jose import jwt, JWTError
 from fastapi import Depends, Header, HTTPException, status
 
 from core.settings import settings
+from core.roles import Role, PRIVILEGED_ROLES
 
 # authNexus configuration from settings
 AUTHORITY = settings.AUTH_AUTHORITY.rstrip("/")
@@ -153,7 +154,7 @@ def require_role(*allowed_roles: str):
 def get_auth_user_id_from_bearer(user: dict = Depends(verify_session)) -> str:
     return str(user["user_id"])
 
-def _resolve_request_role(user: dict = Depends(verify_session)) -> Literal['employee', 'admin', 'it_ops']:
+def _resolve_request_role(user: dict = Depends(verify_session)) -> Role:
     roles = user.get("roles", [])
     if "admin" in roles:
         return "admin"
@@ -161,10 +162,10 @@ def _resolve_request_role(user: dict = Depends(verify_session)) -> Literal['empl
         return "it_ops"
     return "employee"
 
-def require_manage_platform_access(user: dict = Depends(require_role("admin", "it_ops"))):
+def require_manage_platform_access(user: dict = Depends(require_role(*PRIVILEGED_ROLES))):
     return user
 
-def require_admin_or_it_ops_access(user: dict = Depends(require_role("admin", "it_ops"))):
+def require_admin_or_it_ops_access(user: dict = Depends(require_role(*PRIVILEGED_ROLES))):
     return user
 
 def require_it_ops_access(user: dict = Depends(require_role("it_ops"))):

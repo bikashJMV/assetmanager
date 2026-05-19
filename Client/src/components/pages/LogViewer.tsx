@@ -25,7 +25,7 @@ export default function LogViewer() {
 
   // Client-side filtering
   const filteredLogs = useMemo(() => {
-    let result = logs
+    let result = logs ?? []
     if (search.trim()) {
       const lowerSearch = search.toLowerCase()
       result = result.filter(
@@ -82,7 +82,7 @@ export default function LogViewer() {
         end
       })
 
-      setLogs(res.logs)
+      setLogs(res.logs ?? [])
       setCurrentPage(1) // Reset to first page on new fetch
     } catch (e) {
       showToast({
@@ -137,7 +137,7 @@ export default function LogViewer() {
                   key={range}
                   onClick={() => setTimeRange(range)}
                   className={`px-3 py-1 text-[10px] font-medium rounded-md transition ${timeRange === range
-                    ? 'bg-accent text-white shadow-sm'
+                    ? 'bg-accent text-on-accent shadow-sm'
                     : 'text-muted hover:text-primary hover:bg-surface-3'
                     }`}
                 >
@@ -239,7 +239,7 @@ export default function LogViewer() {
                     {log.level}
                   </span>
                   <span className="text-[#888] shrink-0 whitespace-nowrap select-none min-w-[100px] truncate border-l border-white/5 pl-2">{log.service}</span>
-                  <span className="text-[#ddd] truncate group-hover:text-white transition-colors">{log.message}</span>
+                  <span className="text-[#ddd] truncate group-hover:text-on-accent transition-colors">{log.message}</span>
                 </div>
               )
             })}

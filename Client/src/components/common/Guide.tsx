@@ -39,7 +39,7 @@ export default function Guide() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {quickStart.map((item) => (
               <article key={item.step} className="bg-surface-2 border border-base rounded-xl p-5 flex gap-4 items-start">
-                <div className="h-10 w-10 rounded-lg bg-accent text-white font-black flex items-center justify-center shrink-0">
+                <div className="h-10 w-10 rounded-lg bg-accent text-on-accent font-black flex items-center justify-center shrink-0">
                   {item.step}
                 </div>
                 <div>

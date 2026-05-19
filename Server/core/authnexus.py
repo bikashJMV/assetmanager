@@ -10,10 +10,10 @@ from jwt.exceptions import InvalidTokenError
 
 from core.settings import settings
 from repositories.employee_repository import EmployeeRepository
+from services.authnexus_service import AuthNexusClient
+from core.roles import Role, VALID_ROLES
 
 logger = logging.getLogger(__name__)
-
-Role = Literal["employee", "admin", "it_ops"]
 
 
 @dataclass(frozen=True)
@@ -24,7 +24,6 @@ class EmployeeContext:
     department: str | None
     role: Role
     sub: str
-    is_active: bool
 
 
 _jwks_client: PyJWKClient | None = None
@@ -43,7 +42,7 @@ def _get_jwks_client() -> PyJWKClient:
 
 def _normalize_role(raw: Any) -> Role:
     role = str(raw or "employee").strip().lower()
-    if role not in {"employee", "admin", "it_ops"}:
+    if role not in VALID_ROLES:
         return "employee"
     return role  # type: ignore[return-value]
 
@@ -99,21 +98,21 @@ def _norm_upper(v: str | None) -> str:
 async def resolve_employee_for_sub(
     *,
     sub: str,
-    email: Optional[str],
-    preferred_username: Optional[str] = None,
 ) -> EmployeeContext:
     """
     Resolve the employee record for an authenticated user.
 
-    1) employees.auth_user_id == sub
-    2) employees.employee_id (business id) == preferred_username (e.g. JWT preferred_username)
-    3) email match + auto-link auth_user_id=sub when safe
+    1) Direct lookup — employees.auth_user_id == sub (always hits post-backfill)
+    2) Auto-provision fallback — if user is authenticated in AN but not yet in local DB,
+       fetch live AN profile and create a local employee row.
     """
     norm_sub = _norm(sub)
+    if not norm_sub:
+        raise PermissionError("Missing subject identifier.")
+
+    # Step 1: Direct lookup
     emp = await EmployeeRepository.get_by_auth_user_id(norm_sub)
     if emp:
-        if not emp.is_active:
-            raise PermissionError("Account inactive.")
         return EmployeeContext(
             id=emp.id,
             employee_id=emp.employee_id,
@@ -121,52 +120,47 @@ async def resolve_employee_for_sub(
             department=emp.department,
             role=_normalize_role(emp.role),
             sub=norm_sub,
-            is_active=True,
         )
 
-    p_un = _norm_upper(preferred_username)
-    if p_un:
-        by_code = await EmployeeRepository.get_by_business_employee_id(p_un)
-        if by_code:
-            if not by_code.is_active:
-                raise PermissionError("Account inactive.")
-            existing_auth = (by_code.auth_user_id or "").strip()
-            if existing_auth and existing_auth != norm_sub:
-                raise PermissionError("Employee already linked to a different auth user.")
-            if not existing_auth:
-                await EmployeeRepository.link_auth_user_id(employee_id=by_code.id, sub=norm_sub)
-            return EmployeeContext(
-                id=by_code.id,
-                employee_id=by_code.employee_id,
-                name=by_code.name,
-                department=by_code.department,
-                role=_normalize_role(by_code.role),
-                sub=norm_sub,
-                is_active=True,
-            )
+    # Step 2: Auto-provision fallback
+    logger.info(f"Employee {norm_sub} not found locally. Fetching profile from AuthNexus to auto-provision...")
+    an_profile = await AuthNexusClient.get_user(norm_sub)
+    if not an_profile:
+        raise PermissionError("Employee profile not provisioned in AuthNexus.")
 
-    normalized_email = (email or "").strip().lower()
-    if not normalized_email:
-        raise PermissionError("Employee not provisioned.")
+    # Extract user details from AN profile
+    username = str(an_profile.get("userName") or "").strip()
+    if not username:
+        raise PermissionError("AuthNexus user profile is missing a username.")
 
-    match = await EmployeeRepository.get_by_email(normalized_email)
-    if not match:
-        raise PermissionError("Employee not provisioned.")
-    if not match.is_active:
-        raise PermissionError("Account inactive.")
+    first_name = str(an_profile.get("firstName") or "").strip()
+    last_name = str(an_profile.get("lastName") or "").strip()
+    name = f"{first_name} {last_name}".strip() or username
 
-    existing_auth_user_id = (match.auth_user_id or "").strip()
-    if existing_auth_user_id and existing_auth_user_id != norm_sub:
-        raise PermissionError("Employee already linked to a different auth user.")
+    email = an_profile.get("email")
+    role_keys = an_profile.get("roleKeys") or ["employee"]
+    role = role_keys[0] if role_keys else "employee"
 
-    await EmployeeRepository.link_auth_user_id(employee_id=match.id, sub=norm_sub)
+    logger.info(f"Auto-provisioning employee locally: username={username}, name={name}, email={email}")
+    
+    try:
+        new_emp = await EmployeeRepository.create(
+            auth_user_id=norm_sub,
+            employee_id=username,
+            name=name,
+            email=email,
+            role=role,
+            department_name=None,
+        )
+    except Exception as exc:
+        logger.error(f"Failed to auto-provision employee local row for {norm_sub}: {exc}", exc_info=True)
+        raise PermissionError("Local provisioning failed.") from exc
 
     return EmployeeContext(
-        id=match.id,
-        employee_id=match.employee_id,
-        name=match.name,
-        department=match.department,
-        role=_normalize_role(match.role),
+        id=new_emp.id,
+        employee_id=new_emp.employee_id,
+        name=new_emp.name,
+        department=None,
+        role=_normalize_role(new_emp.role),
         sub=norm_sub,
-        is_active=True,
     )

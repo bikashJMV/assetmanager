@@ -15,10 +15,7 @@ export type QrBatch = {
   id: string
   batch_code: string
   status: 'pending' | 'generated' | 'failed'
-  requested_count: number   // actual DB column name
-  count?: number            // kept for backwards compat
-  start_tag: string | null
-  end_tag: string | null
+  requested_count: number
   created_at: string
   created_by_employee_id: string
 }

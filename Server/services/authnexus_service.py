@@ -127,7 +127,7 @@ class AuthNexusClient:
         email: Optional[str], 
         first_name: str, 
         last_name: str, 
-        initial_password: str = "Welcome123!"
+        initial_password: str = "User@1234"
     ) -> Optional[str]:
         """
         Provisions a new human user in AuthNexus.
@@ -138,7 +138,7 @@ class AuthNexusClient:
             logger.warning(f"[AuthNexusClient] Skipping create_user for {username}: no admin token.")
             return None
 
-        url = f"{settings.AUTH_AUTHORITY}/api/admin/users/add"
+        url = f"{settings.AUTH_AUTHORITY}/api/admin/users"
         headers = {"Authorization": f"Bearer {token}"}
         payload = {
             "userName": username,
@@ -200,72 +200,31 @@ class AuthNexusClient:
         last_name: str
     ) -> bool:
         """
-        Updates the human user's profile (firstName, lastName) in AuthNexus.
+        No-op shim for compatibility during migration. AN admin panel owns identity updates.
         """
-        token = await cls._get_token()
-        if not token:
-            logger.warning(f"[AuthNexusClient] Skipping update_user_profile for {auth_user_id}: no admin token.")
-            return False
-
-        # Endpoint based on standard Zitadel/AuthNexus pattern
-        url = f"{settings.AUTH_AUTHORITY}/api/admin/users/{auth_user_id}/profile"
-        headers = {"Authorization": f"Bearer {token}"}
-        payload = {
-            "firstName": first_name,
-            "lastName": last_name
-        }
-
-        logger.debug(f"[AuthNexusClient] Updating profile for {auth_user_id}: {payload}")
-
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.put(url, json=payload, headers=headers)
-                
-                # Retry once if 401
-                if resp.status_code == 401:
-                    logger.warning("[AuthNexusClient] 401 Unauthorized on update_user_profile. Forcing token refresh and retrying...")
-                    cls._token = None
-                    cls._token_expiry = 0
-                    new_token = await cls._get_token()
-                    if new_token:
-                        headers["Authorization"] = f"Bearer {new_token}"
-                        resp = await client.put(url, json=payload, headers=headers)
-
-                if resp.status_code >= 400:
-                    logger.error(f"[AuthNexusClient] update_user_profile failed: {resp.status_code} — {resp.text}")
-                    return False
-                
-                logger.info(f"[AuthNexusClient] Profile updated for {auth_user_id}")
-                return True
-        except Exception as e:
-            logger.error(f"[AuthNexusClient] Failed to update profile for {auth_user_id}: {e}", exc_info=True)
-            return False
+        logger.debug(f"[AuthNexusClient] update_user_profile (shim) called for {auth_user_id} -> {first_name} {last_name}")
+        return True
 
     @classmethod
-    async def bulk_assign_roles(cls, user_ids: List[str], role_keys: List[str]) -> bool:
+    async def assign_to_project(cls, user_id: str, role_keys: List[str]) -> bool:
         """
-        Assigns roles to multiple users in the project.
-        Uses skipIfExists=False to ensure roles are synced/overwritten.
+        Assigns roles to a user in the project.
         """
-        if not user_ids:
-            return True
-
         token = await cls._get_token()
         if not token:
-            logger.warning("[AuthNexusClient] Skipping bulk_assign_roles: no admin token.")
+            logger.warning(f"[AuthNexusClient] Skipping assign_to_project for {user_id}: no admin token.")
             return False
 
-        url = f"{settings.AUTH_AUTHORITY}/api/admin/projects/{settings.AUTH_PROJECT_ID}/bulk-assignments"
+        url = f"{settings.AUTH_AUTHORITY}/api/admin/projects/{settings.AUTH_PROJECT_ID}/bulk-assignments?org_id={settings.AUTHNEXUS_ORG_ID}"
         headers = {"Authorization": f"Bearer {token}"}
         payload = {
-            "userIds": user_ids,
+            "userIds": [user_id],
             "projectId": settings.AUTH_PROJECT_ID,
             "organizationId": settings.AUTHNEXUS_ORG_ID,
-            "roleKeys": role_keys,
-            "skipIfExists": False
+            "roleKeys": role_keys
         }
 
-        logger.debug(f"[AuthNexusClient] bulk_assign_roles: userIds={user_ids}, roleKeys={role_keys}")
+        logger.debug(f"[AuthNexusClient] assign_to_project: userIds={[user_id]}, projectId={settings.AUTH_PROJECT_ID}, organizationId={settings.AUTHNEXUS_ORG_ID}, roleKeys={role_keys}")
 
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
@@ -273,7 +232,7 @@ class AuthNexusClient:
                 
                 # Retry once if 401
                 if resp.status_code == 401:
-                    logger.warning("[AuthNexusClient] 401 Unauthorized on bulk_assign_roles. Forcing token refresh and retrying...")
+                    logger.warning("[AuthNexusClient] 401 Unauthorized on assign_to_project. Forcing token refresh and retrying...")
                     cls._token = None
                     cls._token_expiry = 0
                     new_token = await cls._get_token()
@@ -282,18 +241,158 @@ class AuthNexusClient:
                         resp = await client.post(url, json=payload, headers=headers)
 
                 if resp.status_code >= 400:
-                    logger.error(f"[AuthNexusClient] bulk_assign_roles failed: {resp.status_code} — {resp.text}")
+                    logger.error(f"[AuthNexusClient] assign_to_project failed: {resp.status_code} — {resp.text}")
                     return False
 
-                logger.info(f"[AuthNexusClient] Roles synced for {len(user_ids)} users.")
+                logger.info(f"[AuthNexusClient] Roles synced for user {user_id}.")
                 return True
         except Exception as e:
-            logger.error(f"[AuthNexusClient] Failed to bulk assign roles in AuthNexus: {e}", exc_info=True)
+            logger.error(f"[AuthNexusClient] Failed to assign roles in AuthNexus: {e}", exc_info=True)
             return False
+
+    @classmethod
+    async def bulk_assign_roles(cls, user_ids: List[str], role_keys: List[str]) -> bool:
+        """
+        Shim to keep bulk_assign_roles working during transition phases.
+        Assigns roles to each user individually.
+        """
+        if not user_ids:
+            return True
+        success = True
+        for user_id in user_ids:
+            res = await cls.assign_to_project(user_id, role_keys)
+            if not res:
+                success = False
+        return success
 
     @classmethod
     async def assign_roles(cls, user_id: str, role_keys: List[str]) -> bool:
         """
         Convenience wrapper for assigning roles to a single user.
         """
-        return await cls.bulk_assign_roles([user_id], role_keys)
+        return await cls.assign_to_project(user_id, role_keys)
+
+    @classmethod
+    async def list_project_assignments(cls) -> List[dict]:
+        """
+        Lists all active project assignments from ZITADEL/AuthNexus.
+        """
+        token = await cls._get_token()
+        if not token:
+            logger.warning("[AuthNexusClient] Skipping list_project_assignments: no admin token.")
+            return []
+
+        url = f"{settings.AUTH_AUTHORITY}/api/admin/projects/{settings.AUTH_PROJECT_ID}/assignments?org_id={settings.AUTHNEXUS_ORG_ID}"
+        headers = {"Authorization": f"Bearer {token}"}
+
+        logger.debug("[AuthNexusClient] Fetching project assignments")
+
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.get(url, headers=headers)
+                
+                # Retry once if 401
+                if resp.status_code == 401:
+                    logger.warning("[AuthNexusClient] 401 Unauthorized on list_project_assignments. Forcing token refresh and retrying...")
+                    cls._token = None
+                    cls._token_expiry = 0
+                    new_token = await cls._get_token()
+                    if new_token:
+                        headers["Authorization"] = f"Bearer {new_token}"
+                        resp = await client.get(url, headers=headers)
+
+                if resp.status_code >= 400:
+                    logger.error(f"[AuthNexusClient] list_project_assignments failed: {resp.status_code} — {resp.text}")
+                    return []
+
+                data = resp.json()
+                assignments = data if isinstance(data, list) else data.get("result") or []
+                active_assignments = [
+                    a for a in assignments 
+                    if a.get("state") == "USER_GRANT_STATE_ACTIVE" or a.get("state") == "active"
+                ]
+                return active_assignments
+        except Exception as e:
+            logger.error(f"[AuthNexusClient] Failed to list project assignments in AuthNexus: {e}", exc_info=True)
+            return []
+
+    @classmethod
+    async def get_user(cls, user_id: str) -> Optional[dict]:
+        """
+        Fetches user profile information by user ID from ZITADEL/AuthNexus.
+        """
+        token = await cls._get_token()
+        if not token:
+            logger.warning(f"[AuthNexusClient] Skipping get_user for {user_id}: no admin token.")
+            return None
+
+        url = f"{settings.AUTH_AUTHORITY}/api/admin/users/{user_id}?org_id={settings.AUTHNEXUS_ORG_ID}"
+        headers = {"Authorization": f"Bearer {token}"}
+
+        logger.debug(f"[AuthNexusClient] Fetching user: user_id={user_id}")
+
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.get(url, headers=headers)
+                
+                # Retry once if 401
+                if resp.status_code == 401:
+                    logger.warning("[AuthNexusClient] 401 Unauthorized on get_user. Forcing token refresh and retrying...")
+                    cls._token = None
+                    cls._token_expiry = 0
+                    new_token = await cls._get_token()
+                    if new_token:
+                        headers["Authorization"] = f"Bearer {new_token}"
+                        resp = await client.get(url, headers=headers)
+
+                if resp.status_code == 404:
+                    logger.info(f"[AuthNexusClient] User {user_id} not found.")
+                    return None
+
+                if resp.status_code >= 400:
+                    logger.error(f"[AuthNexusClient] get_user failed: {resp.status_code} — {resp.text}")
+                    return None
+
+                return resp.json()
+        except Exception as e:
+            logger.error(f"[AuthNexusClient] Failed to get user {user_id} in AuthNexus: {e}", exc_info=True)
+            return None
+
+    @classmethod
+    async def delete_user(cls, user_id: str) -> bool:
+        """
+        Deletes a user from AuthNexus (used as compensating transaction).
+        """
+        token = await cls._get_token()
+        if not token:
+            logger.warning(f"[AuthNexusClient] Skipping delete_user for {user_id}: no admin token.")
+            return False
+
+        url = f"{settings.AUTH_AUTHORITY}/api/admin/users/{user_id}?org_id={settings.AUTHNEXUS_ORG_ID}"
+        headers = {"Authorization": f"Bearer {token}"}
+
+        logger.debug(f"[AuthNexusClient] Deleting user: user_id={user_id}")
+
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.delete(url, headers=headers)
+                
+                # Retry once if 401
+                if resp.status_code == 401:
+                    logger.warning("[AuthNexusClient] 401 Unauthorized on delete_user. Forcing token refresh and retrying...")
+                    cls._token = None
+                    cls._token_expiry = 0
+                    new_token = await cls._get_token()
+                    if new_token:
+                        headers["Authorization"] = f"Bearer {new_token}"
+                        resp = await client.delete(url, headers=headers)
+
+                if resp.status_code >= 400:
+                    logger.error(f"[AuthNexusClient] delete_user failed: {resp.status_code} — {resp.text}")
+                    return False
+
+                logger.info(f"[AuthNexusClient] User {user_id} successfully deleted from AuthNexus.")
+                return True
+        except Exception as e:
+            logger.error(f"[AuthNexusClient] Failed to delete user {user_id} in AuthNexus: {e}", exc_info=True)
+            return False

@@ -111,6 +111,8 @@ def create_app() -> FastAPI:
     @app.on_event("startup")
     async def _startup():
         await init_pg_pool()
+        from core.migrations import run_database_migrations
+        await run_database_migrations()
 
     @app.on_event("shutdown")
     async def _shutdown():

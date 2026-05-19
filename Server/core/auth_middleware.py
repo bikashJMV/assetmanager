@@ -27,6 +27,7 @@ _EXEMPT_PREFIXES: tuple[str, ...] = (
 
 _EXEMPT_PATHS: set[str] = {
     "/api/auth/refresh",
+    "/api/auth/set-session",
 }
 
 
@@ -95,7 +96,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         try:
             employee: EmployeeContext = await resolve_employee_for_sub(
-                sub=sub, email=email, preferred_username=preferred_username
+                sub=sub
             )
         except PermissionError as exc:
             return self._error(

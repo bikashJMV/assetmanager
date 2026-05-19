@@ -56,7 +56,7 @@ const settings = {
     automaticSilentRenew: false,
  
     monitorSession: true, // DISABLED: Prevents check_session_iframe from firing 'userSignedOut' when the BFF rotates the token
-    accessTokenExpiringNotificationTimeInSeconds: 60,
+    accessTokenExpiringNotificationTimeInSeconds: 600,
     // Never store sensitive data in localStorage (except the access token itself).
     // OIDC user/session details stay in sessionStorage; access_token is mirrored into localStorage explicitly.
     userStore: new WebStorageStateStore({ store: window.sessionStorage }),
@@ -87,6 +87,11 @@ export function registerSilentRefreshCallback(cb: () => Promise<void>) {
 
 // Add these to the bottom of authService.ts
 userManager.events.addAccessTokenExpiring(async () => {
+    const user = await userManager.getUser();
+    if (!user || user.expired) {
+        console.debug("[authNexus] addAccessTokenExpiring fired but no active session exists. Skipping refresh.");
+        return;
+    }
     console.warn("[authNexus] Access token expiring soon... initiating proactive BFF refresh.");
     if (_proactiveRefreshCallback) {
         try { await _proactiveRefreshCallback() }
@@ -104,9 +109,32 @@ userManager.events.addSilentRenewError((error) => {
     // Do NOT clear access token — it may still be valid
 });
 
-userManager.events.addUserLoaded((user) => {
-    // Allowed exception: persist only the access token in localStorage.
+userManager.events.addUserLoaded(async (user) => {
+    console.debug('[authNexus][addUserLoaded] STEP 1 — user loaded. has_access_token:', !!user?.access_token, '| has_refresh_token:', !!user?.refresh_token, '| expires_at:', user?.expires_at)
     setAuthNexusAccessToken(user?.access_token ?? null)
+
+    if (!user?.refresh_token) {
+        console.error('[authNexus][addUserLoaded] FAILED STEP 2 — no refresh_token in OIDC user object. Cookie will NOT be set. Check that offline_access scope is granted and AuthNexus returns refresh_token.')
+        return
+    }
+
+    console.debug('[authNexus][addUserLoaded] STEP 2 — calling POST /api/auth/set-session to plant HttpOnly cookie...')
+    try {
+        const res = await fetch('/api/auth/set-session', {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ refresh_token: user.refresh_token }),
+        })
+        if (res.ok) {
+            console.debug('[authNexus][addUserLoaded] STEP 2 OK — nexus_refresh_token cookie planted successfully.')
+        } else {
+            const body = await res.text()
+            console.error('[authNexus][addUserLoaded] FAILED STEP 2 — /api/auth/set-session returned', res.status, '| body:', body)
+        }
+    } catch (err) {
+        console.error('[authNexus][addUserLoaded] FAILED STEP 2 — network error calling /api/auth/set-session:', err)
+    }
 });
 
 userManager.events.addUserUnloaded(() => {

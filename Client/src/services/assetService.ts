@@ -209,18 +209,21 @@ export async function scanAsset(ref: string): Promise<ScanAssetResponse> {
   })
 }
 
-export async function publicScanAsset(ref: string): Promise<PublicScanAsset> {
-  const data = await apiRequest<ScanPublicFields>({
+export async function publicScanAsset(ref: string): Promise<PublicScanAsset | { kind: string }> {
+  const data = await apiRequest<ScanPublicFields | { kind: string }>({
     method: 'GET',
     url: `/api/v1/assets/scan/${encodeURIComponent(ref)}`,
     headers: { 'X-Skip-Auth': 'true' },
   })
-  return toPublicScanAsset(ref, data)
+  if (data && typeof data === 'object' && 'kind' in data) {
+    return data as { kind: string }
+  }
+  return toPublicScanAsset(ref, data as ScanPublicFields)
 }
 
 export type ScanReadyToLogResponse = {
   kind: 'ready_to_log'
-  asset_tag: string
+  asset_tag?: string
   qr_reservation_id: string
   batch_code?: string
 }
@@ -243,10 +246,10 @@ export async function protectedScanAsset(
     // NEW — preserve ready_to_log payload (qr_reservation_id must survive)
     if ('kind' in data && (data as { kind?: unknown }).kind === 'ready_to_log') {
       const d = data as { asset_tag?: unknown; qr_reservation_id?: unknown; batch_code?: unknown }
-      if (typeof d.asset_tag === 'string' && typeof d.qr_reservation_id === 'string') {
+      if (typeof d.qr_reservation_id === 'string') {
         return {
           kind: 'ready_to_log',
-          asset_tag: d.asset_tag,
+          asset_tag: typeof d.asset_tag === 'string' ? d.asset_tag : undefined,
           qr_reservation_id: d.qr_reservation_id,
           batch_code: typeof d.batch_code === 'string' ? d.batch_code : undefined,
         }
@@ -255,4 +258,29 @@ export async function protectedScanAsset(
   }
 
   return toPublicScanAsset(ref, data as ScanPublicFields)
+}
+
+export async function getNextTag(alias?: string): Promise<string> {
+  const resp = await apiRequest<{ next_tag: string }>({
+    method: 'GET',
+    url: '/api/v1/assets/next-tag',
+    params: alias ? { alias } : undefined,
+  })
+  return resp.next_tag
+}
+
+export async function validateTag(assetTag: string): Promise<{
+  valid: boolean
+  reason: string | null
+  suggestions: string[]
+}> {
+  return apiRequest<{
+    valid: boolean
+    reason: string | null
+    suggestions: string[]
+  }>({
+    method: 'POST',
+    url: '/api/v1/assets/validate-tag',
+    data: { asset_tag: assetTag },
+  })
 }

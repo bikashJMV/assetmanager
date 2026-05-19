@@ -1,5 +1,5 @@
 from pydantic import BaseModel, ConfigDict, Field
-from typing import Any, Optional
+from typing import Any, Optional, Literal
 from datetime import datetime
 import uuid
 
@@ -7,32 +7,30 @@ import uuid
 class QrBatchCreateInput(BaseModel):
     """Input for creating a new QR batch."""
     model_config = ConfigDict(extra="forbid")
-    
-    count: int = Field(..., ge=1, le=1000, description="Number of tags to reserve (1-1000)")
+
+    count: int = Field(..., ge=1, le=1000, description="Number of QR codes to generate (1-1000)")
 
 
 class QrReservationOut(BaseModel):
     """Output for a QR tag reservation."""
     model_config = ConfigDict(from_attributes=True)
-    
+
     id: uuid.UUID
-    asset_tag: str
-    status: str
-    consumed_by_asset_id: Optional[uuid.UUID] = None
-    consumed_at: Optional[datetime] = None
+    asset_tag: Optional[str] = None
+    status: Literal['unlinked', 'linked']
+    asset_id: Optional[uuid.UUID] = None
+    linked_at: Optional[datetime] = None
     created_at: datetime
 
 
 class QrBatchOut(BaseModel):
     """Output for a QR batch."""
     model_config = ConfigDict(from_attributes=True)
-    
+
     id: uuid.UUID
     batch_code: str
     idempotency_key: str
     requested_count: int
-    start_tag: Optional[str] = None
-    end_tag: Optional[str] = None
     status: str
     created_by_employee_id: uuid.UUID
     created_at: datetime

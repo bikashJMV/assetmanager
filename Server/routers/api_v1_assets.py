@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from core.api_response import error_response, success_response
 from core.authnexus import EmployeeContext
 from core.authz import require_admin, require_authenticated, require_privileged
+from core.roles import PRIVILEGED_ROLES
 from core.settings import settings
 from repositories.asset_detail_repository import AssetDetailRepository
 from repositories.asset_repository import AssetRepository
@@ -38,7 +39,6 @@ _PUBLIC_UNASSIGNED_FIELDS: tuple[str, ...] = (
     "status",
 )
 
-_PRIVILEGED_ROLES = {"admin", "it_ops"}
 
 
 def _pick(row: dict[str, Any], fields: tuple[str, ...]) -> dict[str, Any]:
@@ -255,26 +255,173 @@ async def delete_recycle_bin_entry_permanent(
 
 @router.get("/next-tag")
 async def get_next_asset_tag(
+    alias: Optional[str] = Query(default=None),
     employee: EmployeeContext = Depends(require_privileged),
 ) -> JSONResponse:
     """
-    Purpose: Generate the next available sequential asset tag.
-    Method/Route: GET /api/v1/assets/next-tag
-    Response: 200 Guideline envelope `{data: string}`; Errors: 500 envelope.
+    Purpose: Generate/peek the next available sequential asset tag for an alias.
+    Method/Route: GET /api/v1/assets/next-tag?alias={alias}
+    Response: 200 Guideline envelope `{data: {next_tag: string}}`; Errors: 500 envelope.
     Notes: Privileged only.
     """
     try:
-        tag = await AssetRepository.get_next_asset_tag()
+        if not alias or not str(alias).strip():
+            tag = await AssetRepository.get_next_asset_tag()
+            return JSONResponse(
+                status_code=status.HTTP_200_OK,
+                content=success_response(
+                    message="Next asset tag generated successfully.",
+                    data={"next_tag": tag},
+                    status_code=200,
+                ),
+            )
+        
+        alias_clean = str(alias).strip().upper()
+        async with pool().acquire() as conn:
+            tag = await conn.fetchval("SELECT fn_peek_next_asset_tag($1);", alias_clean)
+        
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content=success_response(
-                message="Next asset tag generated successfully.",
-                data=tag,
+                message="Next asset tag peeked successfully.",
+                data={"next_tag": tag},
                 status_code=200,
             ),
         )
     except Exception as exc:
         return _json_error(500, message="Failed to generate next tag.", code="INTERNAL_ERROR", details=str(exc))
+
+
+@router.post("/validate-tag")
+async def validate_asset_tag(
+    body: dict[str, Any],
+    employee: EmployeeContext = Depends(require_privileged),
+) -> JSONResponse:
+    """
+    Purpose: Validate formatting, alias existence, and uniqueness of a new asset tag.
+    Method/Route: POST /api/v1/assets/validate-tag
+    Response: 200 Guideline envelope `{data: {valid, reason, suggestions[]}}`.
+    Notes: Privileged only.
+    """
+    try:
+        import re
+        tag = str(body.get("asset_tag", "")).strip()
+        if not tag:
+            return JSONResponse(
+                status_code=status.HTTP_200_OK,
+                content=success_response(
+                    message="Tag is empty.",
+                    data={"valid": False, "reason": "Tag is required", "suggestions": []},
+                    status_code=200,
+                ),
+            )
+
+        # Check format: JMV-ALIAS-#####
+        pattern = r"^JMV-([A-Z]{3})-(\d{5})$"
+        match = re.match(pattern, tag.upper())
+        if not match:
+            # Check if it matches legacy format and has a reservation
+            old_pattern = r"^AST-(\d{5})$"
+            old_match = re.match(old_pattern, tag.upper())
+            if old_match:
+                async with pool().acquire() as conn:
+                    reservation = await conn.fetchrow(
+                        "SELECT id FROM qr_tag_reservations WHERE UPPER(asset_tag) = $1 AND status = 'reserved';",
+                        tag.upper()
+                    )
+                    if reservation:
+                        return JSONResponse(
+                            status_code=status.HTTP_200_OK,
+                            content=success_response(
+                                message="Legacy reservation tag is valid.",
+                                data={"valid": True, "reason": "Legacy reservation tag", "suggestions": []},
+                                status_code=200,
+                            ),
+                        )
+                    else:
+                        return JSONResponse(
+                            status_code=status.HTTP_200_OK,
+                            content=success_response(
+                                message="Legacy reservation tag not found or already consumed.",
+                                data={"valid": False, "reason": "Legacy reservation tag not found or already consumed", "suggestions": []},
+                                status_code=200,
+                            ),
+                        )
+
+            # Try to extract potential alias to offer a suggestion
+            suggest_alias = "OTH"
+            parts = tag.split("-")
+            if len(parts) >= 2 and len(parts[1]) >= 2:
+                potential_alias = parts[1][:3].upper()
+                async with pool().acquire() as conn:
+                    exists = await conn.fetchval("SELECT EXISTS(SELECT 1 FROM asset_categories WHERE UPPER(alias_code) = $1);", potential_alias)
+                    if exists:
+                        suggest_alias = potential_alias
+            
+            async with pool().acquire() as conn:
+                next_val = await conn.fetchval("SELECT fn_peek_next_asset_tag($1);", suggest_alias)
+
+            return JSONResponse(
+                status_code=status.HTTP_200_OK,
+                content=success_response(
+                    message="Invalid tag format.",
+                    data={
+                        "valid": False,
+                        "reason": "Tag must match JMV-[ALIAS]-[#####] format (e.g. JMV-LAP-00001)",
+                        "suggestions": [next_val] if next_val else []
+                    },
+                    status_code=200,
+                ),
+            )
+
+        alias = match.group(1)
+        
+        # Verify alias code exists in asset_categories
+        async with pool().acquire() as conn:
+            alias_exists = await conn.fetchval(
+                "SELECT EXISTS(SELECT 1 FROM asset_categories WHERE UPPER(alias_code) = $1);", 
+                alias
+            )
+            if not alias_exists:
+                return JSONResponse(
+                    status_code=status.HTTP_200_OK,
+                    content=success_response(
+                        message="Unknown alias code.",
+                        data={"valid": False, "reason": f"Unknown category alias: {alias}", "suggestions": []},
+                        status_code=200,
+                    ),
+                )
+
+            # Check uniqueness
+            tag_exists = await conn.fetchval(
+                "SELECT EXISTS(SELECT 1 FROM assets WHERE UPPER(asset_tag) = $1);", 
+                tag.upper()
+            )
+            if tag_exists:
+                next_val = await conn.fetchval("SELECT fn_peek_next_asset_tag($1);", alias)
+                return JSONResponse(
+                    status_code=status.HTTP_200_OK,
+                    content=success_response(
+                        message="Tag already in use.",
+                        data={
+                            "valid": False,
+                            "reason": "Tag is already assigned to another asset",
+                            "suggestions": [next_val] if next_val else []
+                        },
+                        status_code=200,
+                    ),
+                )
+
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content=success_response(
+                message="Tag is valid.",
+                data={"valid": True, "reason": None, "suggestions": []},
+                status_code=200,
+            ),
+        )
+    except Exception as exc:
+        return _json_error(500, message="Failed to validate tag.", code="INTERNAL_ERROR", details=str(exc))
 
 
 @router.post("")
@@ -336,18 +483,20 @@ async def bulk_insert_assets(
         ip_address = request.client.host if request.client else None
         user_agent = request.headers.get("user-agent")
 
-        count = await asset_service.bulk_insert_assets(
+        result = await asset_service.bulk_insert_assets(
             rows=[r.model_dump() for r in rows],
             actor=employee,
             ip_address=ip_address,
             user_agent=user_agent,
         )
 
+        inserted = result["inserted"]
+        failed_rows = result["failed_rows"]
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content=success_response(
-                message=f"Successfully processed {count} assets.",
-                data={"inserted": count},
+                message=f"Processed bulk import: {inserted} inserted, {len(failed_rows)} failed.",
+                data={"inserted": inserted, "failed_rows": failed_rows},
                 status_code=200,
             ),
         )
@@ -822,46 +971,51 @@ async def scan_asset(ref: str, request: Request) -> JSONResponse:
         # ─────────────────────────────────────────────────────────────
         if not row:
             from repositories.qr_repository import QrRepository
-            reservation = await QrRepository.get_reservation_by_tag(ref)
-            
-            if reservation and reservation["status"] == "reserved":
+            import re as _re
+            _UUID_RE = _re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', _re.IGNORECASE)
+
+            reservation = None
+            if _UUID_RE.match(ref):
+                reservation = await QrRepository.get_reservation_by_uuid_for_scan(ref)
+
+            if reservation and reservation["status"] == "unlinked":
                 signed_in: Optional[EmployeeContext] = getattr(request.state, "employee", None)
-                
-                if signed_in and signed_in.role in _PRIVILEGED_ROLES:
+                qr_reservation_id = str(reservation["id"])
+
+                if signed_in and signed_in.role in PRIVILEGED_ROLES:
                     return JSONResponse(
                         status_code=200,
                         content=success_response(
-                            message="Reserved QR tag ready to log.",
+                            message="Unlinked QR ready to log.",
                             data={
                                 "kind": "ready_to_log",
-                                "asset_tag": ref,
-                                "qr_reservation_id": str(reservation["id"]),
+                                "qr_reservation_id": qr_reservation_id,
                                 "batch_code": reservation["batch_code"],
                             },
                             status_code=200,
                         ),
                     )
-                
+
                 if signed_in and signed_in.role == "employee":
                     return JSONResponse(
                         status_code=200,
                         content=success_response(
                             message="Admin access required to log this asset.",
-                            data={"kind": "admin_required", "asset_tag": ref},
+                            data={"kind": "admin_required"},
                             status_code=200,
                         ),
                     )
-                
+
                 # Unauthenticated
                 return JSONResponse(
                     status_code=200,
                     content=success_response(
                         message="Please sign in to log this asset.",
-                        data={"kind": "reserved", "asset_tag": ref},
+                        data={"kind": "unlinked"},
                         status_code=200,
                     ),
                 )
-            
+
             return _json_error(404, message="Asset not found.", code="NOT_FOUND")
 
 
@@ -869,7 +1023,7 @@ async def scan_asset(ref: str, request: Request) -> JSONResponse:
 
         # --- Signed in ---
         if signed_in:
-            if signed_in.role in _PRIVILEGED_ROLES:
+            if signed_in.role in PRIVILEGED_ROLES:
                 return JSONResponse(
                     status_code=200,
                     content=success_response(
@@ -1093,7 +1247,7 @@ async def export_asset_qr_labels(
         )
         return Response(content=pdf_bytes, media_type="application/pdf", headers=empty_notice_headers)
 
-    pdf_bytes = qr_label_pdf_service.build_pdf(printable_tags)
+    pdf_bytes = qr_label_pdf_service.build_pdf([(tag, tag) for tag in printable_tags])
     headers = {
         "Content-Disposition": f'inline; filename="{qr_label_pdf_service.file_name}"',
         "Cache-Control": "no-store",

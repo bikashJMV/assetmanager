@@ -20,7 +20,6 @@ const defaults: EmployeeUpsertInput = {
   email: '',
   department: '',
   role: 'employee',
-  is_active: true,
 }
 
 const requiredFields: (keyof EmployeeUpsertInput)[] = ['employee_id', 'name', 'department']
@@ -29,11 +28,6 @@ const ROLE_OPTIONS: FilterSelectOption[] = [
   { value: 'employee', label: 'Employee' },
   { value: 'admin', label: 'Admin' },
   { value: 'it_ops', label: 'IT Ops' },
-]
-
-const EMPLOYEE_STATUS_OPTIONS: FilterSelectOption[] = [
-  { value: 'active', label: 'Active employee' },
-  { value: 'inactive', label: 'Inactive employee' },
 ]
 
 export default function EmployeeForm({ prefill, onClose, onSubmit, departmentOptions, canManageAdminRole = false }: Props) {
@@ -160,22 +154,6 @@ export default function EmployeeForm({ prefill, onClose, onSubmit, departmentOpt
                 />
               </div>
             )}
-            {canManageAdminRole && (
-              <>
-                <Field
-                  label="Employee status"
-                  type="select"
-                  value={form.is_active ? 'active' : 'inactive'}
-                  onChange={(value) =>
-                    setForm((current) => ({ ...current, is_active: value === 'active' }))
-                  }
-                  options={EMPLOYEE_STATUS_OPTIONS}
-                />
-                <p className="text-[11px] text-muted mt-1">
-                  Employment / account flag. Assignment is blocked when not active.
-                </p>
-              </>
-            )}
           </div>
         </div>
 
@@ -192,7 +170,7 @@ export default function EmployeeForm({ prefill, onClose, onSubmit, departmentOpt
           <button
             type="submit"
             disabled={saving}
-            className="flex-1 bg-accent text-white font-semibold py-2.5 rounded-lg hover:bg-accent-hover transition text-sm shadow-accent disabled:opacity-60"
+            className="flex-1 bg-accent text-on-accent font-semibold py-2.5 rounded-lg hover:bg-accent-hover transition text-sm shadow-accent disabled:opacity-60"
           >
             {saving ? 'Saving...' : isEditing ? 'Save Employee' : 'Add Employee'}
           </button>

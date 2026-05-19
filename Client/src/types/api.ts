@@ -4,6 +4,7 @@ export type CategoryRecord = {
   id: string
   slug: string
   name: string
+  alias_code: string
 }
 
 export type EmployeeRecord = {
@@ -13,7 +14,7 @@ export type EmployeeRecord = {
   email: string | null
   department: string | null
   role: EmployeeRole
-  is_active: boolean
+  is_active?: boolean
   assigned_asset_count?: number
 }
 
@@ -24,7 +25,7 @@ export type EmployeeUpsertInput = {
   email?: string | null
   department?: string | null
   role?: EmployeeRole
-  is_active: boolean
+  is_active?: boolean
 }
 
 export type EmployeePortfolioAsset = {
@@ -76,8 +77,12 @@ export type AssetInventoryRecord = {
   current_employee_business_id: string | null
   current_employee_name: string | null
   current_employee_email: string | null
-  current_employee_is_active: boolean | null
+  current_employee_is_active?: boolean | null
   current_employee_department: string | null
+  asset_department_id: string | null
+  asset_department_name: string | null
+  source?: string | null
+  qr_reservation_id?: string | null
   created_at: string
   updated_at: string
   created_by?: string | null
@@ -106,7 +111,7 @@ export type AssetAssignmentRecord = {
     id: string
     employee_id: string
     name: string
-    is_active: boolean
+    is_active?: boolean
     department: string | null
     role: string | null
   } | null

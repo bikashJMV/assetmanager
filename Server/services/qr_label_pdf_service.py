@@ -87,10 +87,20 @@ class QRLabelPDFService:
                 out.append(chunk)
         return out if out else [text[:120]]
 
-    def build_pdf(self, asset_tags: list[str], title: str = "Asset Manager Directory — QR Codes") -> bytes:
-        cleaned_tags = [tag.strip() for tag in asset_tags if isinstance(tag, str) and tag.strip()]
-        if not cleaned_tags:
-            raise ValueError("At least one asset tag is required to export QR labels.")
+    def build_pdf(self, labels: list[tuple[str, str]], title: str = "Asset Manager Directory — QR Codes") -> bytes:
+        """
+        Build a print-ready PDF of QR labels.
+        `labels` is a list of (qr_uuid, asset_tag) tuples:
+          - qr_uuid  → encoded in the QR image (scan URL: /scan/{qr_uuid})
+          - asset_tag → printed as human-readable text below the QR
+        """
+        cleaned = [
+            (u.strip(), t.strip())
+            for u, t in labels
+            if isinstance(u, str) and u.strip() and isinstance(t, str) and t.strip()
+        ]
+        if not cleaned:
+            raise ValueError("At least one label is required to export QR labels.")
 
         buffer = BytesIO()
         pdf = canvas.Canvas(buffer, pagesize=A4, pageCompression=1)
@@ -98,7 +108,7 @@ class QRLabelPDFService:
         page_width, page_height = A4
         header_height = 15 * mm
         available_height = page_height - (2 * self.page_margin_y) - header_height
-        
+
         columns = max(
             1,
             int((page_width - (2 * self.page_margin_x) + self.label_gap) // (self.label_size + self.label_gap)),
@@ -111,7 +121,7 @@ class QRLabelPDFService:
 
         self._draw_header(pdf, page_width, page_height, title)
 
-        for index, asset_tag in enumerate(cleaned_tags):
+        for index, (qr_uuid, asset_tag) in enumerate(cleaned):
             if index > 0 and index % labels_per_page == 0:
                 pdf.showPage()
                 self._draw_header(pdf, page_width, page_height, title)
@@ -122,12 +132,12 @@ class QRLabelPDFService:
 
             x = self.page_margin_x + column * (self.label_size + self.label_gap)
             y = page_height - self.page_margin_y - header_height - self.label_size - row * (self.label_size + self.label_gap)
-            self._draw_label(pdf, x, y, asset_tag)
+            self._draw_label(pdf, x, y, qr_uuid, asset_tag)
 
         pdf.save()
         return buffer.getvalue()
 
-    def _draw_header(self, pdf: canvas.Canvas, page_width: float, page_height: float, title: str) -> None:
+    def _draw_header(self, pdf: canvas.Canvas, page_width: float, page_height: float, title: str = "Asset Manager") -> None:
         pdf.saveState()
         pdf.setFont("Helvetica-Bold", 16)
         pdf.setFillColorRGB(0, 0, 0)
@@ -137,7 +147,7 @@ class QRLabelPDFService:
         pdf.line(self.page_margin_x, y - 10, page_width - self.page_margin_x, y - 10)
         pdf.restoreState()
 
-    def _draw_label(self, pdf: canvas.Canvas, x: float, y: float, asset_tag: str) -> None:
+    def _draw_label(self, pdf: canvas.Canvas, x: float, y: float, qr_uuid: str, asset_tag: str) -> None:
         pdf.saveState()
         pdf.setStrokeColorRGB(0, 0, 0)
         pdf.setFillColorRGB(1, 1, 1)
@@ -148,7 +158,7 @@ class QRLabelPDFService:
         qr_box_y = y + self.text_bottom_padding + self._tag_area_height() + self.text_gap
 
         qr_size = self.qr_box_size - (2 * self.qr_box_padding)
-        qr_image = ImageReader(BytesIO(qr_service.generate_asset_qr_png_bytes(asset_tag)))
+        qr_image = ImageReader(BytesIO(qr_service.generate_asset_qr_png_bytes(qr_uuid)))
         pdf.drawImage(
             qr_image,
             qr_box_x + self.qr_box_padding,

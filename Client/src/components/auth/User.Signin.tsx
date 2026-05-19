@@ -37,7 +37,7 @@ export default function AuthNexusLoginButton({ variant = 'default' }: AuthNexusL
 
   const base =
     variant === 'primary'
-      ? 'w-full bg-accent text-white font-semibold py-2.5 rounded-lg hover:bg-accent-hover transition disabled:opacity-60'
+      ? 'w-full bg-accent text-on-accent font-semibold py-2.5 rounded-lg hover:bg-accent-hover transition disabled:opacity-60'
       : 'rounded-full border border-[#D9D4CB] bg-white px-5 py-2.5 text-sm font-semibold text-[#0A0A0A] shadow-sm transition hover:bg-[#F8F3EC] disabled:cursor-not-allowed disabled:opacity-50'
 
   return (

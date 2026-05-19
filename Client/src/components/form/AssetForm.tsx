@@ -3,10 +3,12 @@ import {
   createAsset,
   getCustomFieldDefinitions,
   listCategories,
+  listDepartmentObjects,
   setAssetLifecycleStatus,
   type AssetWriteInput,
   type CategoryRecord,
   type CustomFieldDefinition,
+  type DepartmentRecord,
   updateAsset,
 } from '../../api'
 import { getUserFacingMessage, logDevError } from '../../utils/errors'
@@ -24,12 +26,14 @@ type Props = {
   lockedCategoryLabel?: string
   qr_reservation_id?: string
   isStatusDisabled?: boolean
+  initialCategories?: CategoryRecord[]
 }
 
 
 type FormState = {
   asset_tag: string
   category_slug: string
+  department_id: string
   manufacturer_name: string
   model: string
   serial_number: string
@@ -56,6 +60,7 @@ function getCategoryLabelFromSlug(slug: string): string {
 const defaultForm: FormState = {
   asset_tag: '',
   category_slug: 'laptop',
+  department_id: '',
   manufacturer_name: '',
   model: '',
   serial_number: '',
@@ -75,17 +80,20 @@ export default function AssetForm({
   lockedCategoryLabel,
   qr_reservation_id,
   isStatusDisabled = false,
+  initialCategories,
 }: Props) {
 
   const isEditing = !!prefill.asset_tag
   const originalStatus = prefill.status || 'in_stock'
   const isPanel = variant === 'panel'
   const lockCategory = Boolean(categoryLocked && !isEditing)
+  const isTagReadOnly = Boolean(isEditing || prefill.asset_tag)
 
   const [form, setForm] = useState<FormState>({
     ...defaultForm,
     asset_tag: prefill.asset_tag || '',
     category_slug: prefill.category_slug || 'laptop',
+    department_id: prefill.department_id || '',
     manufacturer_name: prefill.manufacturer_name || '',
     model: prefill.model || '',
     serial_number: prefill.serial_number || '',
@@ -96,19 +104,116 @@ export default function AssetForm({
     notes: typeof prefill.metadata?.notes === 'string' ? prefill.metadata.notes : '',
   })
 
+  const isLegacyTag = Boolean(form.asset_tag && /^AST-\d{5}$/i.test(form.asset_tag))
+
   const [customDefs, setCustomDefs] = useState<CustomFieldDefinition[]>([])
   const [customValues, setCustomValues] = useState<Record<string, string>>({})
   const [extraPairs, setExtraPairs] = useState<ExtraPair[]>([])
   const [categories, setCategories] = useState<CategoryRecord[]>([])
+  const [departments, setDepartments] = useState<DepartmentRecord[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const { showToast } = useToast()
 
+  const selectedCategory = useMemo(() => {
+    return categories.find((c) => c.slug === form.category_slug)
+  }, [categories, form.category_slug])
+
+  const currentAlias = selectedCategory?.alias_code || 'OTH'
+
+  const [seqPart, setSeqPart] = useState('')
+
+  const [tagValidation, setTagValidation] = useState<{
+    valid: boolean
+    reason: string | null
+    suggestions: string[]
+  } | null>(null)
+  const [isValidating, setIsValidating] = useState(false)
+
+  const handleSeqChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const raw = e.target.value.replace(/\D/g, '').slice(0, 5)
+    setSeqPart(raw)
+  }
+
+  const handleAutoAssign = async () => {
+    if (!selectedCategory) {
+      showToast({ message: 'Categories are still loading — please wait a moment.', variant: 'error' })
+      return
+    }
+    try {
+      const { getNextTag } = await import('../../services/assetService')
+      const tag = await getNextTag(currentAlias)
+      const parts = tag.split('-')
+      const num = parts[parts.length - 1]
+      setSeqPart(num)
+    } catch (err) {
+      showToast({ message: 'Failed to generate auto-assigned tag.', variant: 'error' })
+    }
+  }
+
+  // Clear seqPart when category slug changes to avoid mismatched alias prefixes
+  useEffect(() => {
+    if (!isTagReadOnly) {
+      setSeqPart('')
+    }
+  }, [form.category_slug, isTagReadOnly])
+
+  // Clear seqPart if alias was a stale OTH fallback and now resolves to the real alias
+  useEffect(() => {
+    if (isTagReadOnly) return
+    if (prevAliasRef.current === 'OTH' && currentAlias !== 'OTH') {
+      setSeqPart('')
+    }
+    prevAliasRef.current = currentAlias
+  }, [currentAlias, isTagReadOnly])
+
+  // Automatically assemble asset_tag from JMV-{alias}-{seqPart}
+  useEffect(() => {
+    if (isTagReadOnly) return
+    const cleanSeq = seqPart.replace(/\D/g, '').slice(0, 5)
+    if (cleanSeq.length === 5) {
+      setForm((c) => ({ ...c, asset_tag: `JMV-${currentAlias}-${cleanSeq}` }))
+    } else if (cleanSeq.length > 0) {
+      setForm((c) => ({ ...c, asset_tag: `JMV-${currentAlias}-${cleanSeq.padStart(5, '0')}` }))
+    } else {
+      setForm((c) => ({ ...c, asset_tag: '' }))
+    }
+  }, [seqPart, currentAlias, isTagReadOnly])
+
+  useEffect(() => {
+    if (isTagReadOnly || !form.asset_tag.trim()) {
+      setTagValidation(null)
+      return
+    }
+
+    const delay = setTimeout(async () => {
+      setIsValidating(true)
+      try {
+        const { validateTag } = await import('../../services/assetService')
+        const result = await validateTag(form.asset_tag)
+        setTagValidation(result)
+      } catch (err) {
+        setTagValidation(null)
+      } finally {
+        setIsValidating(false)
+      }
+    }, 500)
+
+    return () => clearTimeout(delay)
+  }, [form.asset_tag, isTagReadOnly])
+
+  // Tracks the previous alias to detect when it resolves from the stale OTH fallback
+  const prevAliasRef = useRef<string>(currentAlias)
+
   // Tracks the last loaded category so we know whether this is initial load or a user-driven change.
   const prevCategoryRef = useRef<string | null>(null)
 
-  // Load categories once
+  // Load categories — use parent-provided list when available to avoid async race
   useEffect(() => {
+    if (initialCategories && initialCategories.length > 0) {
+      setCategories(initialCategories)
+      return
+    }
     if (lockCategory) return
     let mounted = true
     void (async () => {
@@ -125,7 +230,21 @@ export default function AssetForm({
     return () => {
       mounted = false
     }
-  }, [lockCategory])
+  }, [lockCategory, initialCategories])
+
+  // Load departments for the department picker
+  useEffect(() => {
+    let mounted = true
+    void (async () => {
+      try {
+        const rows = await listDepartmentObjects()
+        if (mounted) setDepartments(rows)
+      } catch {
+        // non-critical — leave empty
+      }
+    })()
+    return () => { mounted = false }
+  }, [])
 
   // Load custom field definitions whenever category changes.
   // On the very first load (prevCategoryRef === null) we seed template values from prefill.custom_fields
@@ -192,6 +311,11 @@ export default function AssetForm({
     ]
   }, [categories, form.category_slug])
 
+  const departmentOptions = useMemo<FilterSelectOption[]>(() => {
+    const opts = departments.map((d) => ({ value: d.id, label: d.name }))
+    return [{ value: '', label: 'No department' }, ...opts]
+  }, [departments])
+
   const inventoryStatusOptions = useMemo<FilterSelectOption[]>(() => {
     const statuses = isEditing
       ? Array.from(new Set([originalStatus, ...lifecycleEditStatuses]))
@@ -243,6 +367,11 @@ export default function AssetForm({
       seenExtra.add(k)
     }
 
+    if (tagValidation && !tagValidation.valid) {
+      setError(tagValidation.reason || 'Asset tag is invalid.')
+      return
+    }
+
     setLoading(true)
     try {
       const typeByKey = new Map(customDefs.map((d) => [d.field_key, d.data_type] as const))
@@ -259,8 +388,9 @@ export default function AssetForm({
       const custom_fields: Record<string, unknown> = { ...preparedTemplateFields, ...preparedExtraFields }
 
       const payload: AssetWriteInput = {
-        asset_tag: isEditing ? form.asset_tag.trim() || undefined : undefined,
+        asset_tag: form.asset_tag.trim() || undefined,
         category_slug: form.category_slug,
+        department_id: form.department_id || undefined,
         manufacturer_name: form.manufacturer_name.trim() || undefined,
         model: form.model.trim() || undefined,
         serial_number: form.serial_number.trim(),
@@ -345,6 +475,17 @@ export default function AssetForm({
 
       <form onSubmit={handleSubmit} className="px-3 sm:px-4 py-3 sm:py-4 space-y-3">
         <section className="p-2.5 sm:p-3 space-y-4">
+          {isLegacyTag && (
+            <div className="bg-amber-500/10 border border-amber-500/20 text-amber-600 dark:text-amber-400 p-3 rounded-lg text-xs leading-relaxed space-y-1">
+              <p className="font-semibold flex items-center gap-1.5">
+                ⚠️ Legacy Tag Format Detected
+              </p>
+              <p>
+                This QR label uses the legacy tag format. The asset will be registered with the tag <strong>{form.asset_tag}</strong>. Future batches will utilize the new categorized <strong>JMV-{currentAlias}-xxxxx</strong> format.
+              </p>
+            </div>
+          )}
+
           {/* ── Core Details ── */}
           <div>
             <p className="text-xs uppercase tracking-[0.14em] text-muted mb-2">Core Details</p>
@@ -356,15 +497,89 @@ export default function AssetForm({
                 onChange={(v) => setForm((c) => ({ ...c, asset_tag: v }))}
                 disabled
               /> */}
-              {(isEditing || !qr_reservation_id) && (
-                <Field
-                  label="Asset Tag"
-                  value={isEditing ? form.asset_tag : ''}
-                  placeholder={isEditing ? 'AST-00001' : 'Auto-generated on save'}
-                  onChange={(v) => setForm((c) => ({ ...c, asset_tag: v }))}
-                  disabled
-                />
-              )}
+              <div>
+                <label htmlFor="asset-form-tag" className="block text-muted text-xs mb-0.5 flex justify-between items-center">
+                  <span>Asset Tag {isTagReadOnly ? <span className="text-accent">*</span> : ''}</span>
+                  {!isTagReadOnly && (
+                    <button
+                      type="button"
+                      onClick={handleAutoAssign}
+                      disabled={!selectedCategory}
+                      className="text-xs text-accent hover:underline font-semibold disabled:opacity-40 disabled:cursor-not-allowed disabled:no-underline"
+                    >
+                      Auto-Assign Tag
+                    </button>
+                  )}
+                </label>
+
+                {isTagReadOnly ? (
+                  <input
+                    id="asset-form-tag"
+                    type="text"
+                    value={form.asset_tag}
+                    disabled
+                    className="w-full bg-surface-2 border border-base rounded-lg px-3 py-2 text-primary text-sm opacity-60 cursor-not-allowed"
+                  />
+                ) : (
+                  <div className="flex items-stretch rounded-lg overflow-hidden border border-base bg-app focus-within:border-[color:var(--accent)] focus-within:ring-2 focus-within:ring-[color:var(--accent-soft)] transition">
+                    <span className="flex items-center bg-surface-2 text-muted text-sm font-semibold px-3 border-r border-base select-none">
+                      {categories.length === 0 ? (
+                        <span className="animate-pulse text-subtle">Loading...</span>
+                      ) : (
+                        `JMV-${currentAlias}-`
+                      )}
+                    </span>
+                    <input
+                      id="asset-form-tag"
+                      type="text"
+                      maxLength={5}
+                      value={seqPart}
+                      placeholder="00000"
+                      onChange={handleSeqChange}
+                      disabled={categories.length === 0}
+                      className="w-full bg-transparent py-2 px-3 text-primary placeholder:text-subtle text-sm outline-none border-none disabled:opacity-40 disabled:cursor-not-allowed"
+                    />
+                  </div>
+                )}
+
+                {isValidating && (
+                  <p className="text-[11px] text-muted mt-1 animate-pulse">Checking availability...</p>
+                )}
+                {!isValidating && tagValidation && (
+                  <div className="mt-1 text-xs">
+                    {tagValidation.valid ? (
+                      <p className="text-emerald-500 font-semibold flex items-center gap-1">
+                        ✓ Available
+                      </p>
+                    ) : (
+                      <div className="space-y-1">
+                        <p className="text-accent font-semibold flex items-center gap-1">
+                          ✗ {tagValidation.reason}
+                        </p>
+                        {tagValidation.suggestions && tagValidation.suggestions.length > 0 && (
+                          <div className="text-[11px] text-muted flex items-center gap-1.5 flex-wrap">
+                            <span>Suggested:</span>
+                            {tagValidation.suggestions.map((sug) => {
+                              const parts = sug.split('-')
+                              const displayLabel = parts[parts.length - 1]
+                              return (
+                                <button
+                                  key={sug}
+                                  type="button"
+                                  onClick={() => setSeqPart(displayLabel)}
+                                  className="bg-surface border border-base hover:border-accent text-accent px-1.5 py-0.5 rounded text-[10px] font-semibold transition"
+                                >
+                                  {displayLabel}
+                                </button>
+                              )
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
               <div>
                 <label htmlFor="asset-form-category" className="block text-muted text-xs mb-0.5">
                   Category{' '}
@@ -389,6 +604,22 @@ export default function AssetForm({
                     triggerId="asset-form-category"
                   />
                 )}
+              </div>
+
+              <div>
+                <label htmlFor="asset-form-department" className="block text-muted text-xs mb-0.5">
+                  Department
+                </label>
+                <FilterSelect
+                  label="Department"
+                  ariaLabel="Select department"
+                  value={form.department_id}
+                  options={departmentOptions}
+                  onChange={(v) => setForm((c) => ({ ...c, department_id: v }))}
+                  hideLabel
+                  dense
+                  triggerId="asset-form-department"
+                />
               </div>
 
               <Field
@@ -501,7 +732,7 @@ export default function AssetForm({
               <button
                 type="button"
                 onClick={addExtraPair}
-                className="text-accent bg-orange-500 text-white px-2 text-md font-semibold hover:underline hover:decoration-black transition rounded"
+                className="text-accent bg-orange-500 text-on-accent px-2 text-md font-semibold hover:underline hover:decoration-black transition rounded"
                 aria-label="Add additional detail"
               >
                 + Add
@@ -567,9 +798,7 @@ export default function AssetForm({
 
         <p className="text-[11px] text-muted leading-relaxed border-t border-base pt-2.5 mt-1">
           <span className="text-accent font-semibold">*</span>{' '}
-          {qr_reservation_id
-            ? `Asset tag is locked to the scanned QR. Category and serial number are required; others are optional.`
-            : `Asset tag is auto-generated. Category and serial number are the only required fields; others are optional.`}
+          {`Asset tag is auto-generated from the selected category. Category and serial number are required; others are optional.`}
         </p>
         <div className="flex flex-col sm:flex-row gap-2 pt-1">
           <button
@@ -582,7 +811,7 @@ export default function AssetForm({
           <button
             type="submit"
             disabled={loading}
-            className="flex-1 bg-accent text-white font-semibold py-2 rounded-lg hover:bg-accent-hover transition text-sm disabled:opacity-60 shadow-accent"
+            className="flex-1 bg-accent text-on-accent font-semibold py-2 rounded-lg hover:bg-accent-hover transition text-sm disabled:opacity-60 shadow-accent"
           >
             {loading ? 'Saving...' : isEditing ? 'Save Changes' : 'Create Asset'}
           </button>

@@ -64,6 +64,7 @@ class AssignmentService:
         notes: Optional[str],
         source: str,
         actor: EmployeeContext,
+        force_dept_move: bool = False,
         request_id: Optional[str] = None,
         ip_address: Optional[str] = None,
         user_agent: Optional[str] = None,
@@ -87,6 +88,101 @@ class AssignmentService:
                 )
                 new_holder_uuid = str(employee_row["id"])
                 new_business_id = str(employee_row.get("employee_id") or "")
+
+                # --- Department Mismatch / Validation Logic ---
+                asset_dept_id = asset_row.get("asset_department_id")
+                employee_dept_id = employee_row.get("department_id")
+                _dept_auto_set: bool = False
+                _new_dept_name: str | None = None
+
+                if asset_dept_id is None and employee_dept_id is not None:
+                    # Case A: asset has no dept → auto-set to employee's dept
+                    await conn.execute(
+                        "UPDATE assets SET department_id = $1::uuid WHERE id = $2::uuid",
+                        employee_dept_id, asset_id
+                    )
+                    await _write_dept_log(
+                        conn,
+                        asset_id=asset_id,
+                        from_dept_id=None,
+                        to_dept_id=employee_dept_id,
+                        actor_id=actor.id,
+                        reason="auto-set on first assignment"
+                    )
+                    await audit_service.write_asset_event(
+                        asset_id=asset_id,
+                        event_type=AssetEventType.ASSET_DEPT_AUTO_UPDATED,
+                        actor=actor,
+                        payload={
+                            "asset_tag": asset_row.get("asset_tag"),
+                            "from_dept_id": None,
+                            "to_dept_id": employee_dept_id,
+                            "reason": "auto-set on first assignment",
+                        },
+                        ip_address=ip_address,
+                        user_agent=user_agent,
+                        conn=conn,
+                    )
+                    _dept_auto_set = True
+                    _new_dept_name = str(employee_row.get("department_name") or "")
+                elif asset_dept_id == employee_dept_id:
+                    # Case B: depts match → proceed directly without any changes
+                    pass
+                elif asset_dept_id != employee_dept_id and not force_dept_move:
+                    # Case C: mismatch and force_dept_move is False → write audit trail and return
+                    await audit_service.write_asset_event(
+                        asset_id=asset_id,
+                        event_type=AssetEventType.ASSET_ASSIGNMENT_BLOCKED,
+                        actor=actor,
+                        payload={
+                            "asset_tag": asset_row.get("asset_tag"),
+                            "asset_dept_id": str(asset_dept_id),
+                            "asset_dept_name": asset_row.get("asset_department_name"),
+                            "employee_dept_id": str(employee_dept_id),
+                            "employee_dept_name": employee_row.get("department_name"),
+                            "reason": "dept_mismatch",
+                        },
+                        ip_address=ip_address,
+                        user_agent=user_agent,
+                        conn=conn,
+                    )
+                    return {
+                        "ok": False,
+                        "dept_mismatch": True,
+                        "asset_dept_id": asset_dept_id,
+                        "asset_dept_name": asset_row.get("asset_department_name"),
+                        "employee_dept_id": employee_dept_id,
+                        "employee_dept_name": employee_row.get("department_name"),
+                        "message": f"Department mismatch: asset belongs to {asset_row.get('asset_department_name') or 'N/A'}, employee belongs to {employee_row.get('department_name') or 'N/A'}.",
+                    }
+                elif asset_dept_id != employee_dept_id and force_dept_move:
+                    # Case D: mismatch and force_dept_move is True -> update dept and proceed
+                    await conn.execute(
+                        "UPDATE assets SET department_id = $1::uuid WHERE id = $2::uuid",
+                        employee_dept_id, asset_id
+                    )
+                    await _write_dept_log(
+                        conn,
+                        asset_id=asset_id,
+                        from_dept_id=asset_dept_id,
+                        to_dept_id=employee_dept_id,
+                        actor_id=actor.id,
+                        reason="dept-move on assignment"
+                    )
+                    await audit_service.write_asset_event(
+                        asset_id=asset_id,
+                        event_type=AssetEventType.ASSET_DEPT_AUTO_UPDATED,
+                        actor=actor,
+                        payload={
+                            "asset_tag": asset_row.get("asset_tag"),
+                            "from_dept_id": asset_dept_id,
+                            "to_dept_id": employee_dept_id,
+                            "reason": "dept-move on assignment",
+                        },
+                        ip_address=ip_address,
+                        user_agent=user_agent,
+                        conn=conn,
+                    )
 
                 current_employee_id = asset_row.get("current_employee_id")
                 current_assignment_id = asset_row.get("assignment_id")
@@ -135,6 +231,8 @@ class AssignmentService:
                         "employee_id": new_business_id,
                         "status": "assigned",
                         "message": "Asset already assigned to same employee",
+                        "dept_auto_set": _dept_auto_set,
+                        "new_dept_name": _new_dept_name,
                     }
                 else:
                     previous_holder = None
@@ -217,6 +315,8 @@ class AssignmentService:
                         "employee_id": new_business_id,
                         "status": "assigned",
                         "message": "Asset assigned successfully",
+                        "dept_auto_set": _dept_auto_set,
+                        "new_dept_name": _new_dept_name,
                     }
 
         await service_hooks.on_asset_assigned(
@@ -245,18 +345,7 @@ class AssignmentService:
 
                 if previous_holder is not None:
                     # Reassignment: old employee had the asset
-                    await asyncio.gather(
-                        notify_asset_returned(
-                            primary_email=previous_holder.get("email"),
-                            primary_name=str(previous_holder.get("name") or ""),
-                            primary_role="employee",
-                            admin_email=actor_email or "",
-                            admin_name=actor.name,
-                            all_admin_emails=all_admin_emails,
-                            asset_category=str(asset_row.get("category_name") or ""),
-                            model_no=str(asset_row.get("model") or ""),
-                            asset_id=str(asset_row.get("asset_tag") or ""),
-                        ),
+                    notify_tasks = [
                         notify_asset_assigned(
                             primary_email=employee_row.get("email"),
                             primary_name=str(employee_row.get("name") or ""),
@@ -268,7 +357,22 @@ class AssignmentService:
                             model_no=str(asset_row.get("model") or ""),
                             asset_id=str(asset_row.get("asset_tag") or ""),
                         )
-                    )
+                    ]
+                    if previous_holder.get("email"):
+                        notify_tasks.append(
+                            notify_asset_returned(
+                                primary_email=previous_holder["email"],
+                                primary_name=str(previous_holder.get("name") or ""),
+                                primary_role="employee",
+                                admin_email=actor_email or "",
+                                admin_name=actor.name,
+                                all_admin_emails=all_admin_emails,
+                                asset_category=str(asset_row.get("category_name") or ""),
+                                model_no=str(asset_row.get("model") or ""),
+                                asset_id=str(asset_row.get("asset_tag") or ""),
+                            )
+                        )
+                    await asyncio.gather(*notify_tasks)
                 else:
                     # Fresh assignment: no previous holder
                     await notify_asset_assigned(
@@ -372,17 +476,18 @@ class AssignmentService:
                 len(all_admin_emails),
             )
 
-            await notify_asset_returned(
-                primary_email=asset_row.get("current_employee_email"),
-                primary_name=str(asset_row.get("current_employee_name") or ""),
-                primary_role="employee",
-                admin_email=actor_email or "",
-                admin_name=actor.name,
-                all_admin_emails=all_admin_emails,
-                asset_category=str(asset_row.get("category_name") or ""),
-                model_no=str(asset_row.get("model") or ""),
-                asset_id=str(asset_row.get("asset_tag") or ""),
-            )
+            if asset_row.get("current_employee_email"):
+                await notify_asset_returned(
+                    primary_email=asset_row["current_employee_email"],
+                    primary_name=str(asset_row.get("current_employee_name") or ""),
+                    primary_role="employee",
+                    admin_email=actor_email or "",
+                    admin_name=actor.name,
+                    all_admin_emails=all_admin_emails,
+                    asset_category=str(asset_row.get("category_name") or ""),
+                    model_no=str(asset_row.get("model") or ""),
+                    asset_id=str(asset_row.get("asset_tag") or ""),
+                )
         except Exception as exc:
             logger.error(
                 "return_asset notification error (domain op succeeded): asset_tag=%s error=%s",
@@ -398,6 +503,29 @@ class AssignmentService:
             "status": "in_stock",
             "message": "Asset returned successfully",
         }
+
+
+async def _write_dept_log(
+    conn: Any,
+    *,
+    asset_id: str,
+    from_dept_id: str | None,
+    to_dept_id: str | None,
+    actor_id: str,
+    reason: str,
+) -> None:
+    await conn.execute(
+        """
+        insert into asset_department_log
+            (asset_id, from_dept_id, to_dept_id, changed_by, reason)
+        values ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5)
+        """,
+        asset_id,
+        from_dept_id,
+        to_dept_id,
+        actor_id,
+        reason,
+    )
 
 
 assignment_service = AssignmentService()

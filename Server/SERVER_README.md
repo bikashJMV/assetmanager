@@ -99,90 +99,90 @@ All routes return the standard envelope: `{status, status_code, message, timesta
 
 ### System
 
-| Method | Path | Auth | Description |
-| --- | --- | --- | --- |
-| GET | `/` | Public | Liveness check — returns `{message, env}` |
-| GET | `/api/health` | Public | Health check including Postgres `SELECT 1` |
-| POST | `/api/auth/refresh` | Public (cookie) | Exchanges `nexus_refresh_token` cookie with authNexus; returns raw JSON (`access_token`, `expires_in`, …). Does not use the AMS success envelope. Requires `AUTH_AUTHORITY`. |
-| GET | `/metrics` | Public | Prometheus metrics (only if `OTEL_GRAFANA_ENABLED=true`) |
+| Method | Path                  | Auth            | Description                                                                                                                                                                           |
+| ------ | --------------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/`                 | Public          | Liveness check — returns `{message, env}`                                                                                                                                          |
+| GET    | `/api/health`       | Public          | Health check including Postgres `SELECT 1`                                                                                                                                          |
+| POST   | `/api/auth/refresh` | Public (cookie) | Exchanges `nexus_refresh_token` cookie with authNexus; returns raw JSON (`access_token`, `expires_in`, …). Does not use the AMS success envelope. Requires `AUTH_AUTHORITY`. |
+| GET    | `/metrics`          | Public          | Prometheus metrics (only if `OTEL_GRAFANA_ENABLED=true`)                                                                                                                            |
 
 ### Assets — `/api/v1/assets`
 
-| Method | Path | Auth | Description |
-| --- | --- | --- | --- |
-| GET | `/api/v1/assets` | Authenticated | List assets from `v_asset_inventory`; `employee` role scoped to own assignments |
-| POST | `/api/v1/assets` | Privileged | Create a new asset |
-| POST | `/api/v1/assets/bulk` | Privileged | Bulk insert assets |
-| GET | `/api/v1/assets/next-tag` | Privileged | Generate next `AST-#####` tag |
-| GET | `/api/v1/assets/public-scan/{asset_tag}` | Public | Anonymous QR scan — returns limited fields |
-| GET | `/api/v1/assets/scan/{ref}` | Optional auth | QR scan with optional auth; returns redirect signal for privileged users |
-| PUT | `/api/v1/assets/{id}` | Privileged | Update asset by UUID |
-| PATCH | `/api/v1/assets/tag/{asset_tag}` | Privileged | Update asset by tag |
-| PATCH | `/api/v1/assets/{asset_tag}/status` | Privileged | Update asset lifecycle status |
-| GET | `/api/v1/assets/{asset_tag}/logs` | Authenticated | Fetch audit log entries for an asset |
-| POST | `/api/v1/assets/{asset_tag}/logs` | Authenticated | Create a manual log entry |
-| POST | `/api/v1/assets/assign` | Privileged | Assign asset to employee |
-| POST | `/api/v1/assets/return` | Privileged | Return asset from employee |
-| POST | `/api/v1/assets/{id}/soft-delete` | Privileged | Soft-delete asset (moves to Recycle Bin) |
+| Method | Path                                       | Auth          | Description                                                                         |
+| ------ | ------------------------------------------ | ------------- | ----------------------------------------------------------------------------------- |
+| GET    | `/api/v1/assets`                         | Authenticated | List assets from `v_asset_inventory`; `employee` role scoped to own assignments |
+| POST   | `/api/v1/assets`                         | Privileged    | Create a new asset                                                                  |
+| POST   | `/api/v1/assets/bulk`                    | Privileged    | Bulk insert assets                                                                  |
+| GET    | `/api/v1/assets/next-tag`                | Privileged    | Generate next `AST-#####` tag                                                     |
+| GET    | `/api/v1/assets/public-scan/{asset_tag}` | Public        | Anonymous QR scan — returns limited fields                                         |
+| GET    | `/api/v1/assets/scan/{ref}`              | Optional auth | QR scan with optional auth; returns redirect signal for privileged users            |
+| PUT    | `/api/v1/assets/{id}`                    | Privileged    | Update asset by UUID                                                                |
+| PATCH  | `/api/v1/assets/tag/{asset_tag}`         | Privileged    | Update asset by tag                                                                 |
+| PATCH  | `/api/v1/assets/{asset_tag}/status`      | Privileged    | Update asset lifecycle status                                                       |
+| GET    | `/api/v1/assets/{asset_tag}/logs`        | Authenticated | Fetch audit log entries for an asset                                                |
+| POST   | `/api/v1/assets/{asset_tag}/logs`        | Authenticated | Create a manual log entry                                                           |
+| POST   | `/api/v1/assets/assign`                  | Privileged    | Assign asset to employee                                                            |
+| POST   | `/api/v1/assets/return`                  | Privileged    | Return asset from employee                                                          |
+| POST   | `/api/v1/assets/{id}/soft-delete`        | Privileged    | Soft-delete asset (moves to Recycle Bin)                                            |
 
 ### Assignments — `/api/v1/assignments`
 
-| Method | Path | Auth | Description |
-| --- | --- | --- | --- |
-| POST | `/api/v1/assignments/assign` | Privileged | Assign (or reassign) asset — transactional, idempotent |
-| POST | `/api/v1/assignments/return` | Privileged | Return asset — transactional |
+| Method | Path                           | Auth       | Description                                             |
+| ------ | ------------------------------ | ---------- | ------------------------------------------------------- |
+| POST   | `/api/v1/assignments/assign` | Privileged | Assign (or reassign) asset — transactional, idempotent |
+| POST   | `/api/v1/assignments/return` | Privileged | Return asset — transactional                           |
 
 ### Employees — `/api/v1/employees`
 
-| Method | Path | Auth | Description |
-| --- | --- | --- | --- |
-| GET | `/api/v1/employees/me` | Authenticated | Session employee profile |
-| GET | `/api/v1/employees` | Privileged | List employees with filters + pagination |
-| POST | `/api/v1/employees` | Privileged | Create employee |
-| POST | `/api/v1/employees/bulk` | Privileged | Bulk upsert employees |
-| GET | `/api/v1/employees/by-email` | Authenticated | Lookup employee by email |
-| POST | `/api/v1/employees/check-codes` | Privileged | Check which business IDs already exist |
-| POST | `/api/v1/employees/check-emails` | Privileged | Check which emails already exist |
-| POST | `/api/v1/employees/asset-counts` | Privileged | Get assigned asset counts for a list of employee UUIDs |
-| GET | `/api/v1/employees/{id}` | Authenticated | Get employee by UUID (employee role: own profile only) |
-| PUT | `/api/v1/employees/{id}` | Privileged | Update employee |
-| PATCH | `/api/v1/employees/{id}/role` | Privileged | Change employee role |
-| POST | `/api/v1/employees/{id}/soft-delete` | Privileged | Soft-delete employee (moves to Recycle Bin) |
-| GET | `/api/v1/employees/{id}/portfolio` | Authenticated | Employee profile + currently assigned assets |
+| Method | Path                                   | Auth          | Description                                            |
+| ------ | -------------------------------------- | ------------- | ------------------------------------------------------ |
+| GET    | `/api/v1/employees/me`               | Authenticated | Session employee profile                               |
+| GET    | `/api/v1/employees`                  | Privileged    | List employees with filters + pagination               |
+| POST   | `/api/v1/employees`                  | Privileged    | Create employee                                        |
+| POST   | `/api/v1/employees/bulk`             | Privileged    | Bulk upsert employees                                  |
+| GET    | `/api/v1/employees/by-email`         | Authenticated | Lookup employee by email                               |
+| POST   | `/api/v1/employees/check-codes`      | Privileged    | Check which business IDs already exist                 |
+| POST   | `/api/v1/employees/check-emails`     | Privileged    | Check which emails already exist                       |
+| POST   | `/api/v1/employees/asset-counts`     | Privileged    | Get assigned asset counts for a list of employee UUIDs |
+| GET    | `/api/v1/employees/{id}`             | Authenticated | Get employee by UUID (employee role: own profile only) |
+| PUT    | `/api/v1/employees/{id}`             | Privileged    | Update employee                                        |
+| PATCH  | `/api/v1/employees/{id}/role`        | Privileged    | Change employee role                                   |
+| POST   | `/api/v1/employees/{id}/soft-delete` | Privileged    | Soft-delete employee (moves to Recycle Bin)            |
+| GET    | `/api/v1/employees/{id}/portfolio`   | Authenticated | Employee profile + currently assigned assets           |
 
 ### Meta — `/api/v1/meta`
 
-| Method | Path | Auth | Description |
-| --- | --- | --- | --- |
-| GET | `/api/v1/meta/categories` | Authenticated | List asset categories |
-| GET | `/api/v1/meta/categories/{slug}/fields` | Authenticated | Custom field definitions for a category |
-| GET | `/api/v1/meta/departments` | Authenticated | List department names |
-| GET | `/api/v1/meta/dashboard-stats` | Authenticated | Total/assigned/in-stock assets + employee counts |
-| GET | `/api/v1/meta/public-dashboard` | Public | Anonymous dashboard summary with category breakdown |
-| GET | `/api/v1/meta/overview-analysis` | Privileged | Status/category breakdown + top employee load |
-| GET | `/api/v1/meta/warranty-notifications` | Privileged | Assets with expiring warranties (from `v_warranty_notifications`) |
-| GET | `/api/v1/meta/welcome-notification` | Authenticated | System welcome notification (currently static) |
+| Method | Path                                      | Auth          | Description                                                         |
+| ------ | ----------------------------------------- | ------------- | ------------------------------------------------------------------- |
+| GET    | `/api/v1/meta/categories`               | Authenticated | List asset categories                                               |
+| GET    | `/api/v1/meta/categories/{slug}/fields` | Authenticated | Custom field definitions for a category                             |
+| GET    | `/api/v1/meta/departments`              | Authenticated | List department names                                               |
+| GET    | `/api/v1/meta/dashboard-stats`          | Authenticated | Total/assigned/in-stock assets + employee counts                    |
+| GET    | `/api/v1/meta/public-dashboard`         | Public        | Anonymous dashboard summary with category breakdown                 |
+| GET    | `/api/v1/meta/overview-analysis`        | Privileged    | Status/category breakdown + top employee load                       |
+| GET    | `/api/v1/meta/warranty-notifications`   | Privileged    | Assets with expiring warranties (from `v_warranty_notifications`) |
+| GET    | `/api/v1/meta/welcome-notification`     | Authenticated | System welcome notification (currently static)                      |
 
 ### AuthZ — `/api/v1/authz`
 
-| Method | Path | Auth | Description |
-| --- | --- | --- | --- |
-| GET | `/api/v1/authz/admin` | Authenticated | Returns `{allowed, role}` — true if admin or it_ops |
-| GET | `/api/v1/authz/itops` | Authenticated | Returns `{allowed, role}` — true if it_ops |
+| Method | Path                    | Auth          | Description                                            |
+| ------ | ----------------------- | ------------- | ------------------------------------------------------ |
+| GET    | `/api/v1/authz/admin` | Authenticated | Returns `{allowed, role}` — true if admin or it_ops |
+| GET    | `/api/v1/authz/itops` | Authenticated | Returns `{allowed, role}` — true if it_ops          |
 
 ### Recycle Bin — `/api/v1/recycle-bin`
 
-| Method | Path | Auth | Description |
-| --- | --- | --- | --- |
-| GET | `/api/v1/recycle-bin` | Privileged | List all soft-deleted entries |
-| POST | `/api/v1/recycle-bin/{entry_id}/restore` | Privileged | Restore asset or employee |
-| DELETE | `/api/v1/recycle-bin/{entry_id}` | Privileged | Permanently delete (hard delete, transactional) |
+| Method | Path                                       | Auth       | Description                                     |
+| ------ | ------------------------------------------ | ---------- | ----------------------------------------------- |
+| GET    | `/api/v1/recycle-bin`                    | Privileged | List all soft-deleted entries                   |
+| POST   | `/api/v1/recycle-bin/{entry_id}/restore` | Privileged | Restore asset or employee                       |
+| DELETE | `/api/v1/recycle-bin/{entry_id}`         | Privileged | Permanently delete (hard delete, transactional) |
 
 ### Observability
 
-| Method | Path | Auth | Description |
-| --- | --- | --- | --- |
-| GET | `/observability/logs` | IT Ops only | Query Loki logs with filters; supports pagination via `cursor` |
+| Method | Path                    | Auth        | Description                                                      |
+| ------ | ----------------------- | ----------- | ---------------------------------------------------------------- |
+| GET    | `/observability/logs` | IT Ops only | Query Loki logs with filters; supports pagination via `cursor` |
 
 **OpenAPI docs** (when server is running): `http://localhost:8000/docs` and `http://localhost:8000/redoc`.
 
@@ -194,47 +194,47 @@ Create `Server/.env` from `Server/.env.example`. All values are read in `core/se
 
 Use either `DATABASE_URL` (full DSN) **or** the individual `POSTGRES_*` vars. If `DATABASE_URL` is empty, all five `POSTGRES_*` fields are required (validated in `Settings.__post_init__`).
 
-| Variable | Default | Description |
-| --- | --- | --- |
-| `DATABASE_URL` | `""` | Full asyncpg DSN (overrides individual vars) |
-| `POSTGRES_HOST` | `localhost` | DB host |
-| `POSTGRES_PORT` | `5432` | DB port |
-| `POSTGRES_DB` | — | Database name |
-| `POSTGRES_USER` | — | DB user |
-| `POSTGRES_PASSWORD` | — | DB password |
-| `POSTGRES_MIN_POOL_SIZE` | `1` | asyncpg pool min connections |
-| `POSTGRES_MAX_POOL_SIZE` | `10` | asyncpg pool max connections |
-| `POSTGRES_COMMAND_TIMEOUT_SECONDS` | `10` | Per-query timeout |
+| Variable                             | Default       | Description                                  |
+| ------------------------------------ | ------------- | -------------------------------------------- |
+| `DATABASE_URL`                     | `""`        | Full asyncpg DSN (overrides individual vars) |
+| `POSTGRES_HOST`                    | `localhost` | DB host                                      |
+| `POSTGRES_PORT`                    | `5432`      | DB port                                      |
+| `POSTGRES_DB`                      | —            | Database name                                |
+| `POSTGRES_USER`                    | —            | DB user                                      |
+| `POSTGRES_PASSWORD`                | —            | DB password                                  |
+| `POSTGRES_MIN_POOL_SIZE`           | `1`         | asyncpg pool min connections                 |
+| `POSTGRES_MAX_POOL_SIZE`           | `10`        | asyncpg pool max connections                 |
+| `POSTGRES_COMMAND_TIMEOUT_SECONDS` | `10`        | Per-query timeout                            |
 
 ### Auth (authNexus / OIDC)
 
-| Variable | Required | Description |
-| --- | --- | --- |
-| `AUTH_ENABLED` | No (default `false`) | Enable JWT validation |
-| `AUTH_JWKS_URL` | When `AUTH_ENABLED=true` | JWKS endpoint for RS256 key fetch |
-| `AUTH_PROJECT_ID` | When `AUTH_ENABLED=true` | JWT project scope claim value |
-| `AUTH_ISSUER` | No | Expected JWT `iss`; should match your authNexus issuer URL when validating |
-| `AUTH_AUDIENCE` | No | Expected JWT `aud`. If set, must match the access token audience or verification fails with `Audience doesn't match` / 401 |
-| `AUTH_PROJECT_ID_CLAIM` | No (default `project_id`) | JWT claim name for project ID |
-| `AUTH_CLOCK_SKEW_SECONDS` | No (default `30`) | Leeway for JWT expiry checks |
-| `AUTH_AUTHORITY` | **Yes for refresh** | authNexus base URL (no trailing slash); used by `POST /api/auth/refresh` and may fall back from `VITE_AUTH_AUTHORITY` in settings |
+| Variable                    | Required                    | Description                                                                                                                           |
+| --------------------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `AUTH_ENABLED`            | No (default `false`)      | Enable JWT validation                                                                                                                 |
+| `AUTH_JWKS_URL`           | When `AUTH_ENABLED=true`  | JWKS endpoint for RS256 key fetch                                                                                                     |
+| `AUTH_PROJECT_ID`         | When `AUTH_ENABLED=true`  | JWT project scope claim value                                                                                                         |
+| `AUTH_ISSUER`             | No                          | Expected JWT `iss`; should match your authNexus issuer URL when validating                                                          |
+| `AUTH_AUDIENCE`           | No                          | Expected JWT `aud`. If set, must match the access token audience or verification fails with `Audience doesn't match` / 401        |
+| `AUTH_PROJECT_ID_CLAIM`   | No (default `project_id`) | JWT claim name for project ID                                                                                                         |
+| `AUTH_CLOCK_SKEW_SECONDS` | No (default `30`)         | Leeway for JWT expiry checks                                                                                                          |
+| `AUTH_AUTHORITY`          | **Yes for refresh**   | authNexus base URL (no trailing slash); used by `POST /api/auth/refresh` and may fall back from `VITE_AUTH_AUTHORITY` in settings |
 
 **Troubleshooting:** Decode a test access token and compare `iss` / `aud` with `AUTH_ISSUER` / `AUTH_AUDIENCE`. SPA clients often receive `aud` from the OAuth **web** or **API** application — the API must expect the same value the IdP puts on the token.
 
 ### Server and integrations
 
-| Variable | Default | Description |
-| --- | --- | --- |
-| `ENV` | `local` | Environment label (`local`, `production`) |
-| `FRONTEND_URL` | — | SPA origin embedded in QR code PDFs |
-| `ALLOWED_ORIGINS` | `""` | Comma-separated CORS origins |
-| `BACKEND_API_KEY` | `""` | Optional `X-API-Key` guard for public deployments |
-| `OTEL_GRAFANA_ENABLED` | `false` | Expose `/metrics` for Prometheus |
-| `LOKI_BASE_URL` | `http://localhost:3100` | Loki base URL for log proxy |
-| `NOTIFICATIONS_ENABLED` | `false` | Enable email microservice calls |
-| `EMAIL_SERVICE_URL` | `""` | Email microservice base URL |
-| `BACKEND_API_KEY_EMAIL_NOTIFICATION` | `""` | `X-API-Key` for email service (`EMAIL_SERVICE_API_KEY` is a deprecated fallback) |
-| `ROLE_BOOTSTRAP_SECRET` | `""` | Secret for a potential role bootstrap endpoint — no router currently uses it |
+| Variable                               | Default                   | Description                                                                          |
+| -------------------------------------- | ------------------------- | ------------------------------------------------------------------------------------ |
+| `ENV`                                | `local`                 | Environment label (`local`, `production`)                                        |
+| `FRONTEND_URL`                       | —                        | SPA origin embedded in QR code PDFs                                                  |
+| `ALLOWED_ORIGINS`                    | `""`                    | Comma-separated CORS origins                                                         |
+| `BACKEND_API_KEY`                    | `""`                    | Optional `X-API-Key` guard for public deployments                                  |
+| `OTEL_GRAFANA_ENABLED`               | `false`                 | Expose `/metrics` for Prometheus                                                   |
+| `LOKI_BASE_URL`                      | `http://localhost:3100` | Loki base URL for log proxy                                                          |
+| `NOTIFICATIONS_ENABLED`              | `false`                 | Enable email microservice calls                                                      |
+| `EMAIL_SERVICE_URL`                  | `""`                    | Email microservice base URL                                                          |
+| `BACKEND_API_KEY_EMAIL_NOTIFICATION` | `""`                    | `X-API-Key` for email service (`EMAIL_SERVICE_API_KEY` is a deprecated fallback) |
+| `ROLE_BOOTSTRAP_SECRET`              | `""`                    | Secret for a potential role bootstrap endpoint — no router currently uses it        |
 
 ## Local development
 
@@ -268,11 +268,13 @@ pytest tests/
 ## Database Maintenance
 
 ### Export Data (Backup)
+
 ```bash
 docker exec -t ams-postgres-docker pg_dump -U assetmanager_user -d assetmanager_db > backup.sql
 ```
 
 ### Import Data (Restore)
+
 ```bash
 cat backup.sql | docker exec -i ams-postgres-docker psql -U assetmanager_user -d assetmanager_db
 ```

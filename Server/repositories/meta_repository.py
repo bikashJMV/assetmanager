@@ -15,7 +15,7 @@ class MetaRepository:
 
     @staticmethod
     async def list_categories() -> list[dict[str, Any]]:
-        sql = "select id::text as id, slug, name from asset_categories order by name asc"
+        sql = "select id::text as id, slug, name, alias_code from asset_categories where is_active = true order by name asc"
         async with pool().acquire() as conn:
             return await fetch_dicts(conn, sql)
 
@@ -26,6 +26,14 @@ class MetaRepository:
         async with pool().acquire() as conn:
             rows = await fetch_dicts(conn, sql)
         return [str(r["name"]) for r in rows if r.get("name")]
+
+    @staticmethod
+    async def list_department_objects() -> list[dict[str, str]]:
+        """Return departments as {id, name} objects ordered alphabetically."""
+        sql = "select id::text as id, name from departments where name is not null order by name asc"
+        async with pool().acquire() as conn:
+            rows = await fetch_dicts(conn, sql)
+        return [{"id": str(r["id"]), "name": str(r["name"])} for r in rows if r.get("id") and r.get("name")]
 
     @staticmethod
     async def resolve_category(slug: str, name: Optional[str] = None) -> str:
@@ -42,7 +50,7 @@ class MetaRepository:
             # Create it
             row = await fetchrow_dict(
                 conn,
-                "insert into asset_categories (slug, name) values ($1, $2) returning id",
+                "insert into asset_categories (slug, name, alias_code) values ($1, $2, 'OTH') returning id",
                 slug, name or slug.replace("-", " ").title()
             )
             return str(row["id"])

@@ -1,7 +1,8 @@
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import Any, Optional
 from datetime import date, datetime
 import uuid
+import re
 
 
 class AssetBase(BaseModel):
@@ -49,6 +50,18 @@ class AssetCreate(BaseModel):
     qr_code: Optional[str] = None
     log_note: Optional[str] = None
     qr_reservation_id: Optional[str] = None
+    department_id: Optional[uuid.UUID] = None
+
+    @field_validator("asset_tag")
+    @classmethod
+    def validate_tag_format(cls, value: Optional[str]) -> Optional[str]:
+        if value is None or not str(value).strip():
+            return None
+        val_clean = str(value).strip().upper()
+        pattern = r"^JMV-[A-Z]{3}-\d{5}$"
+        if not re.match(pattern, val_clean):
+            raise ValueError("Asset tag must match JMV-[ALIAS]-[#####] format (e.g. JMV-LAP-00001)")
+        return val_clean
 
 
 

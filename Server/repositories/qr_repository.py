@@ -55,23 +55,8 @@ class QrRepository:
         async with pool().acquire() as conn:
             return await fetch_dicts(
                 conn,
-                "SELECT * FROM qr_tag_reservations WHERE batch_id = $1::uuid ORDER BY asset_tag ASC",
+                "SELECT * FROM qr_tag_reservations WHERE batch_id = $1::uuid ORDER BY created_at ASC",
                 batch_id,
-            )
-
-    @staticmethod
-    async def get_reservation_by_tag(asset_tag: str) -> Optional[dict[str, Any]]:
-        """Used by scan endpoint (Step 4). Joins with batch_code."""
-        async with pool().acquire() as conn:
-            return await fetchrow_dict(
-                conn,
-                """
-                SELECT r.*, b.batch_code 
-                FROM qr_tag_reservations r
-                JOIN qr_batches b ON r.batch_id = b.id
-                WHERE r.asset_tag = $1
-                """,
-                asset_tag,
             )
 
     @staticmethod
@@ -81,6 +66,23 @@ class QrRepository:
             return await fetchrow_dict(
                 conn,
                 "SELECT * FROM qr_tag_reservations WHERE id = $1::uuid",
+                reservation_id,
+            )
+
+    @staticmethod
+    async def get_reservation_by_uuid_for_scan(reservation_id: str) -> Optional[dict[str, Any]]:
+        """Used by scan endpoint when ref is a UUID. Joins batch_code."""
+        async with pool().acquire() as conn:
+            return await fetchrow_dict(
+                conn,
+                """
+                SELECT r.id, r.batch_id, r.asset_tag, r.status,
+                       r.asset_id, r.linked_at, r.created_at,
+                       b.batch_code
+                  FROM qr_tag_reservations r
+                  JOIN qr_batches b ON r.batch_id = b.id
+                 WHERE r.id = $1::uuid
+                """,
                 reservation_id,
             )
 
@@ -110,11 +112,11 @@ class QrRepository:
                     reservations = await fetch_dicts(
                         conn,
                         """
-                        select id, batch_id, asset_tag, status, consumed_by_asset_id,
-                               consumed_at, created_at
+                        select id, batch_id, asset_tag, status, asset_id,
+                               linked_at, created_at
                           from qr_tag_reservations
                          where batch_id = $1::uuid
-                         order by asset_tag asc
+                         order by created_at asc
                         """,
                         str(existing["id"]),
                     )
@@ -128,57 +130,42 @@ class QrRepository:
                 from datetime import datetime
                 batch_code = f"QR-{datetime.utcnow().year}-{int(batch_seq):04d}"
 
-                # Reserve N tags atomically via sequence
-                tag_rows = await fetch_dicts(
-                    conn,
-                    """
-                    select 'AST-' || lpad(nextval('asset_tag_seq')::text, 5, '0') as tag
-                      from generate_series(1, $1)
-                    """,
-                    count,
-                )
-                tags = [r["tag"] for r in tag_rows]
-                start_tag = tags[0]
-                end_tag = tags[-1]
-
-                # Insert batch row with status='generated' (matches DB CHECK constraint)
+                # Insert batch row
                 batch = await fetchrow_dict(
                     conn,
                     """
                     insert into qr_batches
                         (idempotency_key, batch_code, requested_count,
-                         start_tag, end_tag, status,
-                         created_by_employee_id, completed_at)
-                    values ($1, $2, $3, $4, $5, 'generated', $6::uuid, now())
+                         status, created_by_employee_id, completed_at)
+                    values ($1, $2, $3, 'generated', $4::uuid, now())
                     returning *
                     """,
                     key,
                     batch_code,
                     count,
-                    start_tag,
-                    end_tag,
                     str(created_by_employee_id),
                 )
 
-                # Bulk insert reservations with status='reserved' (correct for reservations table)
+                # Bulk insert N unlinked reservations (no asset_tag yet)
                 await conn.execute(
                     """
-                    insert into qr_tag_reservations (batch_id, asset_tag, status)
-                    select $1::uuid, unnest($2::text[]), 'reserved'
+                    insert into qr_tag_reservations (batch_id, status)
+                    select $1::uuid, 'unlinked'
+                    from generate_series(1, $2)
                     """,
                     str(batch["id"]),
-                    tags,
+                    count,
                 )
 
                 # Re-fetch reservations
                 reservations = await fetch_dicts(
                     conn,
                     """
-                    select id, batch_id, asset_tag, status, consumed_by_asset_id,
-                           consumed_at, created_at
+                    select id, batch_id, asset_tag, status, asset_id,
+                           linked_at, created_at
                       from qr_tag_reservations
                      where batch_id = $1::uuid
-                     order by asset_tag asc
+                     order by created_at asc
                     """,
                     str(batch["id"]),
                 )
@@ -187,35 +174,38 @@ class QrRepository:
 
 
     @staticmethod
-    async def consume_reservation_in_tx(
+    async def link_reservation_in_tx(
         *,
         conn: Any,
         reservation_id: str | uuid.UUID,
+        asset_tag: str,
+        asset_id: str | uuid.UUID,
     ) -> dict[str, Any]:
         """
-        Atomically claim a reservation (status: reserved → consumed) within an existing TX.
-        
-        Does NOT set consumed_by_asset_id — caller must update it separately
-        after the asset is inserted (so we have the real asset id).
-        
-        Race-safe: WHERE status='reserved' guarantees only one caller wins.
-        Throws NotFoundError if reservation missing or already consumed.
+        Atomically link a reservation to an asset (status: unlinked → linked).
+        Writes asset_tag and asset_id onto the reservation row within an existing TX.
+        Race-safe: WHERE status='unlinked' ensures only one caller wins.
+        Throws NotFoundError if reservation missing or already linked.
         """
         row = await fetchrow_dict(
             conn,
             """
             update qr_tag_reservations
-               set status = 'consumed',
-                   consumed_at = now()
+               set status    = 'linked',
+                   asset_tag = $2,
+                   asset_id  = $3::uuid,
+                   linked_at = now()
              where id = $1::uuid
-               and status = 'reserved'
-         returning id, batch_id, asset_tag, status, consumed_at
+               and status = 'unlinked'
+         returning id, batch_id, asset_tag, status, asset_id, linked_at
             """,
             str(reservation_id),
+            asset_tag,
+            str(asset_id),
         )
         if not row:
             raise NotFoundError(
-                f"Reservation {reservation_id} not found or already consumed"
+                f"Reservation {reservation_id} not found or already linked"
             )
         return row
 

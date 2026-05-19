@@ -11,6 +11,7 @@ from asyncpg.exceptions import UniqueViolationError
 
 from repositories.db import Page, fetch_dicts, fetchrow_dict, normalize_page_params, pool
 from repositories.errors import ConflictError, NotFoundError, ValidationError
+from core.roles import VALID_ROLES
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +29,6 @@ class EmployeeRow:
     auth_user_id: Optional[str]
     department: Optional[str]
     role: str
-    is_active: bool
     assigned_asset_count: int = 0
 
 
@@ -41,7 +41,6 @@ def _to_employee_row(row: dict[str, Any]) -> EmployeeRow:
         auth_user_id=str(row["auth_user_id"]) if row.get("auth_user_id") is not None else None,
         department=str(row["department"]) if row.get("department") is not None else None,
         role=str(row.get("role") or "employee"),
-        is_active=bool(row.get("is_active", True)),
         assigned_asset_count=int(row.get("assigned_asset_count") or 0),
     )
 
@@ -64,8 +63,7 @@ class EmployeeRepository:
                        e.email::text as email,
                        e.auth_user_id,
                        d.name as department,
-                       coalesce(e.role, 'employee') as role,
-                       coalesce(e.is_active, true) as is_active
+                       coalesce(e.role, 'employee') as role
                   from employees e
                   left join departments d on d.id = e.department_id
                  where e.id::text = $1
@@ -91,8 +89,7 @@ class EmployeeRepository:
                        e.email::text as email,
                        e.auth_user_id,
                        d.name as department,
-                       coalesce(e.role, 'employee') as role,
-                       coalesce(e.is_active, true) as is_active
+                       coalesce(e.role, 'employee') as role
                   from employees e
                   left join departments d on d.id = e.department_id
                  where e.auth_user_id = $1
@@ -119,8 +116,7 @@ class EmployeeRepository:
                        e.email::text as email,
                        e.auth_user_id,
                        d.name as department,
-                       coalesce(e.role, 'employee') as role,
-                       coalesce(e.is_active, true) as is_active
+                       coalesce(e.role, 'employee') as role
                   from employees e
                   left join departments d on d.id = e.department_id
                  where upper(trim(e.employee_id)) = $1
@@ -146,8 +142,7 @@ class EmployeeRepository:
                        e.email::text as email,
                        e.auth_user_id,
                        d.name as department,
-                       coalesce(e.role, 'employee') as role,
-                       coalesce(e.is_active, true) as is_active
+                       coalesce(e.role, 'employee') as role
                   from employees e
                   left join departments d on d.id = e.department_id
                  where lower(e.email::text) = $1
@@ -195,36 +190,29 @@ class EmployeeRepository:
                 s,
             )
 
-        status_normalized = (status or "").strip().lower()
-        if status_normalized and status_normalized != "all":
-            if status_normalized not in {"true", "false"}:
-                raise ValidationError("status must be true, false, or all")
-            want_active = status_normalized == "true"
-            add_raw("coalesce(e.is_active,true) = ?", want_active)
-
         if department and department.strip():
             add_raw("d.name = ?", department.strip())
 
         role_normalized = (role or "").strip().lower()
         if role_normalized:
-            if role_normalized not in {"employee", "admin", "it_ops"}:
+            if role_normalized not in VALID_ROLES:
                 raise ValidationError("role must be employee, admin, or it_ops")
             add_raw("coalesce(e.role,'employee') = ?", role_normalized)
 
         where_sql = " and ".join(where) if where else "1=1"
         sql = (
             "select e.id::text as id, e.employee_id, e.name, e.email::text as email, e.auth_user_id,"
-            " d.name as department, coalesce(e.role,'employee') as role, coalesce(e.is_active,true) as is_active,"
+            " d.name as department, coalesce(e.role,'employee') as role,"
             " (select count(*)::int from asset_assignments aa where aa.employee_id = e.id and aa.returned_at is null) as assigned_asset_count"
             " from employees e left join departments d on d.id = e.department_id"
-            f" where coalesce(e.is_deleted, false) = false and {where_sql}"
+            f" where {where_sql}"
             " order by e.name asc"
             f" offset {p.offset} limit {p.limit}"
         )
         count_sql = (
             "select count(*)::bigint"
             " from employees e left join departments d on d.id = e.department_id"
-            f" where coalesce(e.is_deleted, false) = false and {where_sql}"
+            f" where {where_sql}"
         )
 
         async with pool().acquire() as conn:
@@ -259,51 +247,51 @@ class EmployeeRepository:
                 raise NotFoundError("employee not found")
 
     @staticmethod
-    async def upsert(
+    async def create(
         *,
+        auth_user_id: str,
         employee_id: str,
         name: str,
         email: Optional[str],
         department_name: Optional[str],
         role: str,
-        is_active: bool,
-        record_id: Optional[str] = None,  # UUID of row — set on update
         conn: Optional[asyncpg.Connection] = None,
     ) -> EmployeeRow:
-        """Create or update an employee record. `employee_id` is the business / login identifier."""
+        """Insert a new employee record. auth_user_id is required — AN create must precede this."""
         emp_business = (employee_id or "").strip()
         emp_name = (name or "").strip()
+        if not auth_user_id:
+            raise ValidationError("auth_user_id is required")
         if not emp_business:
             raise ValidationError("employee_id is required")
         if not emp_name:
             raise ValidationError("name is required")
 
         role_norm = (role or "employee").strip().lower()
-        if role_norm not in {"employee", "admin", "it_ops"}:
+        if role_norm not in VALID_ROLES:
             raise ValidationError("role must be employee, admin, or it_ops")
 
         email_norm = (email or "").strip().lower() or None
 
         if conn:
-            return await EmployeeRepository._upsert_with_conn(
-                conn, emp_business, emp_name, email_norm, department_name, role_norm, is_active, record_id
+            return await EmployeeRepository._create_with_conn(
+                conn, auth_user_id, emp_business, emp_name, email_norm, department_name, role_norm
             )
 
         async with pool().acquire() as conn:
-            return await EmployeeRepository._upsert_with_conn(
-                conn, emp_business, emp_name, email_norm, department_name, role_norm, is_active, record_id
+            return await EmployeeRepository._create_with_conn(
+                conn, auth_user_id, emp_business, emp_name, email_norm, department_name, role_norm
             )
 
     @staticmethod
-    async def _upsert_with_conn(
+    async def _create_with_conn(
         conn: asyncpg.Connection,
+        auth_user_id: str,
         emp_business: str,
         emp_name: str,
         email_norm: Optional[str],
         department_name: Optional[str],
         role_norm: str,
-        is_active: bool,
-        record_id: Optional[str] = None,
     ) -> EmployeeRow:
         # Resolve department_id if provided
         dept_id: Optional[str] = None
@@ -325,63 +313,29 @@ class EmployeeRepository:
                 dept_id = new_dept["id"] if new_dept else None
 
         try:
-            if record_id:
-                # Update existing
-                row = await fetchrow_dict(
-                    conn,
-                    """
-                    update employees
-                       set employee_id=$2,
-                           name=$3,
-                           email=$4,
-                           department_id=$5::uuid,
-                           role=$6,
-                           is_active=$7,
-                           updated_at=now()
-                     where id=$1::uuid
-                     returning id::text as id, employee_id, name,
-                               email::text as email, auth_user_id,
-                               department_id::text as department_id,
-                               coalesce(role,'employee') as role,
-                               coalesce(is_active,true) as is_active
-                    """,
-                    record_id,
-                    emp_business,
-                    emp_name,
-                    email_norm,
-                    dept_id,
-                    role_norm,
-                    is_active,
-                )
-                if not row:
-                    raise NotFoundError("Employee not found")
-            else:
-                # Create new
-                row = await fetchrow_dict(
-                    conn,
-                    """
-                    insert into employees(employee_id, name, email, department_id, role, is_active)
-                    values($1, $2, $3, $4::uuid, $5, $6)
-                    returning id::text as id, employee_id, name,
-                              email::text as email, auth_user_id,
-                              department_id::text as department_id,
-                              coalesce(role,'employee') as role,
-                              coalesce(is_active,true) as is_active
-                    """,
-                    emp_business,
-                    emp_name,
-                    email_norm,
-                    dept_id,
-                    role_norm,
-                    is_active,
-                )
-                if not row:
-                    raise RuntimeError("Failed to create employee")
+            # Create new
+            row = await fetchrow_dict(
+                conn,
+                """
+                insert into employees(auth_user_id, employee_id, name, email, department_id, role)
+                values($1, $2, $3, $4, $5::uuid, $6)
+                returning id::text as id, employee_id, name,
+                          email::text as email, auth_user_id,
+                          department_id::text as department_id,
+                          coalesce(role,'employee') as role
+                """,
+                auth_user_id,
+                emp_business,
+                emp_name,
+                email_norm,
+                dept_id,
+                role_norm,
+            )
+            if not row:
+                raise RuntimeError("Failed to create employee")
         except UniqueViolationError as exc:
             raise ConflictError("employee_id or email already exists") from exc
 
-        # Re-fetch with department name joined
-        # We need to use the SAME connection to see the changes if in a transaction
         row_id = str(row["id"])
         saved_dict = await fetchrow_dict(
             conn,
@@ -392,8 +346,7 @@ class EmployeeRepository:
                    e.email::text as email,
                    e.auth_user_id,
                    d.name as department,
-                   coalesce(e.role, 'employee') as role,
-                   coalesce(e.is_active, true) as is_active
+                   coalesce(e.role, 'employee') as role
               from employees e
               left join departments d on d.id = e.department_id
              where e.id::text = $1
@@ -412,7 +365,7 @@ class EmployeeRepository:
         role_norm = (role or "").strip().lower()
         if not emp_id:
             raise ValidationError("employee_id is required")
-        if role_norm not in {"employee", "admin", "it_ops"}:
+        if role_norm not in VALID_ROLES:
             raise ValidationError("role must be employee, admin, or it_ops")
 
         async with pool().acquire() as conn:
@@ -430,85 +383,42 @@ class EmployeeRepository:
         return saved
 
     @staticmethod
-    async def soft_delete(*, employee_id: str) -> dict[str, Any]:
-        """
-        Soft-delete an employee: marks them deleted in recycle_bin_entries.
-        Raises ValidationError if they have open asset assignments.
-        Returns {employee_id, recycle_bin_id}.
-        """
+    async def update_department(*, employee_id: str, department_name: Optional[str]) -> EmployeeRow:
+        """Update an employee's department by name (resolves and auto-creates if needed)."""
         emp_id = (employee_id or "").strip()
         if not emp_id:
             raise ValidationError("employee_id is required")
 
         async with pool().acquire() as conn:
-            # Guard: no open assignments
-            open_count = await conn.fetchval(
-                """
-                select count(*)::int
-                  from asset_assignments aa
-                  join employees e on e.id = aa.employee_id
-                 where e.id=$1::uuid and aa.returned_at is null
-                """,
-                emp_id,
-            )
-            if open_count and int(open_count) > 0:
-                raise ValidationError(
-                    "Employee has open asset assignments. Return or reassign all assets before deleting."
+            dept_id: Optional[str] = None
+            if department_name and department_name.strip():
+                dept_row = await fetchrow_dict(
+                    conn,
+                    "select id::text from departments where name=$1 limit 1",
+                    department_name.strip(),
                 )
+                if dept_row:
+                    dept_id = dept_row["id"]
+                else:
+                    new_dept = await fetchrow_dict(
+                        conn,
+                        "insert into departments(name) values($1) returning id::text as id",
+                        department_name.strip(),
+                    )
+                    dept_id = new_dept["id"] if new_dept else None
 
-            # Fetch snapshot for recycle bin payload
-            emp_row = await fetchrow_dict(
-                conn,
-                """
-                select e.id::text as id, e.employee_id, e.name,
-                       e.email::text as email, e.auth_user_id,
-                       d.name as department,
-                       coalesce(e.role,'employee') as role,
-                       coalesce(e.is_active,true) as is_active
-                  from employees e
-                  left join departments d on d.id = e.department_id
-                 where e.id=$1::uuid
-                """,
+            res = await conn.execute(
+                "update employees set department_id=$2::uuid, updated_at=now() where id=$1::uuid",
                 emp_id,
+                dept_id,
             )
-            if not emp_row:
+            if res.endswith("0"):
                 raise NotFoundError("Employee not found")
 
-            # Idempotent: skip if already in recycle bin
-            existing = await fetchrow_dict(
-                conn,
-                """
-                select id::text as id from recycle_bin_entries
-                 where entity_type='employee' and entity_id=$1::uuid and restored_at is null
-                 limit 1
-                """,
-                emp_id,
-            )
-            if existing:
-                return {"employee_id": emp_id, "recycle_bin_id": existing["id"]}
-
-            # Mark the row as deleted in the employees table
-            await conn.execute(
-                "UPDATE employees SET is_deleted = true WHERE id = $1::uuid",
-                emp_id,
-            )
-
-            label = f"{emp_row['name']} ({emp_row['employee_id']})"
-            rb_row = await fetchrow_dict(
-                conn,
-                """
-                insert into recycle_bin_entries(entity_type, entity_id, label, payload, deleted_at)
-                values('employee', $1::uuid, $2, $3::jsonb, now())
-                returning id::text as id
-                """,
-                emp_id,
-                label,
-                json.dumps(emp_row),
-            )
-            if not rb_row:
-                raise RuntimeError("Failed to create recycle bin entry")
-
-            return {"employee_id": emp_id, "recycle_bin_id": rb_row["id"]}
+        saved = await EmployeeRepository.get_by_id(emp_id)
+        if not saved:
+            raise NotFoundError("Employee not found after update")
+        return saved
 
     @staticmethod
     async def get_portfolio(*, employee_id: str) -> dict[str, Any]:
@@ -527,8 +437,7 @@ class EmployeeRepository:
                 select e.id::text as id, e.employee_id, e.name,
                        e.email::text as email, e.auth_user_id,
                        d.name as department,
-                       coalesce(e.role,'employee') as role,
-                       coalesce(e.is_active,true) as is_active
+                       coalesce(e.role,'employee') as role
                   from employees e
                   left join departments d on d.id = e.department_id
                  where e.id=$1::uuid
@@ -575,8 +484,7 @@ class EmployeeRepository:
             "name": str(emp_row["name"]),
             "email": emp_row.get("email"),
             "department": emp_row.get("department"),
-            "role": str(emp_row.get("role") or "employee"),
-            "is_active": bool(emp_row.get("is_active", True)),
+            "role": str(emp_row.get("role") or "employee")
         }
 
         assets_payload = []
@@ -600,19 +508,24 @@ class EmployeeRepository:
         }
 
     @staticmethod
-    async def restore_from_payload(payload: dict[str, Any] | str) -> None:
-        """Restore a soft-deleted employee by flipping is_deleted back to false."""
-        if isinstance(payload, str):
-            payload = json.loads(payload)
-        emp_id = str(payload.get("id") or "").strip()
-        if not emp_id:
-            raise ValidationError("payload.id is required for restore")
-
+    async def get_local_data_by_auth_ids(auth_ids: list[str]) -> dict[str, dict]:
+        """Batch fetch local data for AN-provided user list. Returns dict keyed by auth_user_id."""
+        if not auth_ids:
+            return {}
         async with pool().acquire() as conn:
-            await conn.execute(
-                "UPDATE employees SET is_deleted = false WHERE id = $1::uuid",
-                emp_id,
+            rows = await conn.fetch(
+                """
+                select e.id::text as id,
+                       e.auth_user_id,
+                       d.name as department,
+                       (select count(*)::int from asset_assignments aa where aa.employee_id = e.id and aa.returned_at is null) as assigned_asset_count
+                  from employees e
+                  left join departments d on d.id = e.department_id
+                 where e.auth_user_id = any($1::text[])
+                """,
+                auth_ids,
             )
+        return {r["auth_user_id"]: dict(r) for r in rows if r.get("auth_user_id")}
 
     @staticmethod
     async def get_admin_emails() -> list[str]:
@@ -626,8 +539,6 @@ class EmployeeRepository:
                 select email::text as email
                   from employees
                  where role in ('admin', 'it_ops')
-                   and coalesce(is_active, true) = true
-                   and coalesce(is_deleted, false) = false
                    and email is not null
                 """
             )
@@ -650,35 +561,4 @@ class EmployeeRepository:
             )
         return str(val).strip() if val else None
 
-    @staticmethod
-    async def bulk_upsert(rows: list[dict[str, Any]]) -> list[EmployeeRow]:
-        """
-        Bulk upsert employees in a single transaction.
-        Rolls back all changes if any row fails.
-        Returns the list of successfully processed EmployeeRow objects.
-        """
-        results: list[EmployeeRow] = []
-        async with pool().acquire() as conn:
-            async with conn.transaction():
-                for idx, row in enumerate(rows):
-                    try:
-                        bid = row.get("employee_id")
-                        if bid is None:
-                            raise ValidationError(f"Row {idx+1}: missing employee_id")
-                        
-                        emp = await EmployeeRepository.upsert(
-                            employee_id=str(bid),
-                            name=row["name"],
-                            email=row.get("email"),
-                            department_name=row.get("department"),
-                            role=row.get("role") or "employee",
-                            is_active=row.get("is_active") if row.get("is_active") is not None else True,
-                            conn=conn
-                        )
-                        results.append(emp)
-                    except Exception as exc:
-                        # Wrap the error with row information
-                        error_msg = f"Bulk import failed at row {idx+1} ({row.get('employee_id', 'unknown')}): {str(exc)}"
-                        logger.error(f"[EmployeeRepository] {error_msg}")
-                        raise ValidationError(error_msg) from exc
-        return results
+

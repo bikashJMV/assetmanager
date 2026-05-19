@@ -77,7 +77,7 @@ export default function Notifications() {
       setNotifications(rows)
 
       const profileIsPrivileged = Boolean(
-        sessionProfile?.is_active && sessionProfile.role !== 'employee',
+        sessionProfile && sessionProfile.role !== 'employee',
       )
       // Welcome message is shown only to employee-role users, not to Admin/IT Ops.
       if (profileIsPrivileged) {
@@ -135,7 +135,7 @@ export default function Notifications() {
     setVisibleCount(NOTIFICATION_PAGE_SIZE)
   }, [filteredNotifications])
 
-  const isPrivileged = Boolean(profile?.is_active && profile?.role !== 'employee')
+  const isPrivileged = Boolean(profile && profile?.role !== 'employee')
   const audienceLabel = isPrivileged ? 'Showing alerts for all assets.' : 'Showing only alerts for assets currently assigned to you.'
 
   return (
@@ -275,7 +275,7 @@ function NotificationRows({
                     <span
                       className={
                         row.severity === 'expired'
-                          ? 'inline-flex rounded-full bg-accent px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-white'
+                          ? 'inline-flex rounded-full bg-accent px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-on-accent'
                           : 'inline-flex rounded-full border border-[color:var(--accent-soft)] px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-accent'
                       }
                     >

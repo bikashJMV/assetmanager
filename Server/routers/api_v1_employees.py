@@ -2,16 +2,16 @@ from __future__ import annotations
 
 from dataclasses import asdict
 import logging
-import asyncio
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, Query, status
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, EmailStr, field_validator
+from pydantic import BaseModel, field_validator
 
 from core.api_response import error_response, success_response
 from core.authnexus import EmployeeContext
 from core.authz import require_authenticated, require_privileged
+from core.roles import VALID_ROLES
 from repositories.db import pool
 from repositories.employee_repository import EmployeeRepository
 from repositories.errors import ConflictError, NotFoundError, ValidationError
@@ -42,6 +42,22 @@ def _employee_payload(row) -> dict:
     return asdict(row)
 
 
+def _parse_an_profile(an_profile: dict, *, fallback_row) -> tuple[str, str | None, str]:
+    """
+    Parse a flat AuthNexus GET /api/admin/users/{id} response.
+    Returns (name, email, employee_id/username).
+    Falls back to local row values if AN fields are absent.
+    """
+    first_name = (an_profile.get("firstName") or "").strip()
+    last_name  = (an_profile.get("lastName")  or "").strip()
+    name       = f"{first_name} {last_name}".strip() or fallback_row.name
+
+    email      = an_profile.get("email") or fallback_row.email
+    username   = an_profile.get("userName") or an_profile.get("username") or fallback_row.employee_id
+
+    return name, email, username
+
+
 # ── request schemas ───────────────────────────────────────────────────────────
 
 class EmployeeUpsertBody(BaseModel):
@@ -50,7 +66,6 @@ class EmployeeUpsertBody(BaseModel):
     email: Optional[str] = None
     department: Optional[str] = None
     role: Optional[str] = "employee"
-    is_active: Optional[bool] = True
 
     @field_validator("employee_id", "name")
     @classmethod
@@ -66,9 +81,13 @@ class RoleChangeBody(BaseModel):
     @field_validator("role")
     @classmethod
     def valid_role(cls, v: str) -> str:
-        if v.strip().lower() not in {"employee", "admin", "it_ops"}:
+        if v.strip().lower() not in VALID_ROLES:
             raise ValueError("role must be employee, admin, or it_ops")
         return v.strip().lower()
+
+
+class DepartmentChangeBody(BaseModel):
+    department: Optional[str] = None
 
 
 # ── routes ────────────────────────────────────────────────────────────────────
@@ -105,36 +124,110 @@ async def list_employees(
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=50, ge=1, le=200),
     search: Optional[str] = Query(default=None),
-    status_filter: Optional[str] = Query(default="all", alias="status"),
     department: Optional[str] = Query(default=None),
     role: Optional[str] = Query(default=None),
     _: EmployeeContext = Depends(require_privileged),
 ) -> JSONResponse:
     """
-    Purpose: List employees (directory) with filters + pagination.
+    Purpose: List active employees (directory) from AuthNexus/ZITADEL project assignments.
     Method/Route: GET /api/v1/employees
-    Request: Query `page`, `limit`, `search`, `status`(true|false|all), `department`, `role`.
+    Request: Query `page`, `limit`, `search`, `department`, `role`.
     Response: 200 envelope `{data:{items,page,limit,count,total}}`; Errors: 400/500 envelope.
     Notes: Privileged only (admin/it_ops).
     """
     try:
-        rows, page_meta, total = await EmployeeRepository.list_employees(
-            page=page,
-            limit=limit,
-            search=search,
-            status=status_filter,
-            department=department,
-            role=role,
-        )
+        # Step 1: an_users = await AuthNexusClient.list_project_assignments()
+        logger.info("[list_employees] Step 1: Fetching project assignments from AuthNexus")
+        an_users = await AuthNexusClient.list_project_assignments()
+        
+        # Step 2: local_rows = await EmployeeRepository.get_local_data_by_auth_ids( [u["userId"] for u in an_users] )
+        auth_ids = [u["userId"] for u in an_users if u.get("userId")]
+        logger.info(f"[list_employees] Step 2: Fetching local database info for {len(auth_ids)} auth IDs")
+        local_data_map = await EmployeeRepository.get_local_data_by_auth_ids(auth_ids)
+
+        # Step 3: Merge for each AN user
+        merged = []
+        for user in an_users:
+            auth_user_id = user.get("userId")
+            if not auth_user_id:
+                continue
+
+            local_info = local_data_map.get(auth_user_id)
+            if not local_info or not local_info.get("id"):
+                continue
+            
+            # Identity from AN
+            first_name = user.get("firstName") or ""
+            last_name = user.get("lastName") or ""
+            name = f"{first_name} {last_name}".strip() or user.get("userName") or "Unnamed User"
+            email = user.get("email")
+            role_keys = user.get("roleKeys") or []
+            an_role = role_keys[0] if role_keys else "employee"
+
+            # Department and asset count from local DB
+            local_id = local_info.get("id")
+            dept = local_info.get("department")
+            asset_count = local_info.get("assigned_asset_count") or 0
+
+            merged.append({
+                "id": local_id,
+                "employee_id": user.get("userName") or "",
+                "name": name,
+                "email": email,
+                "auth_user_id": auth_user_id,
+                "department": dept,
+                "role": an_role,
+                "assigned_asset_count": asset_count
+            })
+
+        # Step 4: Apply in-memory filters (search, department, role)
+        filtered = []
+        search_query = (search or "").strip().lower()
+        dept_filter = (department or "").strip().lower()
+        role_filter = (role or "").strip().lower()
+
+        for item in merged:
+            # 1. Search filter
+            if search_query:
+                emp_id = item["employee_id"].lower()
+                name_val = item["name"].lower()
+                email_val = (item["email"] or "").lower()
+                if search_query not in emp_id and search_query not in name_val and search_query not in email_val:
+                    continue
+
+            # 2. Department filter
+            if dept_filter:
+                item_dept = (item["department"] or "").lower()
+                if dept_filter != item_dept:
+                    continue
+
+            # 3. Role filter
+            if role_filter:
+                item_role = item["role"].lower()
+                if role_filter != item_role:
+                    continue
+
+            filtered.append(item)
+
+        # Sort alphabetically by name (case-insensitive)
+        filtered.sort(key=lambda x: x["name"].lower())
+
+        # Step 5: Paginate the merged result
+        total = len(filtered)
+        start = (page - 1) * limit
+        end = start + limit
+        paginated_items = filtered[start:end]
+
+        logger.info(f"[list_employees] SUCCESS: Returning {len(paginated_items)} of {total} employees (page={page}, limit={limit})")
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content=success_response(
                 message="Employees retrieved successfully.",
                 data={
-                    "items": [_employee_payload(r) for r in rows],
-                    "page": page_meta.page,
-                    "limit": page_meta.limit,
-                    "count": len(rows),
+                    "items": paginated_items,
+                    "page": page,
+                    "limit": limit,
+                    "count": len(paginated_items),
                     "total": total,
                 },
                 status_code=200,
@@ -143,61 +236,9 @@ async def list_employees(
     except ValidationError as exc:
         return _json_error(400, message=str(exc), code="VALIDATION_ERROR")
     except Exception as exc:
+        logger.error(f"[list_employees] FAILED: {exc}", exc_info=True)
         return _json_error(500, message="Failed to retrieve employees.", code="INTERNAL_ERROR", details=str(exc))
 
-
-async def _sync_employee_to_auth_nexus(
-    employee_row: Any, 
-    *,
-    name_changed: bool = False,
-    role_changed: bool = False,
-    is_create: bool = False
-):
-    """
-    Selective best-effort sync to AuthNexus.
-    Only calls APIs for fields that actually changed.
-    """
-    logger.debug(f"[AuthNexus Sync] Starting sync for {employee_row.employee_id} (create={is_create}, name={name_changed}, role={role_changed})")
-    try:
-        auth_user_id = employee_row.auth_user_id
-        
-        # Step 1: Provision if missing
-        if not auth_user_id:
-            parts = employee_row.name.split(" ", 1)
-            first_name = parts[0]
-            last_name = parts[1] if len(parts) > 1 else "."
-            
-            auth_user_id = await AuthNexusClient.create_user(
-                username=employee_row.employee_id,
-                email=employee_row.email,
-                first_name=first_name,
-                last_name=last_name
-            )
-            
-            if auth_user_id:
-                await EmployeeRepository.link_auth_user_id(
-                    employee_id=employee_row.id, 
-                    sub=auth_user_id
-                )
-                # If we just created them, we must sync the role too
-                role_changed = True
-            else:
-                logger.warning(f"[AuthNexus Sync] User {employee_row.employee_id} not created in AuthNexus.")
-                return
-
-        # Step 2: Sync Name if changed
-        if name_changed and not is_create:
-            parts = employee_row.name.split(" ", 1)
-            first_name = parts[0]
-            last_name = parts[1] if len(parts) > 1 else "."
-            await AuthNexusClient.update_user_profile(auth_user_id, first_name, last_name)
-
-        # Step 3: Sync Role if changed
-        if role_changed or is_create:
-            await AuthNexusClient.assign_roles(auth_user_id, [employee_row.role])
-            
-    except Exception as e:
-        logger.warning(f"[AuthNexus Sync] Failed for {employee_row.employee_id}: {e}")
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_employee(
@@ -207,37 +248,83 @@ async def create_employee(
     """
     Purpose: Create a new employee record.
     Method/Route: POST /api/v1/employees
-    Request: Body `{employee_id, name, email?, department?, role?, is_active?}`.
-    Response: 201 envelope `{data:<employee>}`; Errors: 400/409/500 envelope.
+    Request: Body `{employee_id, name, email?, department?, role?}`.
+    Response: 201 envelope `{data:<employee>}`; Errors: 400/409/500/502 envelope.
     Notes: Privileged only (admin/it_ops).
     """
+    # Parse names for identity provisioning
+    parts = body.name.strip().split(" ", 1)
+    first_name = parts[0]
+    last_name = parts[1] if len(parts) > 1 else "."
+
+    # Step 1: Provision user in AuthNexus
+    logger.info(f"[create_employee] Step 1: Creating AuthNexus user for username={body.employee_id}")
+    auth_user_id = await AuthNexusClient.create_user(
+        username=body.employee_id,
+        first_name=first_name,
+        last_name=last_name,
+        email=body.email,
+        initial_password="User@1234",
+    )
+    if not auth_user_id:
+        logger.error(f"[create_employee] Step 1 FAILED: AuthNexus user creation returned None for {body.employee_id}")
+        return _json_error(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            message="Failed to provision user in identity provider.",
+            code="IDENTITY_PROVISIONING_FAILED"
+        )
+
+    # Step 2: Assign roles in AuthNexus
+    logger.info(f"[create_employee] Step 2: Assigning role {body.role} to AuthNexus user {auth_user_id}")
+    role_assigned = await AuthNexusClient.assign_to_project(
+        user_id=auth_user_id,
+        role_keys=[body.role or "employee"]
+    )
+    if not role_assigned:
+        logger.error(f"[create_employee] Step 2 FAILED: Role assignment failed for user {auth_user_id}. Executing compensating transaction (delete user)...")
+        # Compensating transaction
+        await AuthNexusClient.delete_user(auth_user_id)
+        return _json_error(
+            status.HTTP_502_BAD_GATEWAY,
+            message="Failed to assign roles in identity provider. User creation rolled back.",
+            code="IDENTITY_ROLE_ASSIGNMENT_FAILED"
+        )
+
+    # Step 3: Insert into local database
+    logger.info(f"[create_employee] Step 3: Creating local employee record for {body.employee_id} (auth_user_id={auth_user_id})")
     try:
-        row = await EmployeeRepository.upsert(
+        row = await EmployeeRepository.create(
+            auth_user_id=auth_user_id,
             employee_id=body.employee_id,
             name=body.name,
             email=body.email,
             department_name=body.department,
             role=body.role or "employee",
-            is_active=body.is_active if body.is_active is not None else True,
         )
-        
-        # Best-effort sync (inline for debugging visibility)
-        await _sync_employee_to_auth_nexus(row, is_create=True)
-
-        return JSONResponse(
-            status_code=status.HTTP_201_CREATED,
-            content=success_response(
-                message="Employee created successfully.",
-                data=_employee_payload(row),
-                status_code=201,
-            ),
-        )
-    except ConflictError as exc:
-        return _json_error(409, message=str(exc), code="CONFLICT")
-    except ValidationError as exc:
-        return _json_error(400, message=str(exc), code="VALIDATION_ERROR")
     except Exception as exc:
-        return _json_error(500, message="Failed to create employee.", code="INTERNAL_ERROR", details=str(exc))
+        logger.error(f"[create_employee] Step 3 FAILED: Local database write failed: {exc}. Executing compensating transaction (delete user)...")
+        # Compensating transaction
+        await AuthNexusClient.delete_user(auth_user_id)
+        if isinstance(exc, ConflictError):
+            return _json_error(409, message=str(exc), code="CONFLICT")
+        if isinstance(exc, ValidationError):
+            return _json_error(400, message=str(exc), code="VALIDATION_ERROR")
+        return _json_error(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            message="Failed to save local employee record. User creation rolled back.",
+            code="INTERNAL_ERROR",
+            details=str(exc)
+        )
+
+    logger.info(f"[create_employee] SUCCESS: Employee {body.employee_id} created successfully with ID {row.id}")
+    return JSONResponse(
+        status_code=status.HTTP_201_CREATED,
+        content=success_response(
+            message="Employee created successfully.",
+            data=_employee_payload(row),
+            status_code=201,
+        ),
+    )
 
 
 @router.get("/{id}/portfolio")
@@ -297,6 +384,7 @@ async def get_employee_by_email(
     except Exception as exc:
         return _json_error(500, message="Failed to retrieve employee by email.", code="INTERNAL_ERROR", details=str(exc))
 
+
 @router.get("/{id}")
 async def get_employee(
     id: str,
@@ -310,81 +398,196 @@ async def get_employee(
     Notes: Authenticated; employee role can only access own profile.
     """
     try:
-        row = await EmployeeRepository.get_by_id(id)
-        if not row:
-            return _json_error(404, message="Employee not found.", code="NOT_FOUND")
+        # Try finding by local primary key UUID first
+        local = await EmployeeRepository.get_by_id(id)
+        if not local:
+            # Try finding by auth_user_id (ZITADEL ID)
+            local = await EmployeeRepository.get_by_auth_user_id(id)
 
-        if employee.role == "employee" and str(row.id) != str(employee.id):
+        # Authorization boundary — checked before any AN calls
+        if local and employee.role == "employee" and str(local.id) != str(employee.id):
             return _json_error(403, message="You do not have access to this profile.", code="FORBIDDEN")
+
+        an_assignments = None
+        if not local:
+            if employee.role == "employee":
+                return _json_error(404, message="Employee not found.", code="NOT_FOUND")
+
+            # If not in local DB, check if they exist in AuthNexus
+            an_profile = await AuthNexusClient.get_user(id)
+            if not an_profile:
+                return _json_error(404, message="Employee not found.", code="NOT_FOUND")
+            
+            # Auto-provision local employee row
+            logger.info(f"[get_employee] Auto-provisioning local employee row for auth_user_id={id}")
+            
+            username = (an_profile.get("userName") or an_profile.get("username") or "").strip()
+            first_name = (an_profile.get("firstName") or "").strip()
+            last_name = (an_profile.get("lastName") or "").strip()
+            name = f"{first_name} {last_name}".strip() or username or "Unnamed User"
+            email = an_profile.get("email")
+            
+            # Fetch roles from ZITADEL project assignments to assign correctly
+            # We'll default to "employee" if no assignments found
+            role = "employee"
+            an_assignments = await AuthNexusClient.list_project_assignments()
+            for assignment in an_assignments:
+                if assignment.get("userId") == id:
+                    role_keys = assignment.get("roleKeys") or []
+                    if role_keys:
+                        role = role_keys[0]
+                    break
+
+            try:
+                local = await EmployeeRepository.create(
+                    auth_user_id=id,
+                    employee_id=username,
+                    name=name,
+                    email=email,
+                    department_name=None,
+                    role=role,
+                )
+            except Exception as e:
+                logger.error(f"[get_employee] Auto-provisioning failed for {id}: {e}")
+                return _json_error(500, message="Failed to auto-provision local employee record.", code="AUTO_PROVISION_FAILED")
+
+        # Now we have a local row. Fetch/refresh live profile from AuthNexus
+        an_profile = await AuthNexusClient.get_user(local.auth_user_id)
+        if not an_profile:
+            logger.warning(f"[get_employee] Live AuthNexus profile not found for auth_user_id={local.auth_user_id}. Returning local record.")
+            # Return local row data as fallback
+            return JSONResponse(
+                status_code=status.HTTP_200_OK,
+                content=success_response(
+                    message="Employee retrieved successfully.",
+                    data=_employee_payload(local),
+                    status_code=200,
+                ),
+            )
+
+        # Merge live AuthNexus data
+        name, email, username = _parse_an_profile(an_profile, fallback_row=local)
+        
+        # Merge roles from project assignments
+        role = local.role
+        if an_assignments is None:
+            an_assignments = await AuthNexusClient.list_project_assignments()
+        for assignment in an_assignments:
+            if assignment.get("userId") == local.auth_user_id:
+                role_keys = assignment.get("roleKeys") or []
+                if role_keys:
+                    role = role_keys[0]
+                break
+
+        # Re-fetch portfolio / local asset count
+        portfolio = await EmployeeRepository.get_portfolio(employee_id=local.id)
+        assigned_asset_count = portfolio.get("total_assigned_assets") or 0
+
+        merged_data = {
+            "id": local.id,
+            "employee_id": username,
+            "name": name,
+            "email": email,
+            "auth_user_id": local.auth_user_id,
+            "department": local.department,
+            "role": role,
+            "assigned_asset_count": assigned_asset_count,
+        }
 
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content=success_response(
                 message="Employee retrieved successfully.",
-                data=_employee_payload(row),
+                data=merged_data,
                 status_code=200,
             ),
         )
     except ValidationError as exc:
         return _json_error(400, message=str(exc), code="VALIDATION_ERROR")
     except Exception as exc:
+        logger.error(f"[get_employee] FAILED: {exc}", exc_info=True)
         return _json_error(500, message="Failed to retrieve employee.", code="INTERNAL_ERROR", details=str(exc))
 
 
 @router.put("/{id}")
 async def update_employee(
     id: str,
-    body: EmployeeUpsertBody,
     _: EmployeeContext = Depends(require_privileged),
 ) -> JSONResponse:
     """
-    Purpose: Update an existing employee record.
-    Method/Route: PUT /api/v1/employees/{id}
-    Request: Path `id`; Body `{employee_id, name, email?, department?, role?, is_active?}`.
-    Response: 200 envelope `{data:<employee>}`; Errors: 400/404/409/500 envelope.
-    Notes: Privileged only (admin/it_ops).
+    Deprecated. Employee updates must be done via specific PATCH endpoints.
+    """
+    return _json_error(
+        status.HTTP_405_METHOD_NOT_ALLOWED,
+        message="PUT /employees/{id} is deprecated. Use PATCH /role or PATCH /department instead.",
+        code="METHOD_NOT_ALLOWED"
+    )
+
+
+@router.patch("/{id}/department")
+async def change_employee_department(
+    id: str,
+    body: DepartmentChangeBody,
+    _: EmployeeContext = Depends(require_privileged),
+) -> JSONResponse:
+    """
+    Purpose: Change an employee's department.
+    Method/Route: PATCH /api/v1/employees/{id}/department
+    Request: Path `id`; Body `{department}`.
+    Response: 200 envelope `{data:<employee>}`; Errors: 400/404/500 envelope.
+    Notes: Privileged only.
     """
     try:
-        # Fetch old state to detect changes
-        old_row = await EmployeeRepository.get_by_id(id)
+        # Step 1: SELECT employee FROM employees WHERE id = {id}
+        local = await EmployeeRepository.get_by_id(id)
+        if not local:
+            return _json_error(404, message="Employee not found.", code="NOT_FOUND")
+
+        # Step 2: Update local employee department
+        logger.info(f"[change_employee_department] Step 2: Updating department to '{body.department}' for {id}")
+        row = await EmployeeRepository.update_department(employee_id=id, department_name=body.department)
+
+        # Merge live AuthNexus details for consistency with GET /employees/{id}
+        an_profile = await AuthNexusClient.get_user(row.auth_user_id) if row.auth_user_id else None
         
-        row = await EmployeeRepository.upsert(
-            record_id=id,
-            employee_id=body.employee_id,
-            name=body.name,
-            email=body.email,
-            department_name=body.department,
-            role=body.role or "employee",
-            is_active=body.is_active if body.is_active is not None else True,
-        )
+        name = row.name
+        email = row.email
+        role = row.role
+        username = row.employee_id
+        
+        if an_profile:
+            name, email, username = _parse_an_profile(an_profile, fallback_row=row)
 
-        # Detect changes for selective sync
-        name_changed = False
-        role_changed = False
-        if old_row:
-            name_changed = (old_row.name != row.name)
-            role_changed = (old_row.role != row.role)
+        portfolio = await EmployeeRepository.get_portfolio(employee_id=row.id)
+        assigned_asset_count = portfolio.get("total_assigned_assets") or 0
 
-        # Best-effort sync
-        if name_changed or role_changed or not row.auth_user_id:
-            await _sync_employee_to_auth_nexus(row, name_changed=name_changed, role_changed=role_changed)
+        merged_data = {
+            "id": row.id,
+            "employee_id": username,
+            "name": name,
+            "email": email,
+            "auth_user_id": row.auth_user_id,
+            "department": row.department,
+            "role": role,
+            "assigned_asset_count": assigned_asset_count,
+        }
 
+        logger.info(f"[change_employee_department] SUCCESS: Department updated successfully for {row.employee_id}")
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content=success_response(
-                message="Employee updated successfully.",
-                data=_employee_payload(row),
+                message="Employee department updated successfully.",
+                data=merged_data,
                 status_code=200,
             ),
         )
     except NotFoundError as exc:
         return _json_error(404, message=str(exc), code="NOT_FOUND")
-    except ConflictError as exc:
-        return _json_error(409, message=str(exc), code="CONFLICT")
     except ValidationError as exc:
         return _json_error(400, message=str(exc), code="VALIDATION_ERROR")
     except Exception as exc:
-        return _json_error(500, message="Failed to update employee.", code="INTERNAL_ERROR", details=str(exc))
+        logger.error(f"[change_employee_department] FAILED: {exc}", exc_info=True)
+        return _json_error(500, message="Failed to update employee department.", code="INTERNAL_ERROR", details=str(exc))
 
 
 @router.patch("/{id}/role")
@@ -397,18 +600,45 @@ async def change_employee_role(
     Purpose: Change an employee's role (employee/admin/it_ops).
     Method/Route: PATCH /api/v1/employees/{id}/role
     Request: Path `id`; Body `{role}`.
-    Response: 200 envelope `{data:<employee>}`; Errors: 400/403/404/500 envelope.
+    Response: 200 envelope `{data:<employee>}`; Errors: 400/403/404/500/502 envelope.
     Notes: Privileged only; it_ops can set any role; admin cannot promote to it_ops.
     """
     try:
         if body.role == "it_ops" and actor.role != "it_ops":
             return _json_error(403, message="Only IT Ops can assign the it_ops role.", code="FORBIDDEN")
 
+        # Step 1: SELECT auth_user_id FROM employees WHERE id = {id}
+        local = await EmployeeRepository.get_by_id(id)
+        if not local:
+            return _json_error(404, message="Employee not found.", code="NOT_FOUND")
+
+        auth_user_id = local.auth_user_id
+        if not auth_user_id:
+            return _json_error(
+                status.HTTP_400_BAD_REQUEST,
+                message="Employee record does not have a linked AuthNexus user ID.",
+                code="NO_LINKED_AUTH_USER_ID"
+            )
+
+        # Step 2: AuthNexusClient.assign_to_project(auth_user_id, [new_role])
+        logger.info(f"[change_employee_role] Step 2: Assigning role {body.role} to AuthNexus user {auth_user_id}")
+        role_assigned = await AuthNexusClient.assign_to_project(
+            user_id=auth_user_id,
+            role_keys=[body.role]
+        )
+        if not role_assigned:
+            logger.error(f"[change_employee_role] Step 2 FAILED: Role assignment failed for user {auth_user_id}")
+            return _json_error(
+                status.HTTP_502_BAD_GATEWAY,
+                message="Failed to update role in identity provider. Local database unchanged.",
+                code="IDENTITY_ROLE_UPDATE_FAILED"
+            )
+
+        # Step 3: UPDATE employees SET role = new_role WHERE id = {id}
+        logger.info(f"[change_employee_role] Step 3: Updating local employee role in database")
         row = await EmployeeRepository.update_role(employee_id=id, role=body.role)
 
-        # Best-effort sync (role definitely changed)
-        await _sync_employee_to_auth_nexus(row, role_changed=True)
-
+        logger.info(f"[change_employee_role] SUCCESS: Role updated successfully for {row.employee_id}")
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content=success_response(
@@ -425,185 +655,6 @@ async def change_employee_role(
         return _json_error(500, message="Failed to update employee role.", code="INTERNAL_ERROR", details=str(exc))
 
 
-@router.post("/{id}/soft-delete")
-async def soft_delete_employee(
-    id: str,
-    _: EmployeeContext = Depends(require_privileged),
-) -> JSONResponse:
-    """
-    Purpose: Soft-delete an employee (moves to Recycle Bin, hides from directory).
-    Method/Route: POST /api/v1/employees/{id}/soft-delete
-    Request: Path `id` (employee UUID).
-    Response: 200 envelope `{data:{employee_id,recycle_bin_id}}`; Errors: 400/404/500 envelope.
-    Notes: Privileged only; employee must have no open asset assignments.
-    """
-    try:
-        result = await EmployeeRepository.soft_delete(employee_id=id)
-        return JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content=success_response(
-                message="Employee moved to Recycle Bin.",
-                data=result,
-                status_code=200,
-            ),
-        )
-    except NotFoundError as exc:
-        return _json_error(404, message=str(exc), code="NOT_FOUND")
-    except ValidationError as exc:
-        return _json_error(400, message=str(exc), code="VALIDATION_ERROR")
-    except Exception as exc:
-        return _json_error(500, message="Failed to soft-delete employee.", code="INTERNAL_ERROR", details=str(exc))
-async def _bulk_sync_to_auth_nexus(rows: list[Any]):
-    """
-    Concurrent best-effort sync for bulk imports.
-    1. Provision users in parallel.
-    2. Link IDs.
-    3. Bulk assign roles in groups.
-    """
-    try:
-        # Step 1: Provision users who don't have auth_user_id
-        to_provision = [r for r in rows if not r.auth_user_id]
-        
-        async def _prov(r):
-            parts = r.name.split(" ", 1)
-            first_name = parts[0]
-            last_name = parts[1] if len(parts) > 1 else "."
-            uid = await AuthNexusClient.create_user(
-                username=r.employee_id,
-                email=r.email,
-                first_name=first_name,
-                last_name=last_name
-            )
-            if uid:
-                await EmployeeRepository.link_auth_user_id(employee_id=r.id, sub=uid)
-                return uid
-            return None
-
-        if to_provision:
-            # Process sequentially to avoid overwhelming the IDP and causing ReadTimeouts
-            for r in to_provision:
-                await _prov(r)
-                await asyncio.sleep(0.5)  # Small delay between requests
-
-        
-        # Step 2: Re-fetch or use updated IDs for role assignment
-        # We'll just re-fetch the latest state to be sure
-        updated_rows = []
-        for r in rows:
-            latest = await EmployeeRepository.get_by_id(r.id)
-            if latest and latest.auth_user_id:
-                updated_rows.append(latest)
-        
-        # Step 3: Group by role for bulk assignment
-        role_map: dict[str, list[str]] = {}
-        for r in updated_rows:
-            role_map.setdefault(r.role, []).append(r.auth_user_id)
-        
-        for role, uids in role_map.items():
-            if uids:
-                await AuthNexusClient.bulk_assign_roles(uids, [role])
-                
-    except Exception as e:
-        import logging
-        logging.getLogger(__name__).error(f"Bulk AuthNexus sync failed: {e}")
-
-@router.post("/bulk")
-async def bulk_insert_employees(
-    rows: list[dict[str, Any]],
-    _: EmployeeContext = Depends(require_privileged),
-) -> JSONResponse:
-    """
-    Purpose: Bulk upsert employees.
-    Method/Route: POST /api/v1/employees/bulk
-    Request: Body `[{employee_id, name, email?, department?, role?, is_active?}]`.
-    Response: 200 envelope `{data:{inserted}}`; Errors: 400/500 envelope.
-    Notes: Privileged only.
-    """
-    try:
-        inserted_rows = await EmployeeRepository.bulk_upsert(rows)
-        
-        # Best-effort background sync
-        asyncio.create_task(_bulk_sync_to_auth_nexus(inserted_rows))
-
-        return JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content=success_response(
-                message=f"Successfully processed {len(inserted_rows)} employees.",
-                data={"inserted": len(inserted_rows)},
-                status_code=200,
-            ),
-        )
-    except ValidationError as exc:
-        return _json_error(400, message=str(exc), code="VALIDATION_ERROR")
-    except Exception as exc:
-        return _json_error(500, message="Bulk import failed.", code="INTERNAL_ERROR", details=str(exc))
-@router.post("/check-codes")
-async def check_employee_business_ids(
-    body: dict[str, Any],
-    _: EmployeeContext = Depends(require_privileged),
-) -> JSONResponse:
-    """
-    Purpose: Check which employee codes already exist in the system.
-    Method/Route: POST /api/v1/employees/check-codes
-    Request: Body `{codes: [string]}`.
-    Response: 200 Guideline envelope `{data:[string]}` (list of existing codes).
-    Notes: Privileged only.
-    """
-    try:
-        codes = body.get("codes", [])
-        if not codes:
-            return JSONResponse(status_code=200, content=success_response(message="No codes provided", data=[], status_code=200))
-        
-        async with pool().acquire() as conn:
-            rows = await conn.fetch(
-                "select employee_id from employees where employee_id = any($1::text[])",
-                codes
-            )
-        existing = [str(r["employee_id"]) for r in rows]
-        return JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content=success_response(
-                message="Employee codes checked.",
-                data=existing,
-                status_code=200,
-            ),
-        )
-    except Exception as exc:
-        return _json_error(500, message="Failed to check employee codes.", code="INTERNAL_ERROR", details=str(exc))
-
-@router.post("/check-emails")
-async def check_employee_emails(
-    body: dict[str, Any],
-    _: EmployeeContext = Depends(require_privileged),
-) -> JSONResponse:
-    """
-    Purpose: Check which employee emails already exist in the system.
-    Method/Route: POST /api/v1/employees/check-emails
-    Request: Body `{emails: [string]}`.
-    Response: 200 Guideline envelope `{data:[string]}` (list of existing emails).
-    Notes: Privileged only.
-    """
-    try:
-        emails = body.get("emails", [])
-        if not emails:
-            return JSONResponse(status_code=200, content=success_response(message="No emails provided", data=[], status_code=200))
-        
-        async with pool().acquire() as conn:
-            rows = await conn.fetch(
-                "select email from employees where email = any($1::text[])",
-                emails
-            )
-        existing = [str(r["email"]) for r in rows if r["email"]]
-        return JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content=success_response(
-                message="Employee emails checked.",
-                data=existing,
-                status_code=200,
-            ),
-        )
-    except Exception as exc:
-        return _json_error(500, message="Failed to check employee emails.", code="INTERNAL_ERROR", details=str(exc))
 @router.post("/asset-counts")
 async def get_employee_asset_counts(
     body: dict[str, Any],

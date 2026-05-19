@@ -29,7 +29,7 @@ export default function LoadMorePagination({
           type="button"
           onClick={onLoadMore}
           disabled={loading}
-          className="inline-flex h-10 items-center justify-center rounded-xl bg-accent px-4 text-sm font-semibold text-white transition hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-60"
+          className="inline-flex h-10 items-center justify-center rounded-xl bg-accent px-4 text-sm font-semibold text-on-accent transition hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-60"
         >
           {loading ? 'Loading more...' : 'Load more'}
         </button>

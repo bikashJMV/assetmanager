@@ -29,7 +29,9 @@ class AssignmentWriteRepository:
                    current_employee_name,
                    current_employee_email::text as current_employee_email,
                    category_name,
-                   model
+                   model,
+                   asset_department_id::text as asset_department_id,
+                   asset_department_name
               from v_asset_inventory
              where asset_tag = $1
              limit 1
@@ -56,20 +58,18 @@ class AssignmentWriteRepository:
                    e.name,
                    e.email::text as email,
                    coalesce(e.role, 'employee') as role,
-                   coalesce(e.is_active, true) as is_active
+                   e.department_id::text as department_id,
+                   dep.name as department_name
               from employees e
+              left join departments dep on dep.id = e.department_id
              where upper(trim(e.employee_id)) = $1
-               and coalesce(e.is_deleted, false) = false
              limit 1
             """,
             code,
         )
         if not row:
             raise NotFoundError("Employee not found")
-        resolved = dict(row)
-        if not bool(resolved.get("is_active", True)):
-            raise ValidationError("Employee is not active")
-        return resolved
+        return dict(row)
 
     @staticmethod
     async def lock_asset_row(conn: asyncpg.Connection, asset_id: str) -> None:
@@ -184,3 +184,26 @@ class AssignmentWriteRepository:
         if not assignment_id:
             raise ConflictError("Unable to create assignment")
         return str(assignment_id)
+
+    @staticmethod
+    async def validate_assignment_dept(
+        conn: asyncpg.Connection, asset_tag: str, business_employee_id: str
+    ) -> dict[str, Any]:
+        asset_row = None
+        try:
+            asset_row = await AssignmentWriteRepository.get_asset_inventory_row_by_tag(conn, asset_tag)
+        except NotFoundError:
+            pass
+
+        employee_row = None
+        try:
+            employee_row = await AssignmentWriteRepository.get_employee_by_business_employee_id(conn, business_employee_id)
+        except NotFoundError:
+            pass
+
+        return {
+            "asset_dept_id": asset_row.get("asset_department_id") if asset_row else None,
+            "asset_dept_name": asset_row.get("asset_department_name") if asset_row else None,
+            "employee_dept_id": employee_row.get("department_id") if employee_row else None,
+            "employee_dept_name": employee_row.get("department_name") if employee_row else None,
+        }

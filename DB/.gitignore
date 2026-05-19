@@ -6,3 +6,4 @@ postgres/
 ams_backup.sql
 init.sql
 prod_schema.sql
+init.sql

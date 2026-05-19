@@ -19,16 +19,16 @@ class QrService:
     Handles validation, idempotency checks, and logging.
     """
 
-    def generate_asset_qr_png_bytes(self, asset_tag: str) -> bytes:
+    def generate_asset_qr_png_bytes(self, qr_uuid: str) -> bytes:
         """
-        Generate a PNG QR code image for an asset tag.
-        The QR code encodes the public scan URL: {FRONTEND_URL}/scan/{asset_tag}.
+        Generate a PNG QR code image encoding the scan URL for a QR reservation UUID.
+        The QR code encodes: {FRONTEND_URL}/scan/{qr_uuid}
         Returns raw PNG bytes suitable for embedding in a PDF.
         """
         from core.settings import settings
 
         base_url = (settings.FRONTEND_URL or "").rstrip("/")
-        scan_url = f"{base_url}/scan/{asset_tag}"
+        scan_url = f"{base_url}/scan/{qr_uuid}"
 
         qr = qrcode.QRCode(
             version=None,          # auto-size
@@ -77,15 +77,23 @@ class QrService:
             reservations = await QrRepository.list_reservations_for_batch(str(batch["id"]))
             batch["reservations"] = reservations
 
-        # 4 & 5. If new (existing was None)
         if not existing:
-            # Decision Matrix: asset_id is NOT nullable, so we use logger only.
             logger.info(
-                "QR batch generated",
+                "batch_generated",
                 extra={
                     "batch_id": str(batch["id"]),
                     "batch_code": batch["batch_code"],
                     "count": count,
+                    "actor_employee_id": actor.id,
+                },
+            )
+        else:
+            logger.info(
+                "batch_idempotency_replay",
+                extra={
+                    "batch_id": str(batch["id"]),
+                    "batch_code": batch["batch_code"],
+                    "idempotency_key": idempotency_key,
                     "actor_employee_id": actor.id,
                 },
             )

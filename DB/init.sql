@@ -1904,4 +1904,20 @@ ALTER TABLE ONLY public.role_audit_log
 -- PostgreSQL database dump complete
 --
 
+--
+-- Name: asset_department_log; Type: TABLE; Schema: public; Owner: assetmanager_user
+--
 
+CREATE TABLE IF NOT EXISTS public.asset_department_log (
+    id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    asset_id     uuid NOT NULL REFERENCES public.assets(id) ON DELETE CASCADE,
+    from_dept_id uuid REFERENCES public.departments(id) ON DELETE SET NULL,
+    to_dept_id   uuid NOT NULL REFERENCES public.departments(id) ON DELETE RESTRICT,
+    changed_by   uuid REFERENCES public.employees(id) ON DELETE SET NULL,
+    reason       text,
+    created_at   timestamp with time zone DEFAULT now() NOT NULL
+);
+
+ALTER TABLE public.asset_department_log OWNER TO assetmanager_user;
+
+CREATE INDEX IF NOT EXISTS idx_asset_dept_log_asset ON public.asset_department_log USING btree (asset_id);

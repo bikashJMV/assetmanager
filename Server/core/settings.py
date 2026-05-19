@@ -58,14 +58,18 @@ class Settings:
     AUTH_AUTHORITY: str = field(
         default_factory=lambda: os.getenv("AUTH_AUTHORITY", os.getenv("VITE_AUTH_AUTHORITY", "")).rstrip("/")
     )
+    AUTH_CLIENT_ID: str = field(
+        default_factory=lambda: os.getenv("AUTH_CLIENT_ID", os.getenv("VITE_CLIENT_ID", "")).strip()
+    )
 
     # Server-only secret for POST /internal/bootstrap-role (promote employee by email). Empty = route disabled (503).
     ROLE_BOOTSTRAP_SECRET: str = field(
         default_factory=lambda: os.getenv("ROLE_BOOTSTRAP_SECRET", "").strip(),
     )
 
-    # ENVIRONMENT: local | production
+    # ENVIRONMENT: local | production | development
     ENV: str = field(default_factory=lambda: os.getenv("ENV", os.getenv("VITE_ENV", "local")))
+    ENVIRONMENT: str = field(default_factory=lambda: os.getenv("ENVIRONMENT", os.getenv("ENV", "development")))
 
     # Grafana telemetry enable/disable
     OTEL_GRAFANA_ENABLED: bool = field(
@@ -137,8 +141,9 @@ class Settings:
         if not self.FRONTEND_URL.startswith("http"):
             print(f"WARNING: FRONTEND_URL '{self.FRONTEND_URL}' might be invalid. It should start with http:// or https://")
 
-        if self.ENV.strip().lower() == "production" and not self.BACKEND_API_KEY.strip():
-            print("WARNING: BACKEND_API_KEY is empty in production. Public API access is not restricted.")
+        self.BACKEND_API_KEY = self.BACKEND_API_KEY.strip()
+        if self.ENV.strip().lower() == "production" and not self.BACKEND_API_KEY:
+            raise ValueError("BACKEND_API_KEY must be set in production. Public API access would be unrestricted.")
 
         legacy_email_api_key = os.getenv("EMAIL_SERVICE_API_KEY", "").strip()
         preferred_email_api_key = os.getenv("BACKEND_API_KEY_EMAIL_NOTIFICATION", "").strip()

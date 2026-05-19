@@ -134,7 +134,11 @@ async def download_qr_batch_pdf(
         return _json_error(404, message="QR batch not found.", code="NOT_FOUND")
 
     reservations = batch.get("reservations", [])
-    tags = [res["asset_tag"] for res in reservations if res.get("asset_tag")]
+    labels = [
+        (str(res["id"]), res.get("asset_tag") or str(res["id"])[:8].upper())
+        for res in reservations
+        if res.get("id")
+    ]
 
     empty_notice_headers = {
         "Content-Disposition": f'inline; filename="{qr_label_pdf_service.file_name}"',
@@ -143,7 +147,7 @@ async def download_qr_batch_pdf(
         "X-Exported-Asset-Count": "0",
     }
 
-    if not tags:
+    if not labels:
         pdf_bytes = qr_label_pdf_service.build_empty_notice_pdf(
             "No tags to export",
             "This batch does not contain any valid QR tags.",
@@ -153,10 +157,10 @@ async def download_qr_batch_pdf(
     batch_code = batch.get("batch_code", "Unknown")
     filename = f"Batch {batch_code} QRs.pdf"
 
-    pdf_bytes = qr_label_pdf_service.build_pdf(tags, title="Bulk QR Generated / Ready to Use")
+    pdf_bytes = qr_label_pdf_service.build_pdf(labels, title="Bulk QR Generated / Ready to Use")
     headers = {
         "Content-Disposition": f'inline; filename="{filename}"',
         "Cache-Control": "no-store",
-        "X-Exported-Asset-Count": str(len(tags)),
+        "X-Exported-Asset-Count": str(len(labels)),
     }
     return Response(content=pdf_bytes, media_type="application/pdf", headers=headers)

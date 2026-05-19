@@ -20,7 +20,7 @@ export default function GenerateBatchModal({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
-    
+
     const parsedCount = Number(count)
     if (isNaN(parsedCount) || parsedCount < 1 || parsedCount > 1000) {
       setError('Please enter a valid count between 1 and 1000.')
@@ -33,7 +33,7 @@ export default function GenerateBatchModal({
       { count: parsedCount, idempotencyKey },
       {
         onSuccess: () => {
-          showToast({ message: `Successfully generated ${parsedCount} QR reservations.`, variant: 'success' })
+          showToast({ message: `Successfully generated ${parsedCount} QR codes.`, variant: 'success' })
           setCount('')
           onClose()
         },
@@ -69,7 +69,9 @@ export default function GenerateBatchModal({
               placeholder="e.g. 50"
               className="w-full bg-surface border border-base text-primary rounded-lg px-3 py-2 text-sm outline-none focus:border-[color:var(--accent)] transition"
             />
-            <p className="text-xs text-subtle mt-1">Maximum 1,000 per batch.</p>
+            <p className="text-xs text-subtle mt-1">
+              QR codes are category-neutral. Category is selected when scanning. Maximum 1,000 per batch.
+            </p>
           </div>
 
           {error && <p className="text-sm text-accent">{error}</p>}
@@ -77,7 +79,7 @@ export default function GenerateBatchModal({
           <div className="flex gap-2 pt-2">
             <button
               type="button"
-              onClick={onClose}
+              onClick={() => { setCount(''); setError(''); onClose() }}
               className="flex-1 bg-surface border border-base text-primary py-2 rounded-lg font-medium hover:bg-surface-2 transition"
             >
               Cancel
@@ -85,7 +87,7 @@ export default function GenerateBatchModal({
             <button
               type="submit"
               disabled={createMutation.isPending}
-              className="flex-1 bg-accent text-white py-2 rounded-lg font-medium hover:bg-accent-hover transition disabled:opacity-50 disabled:cursor-not-allowed"
+              className="flex-1 bg-accent text-on-accent py-2 rounded-lg font-medium hover:bg-accent-hover transition disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {createMutation.isPending ? 'Generating...' : 'Generate'}
             </button>

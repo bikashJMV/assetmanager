@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 
-import { getAsset, getAssetDetail, listAssets, protectedScanAsset, publicScanAsset, scanAsset, type ListAssetsParams } from '../services/assetService'
+import { getAsset, getAssetDetail, listAssets, protectedScanAsset, publicScanAsset, scanAsset, getNextTag, validateTag, type ListAssetsParams } from '../services/assetService'
 
 export const assetQueryKeys = {
   all: ['assets'] as const,
@@ -59,10 +59,30 @@ export function usePublicAssetScanQuery(ref: string) {
   })
 }
 
-export function useProtectedAssetScanQuery(ref: string) {
+export function useProtectedAssetScanQuery(ref: string, enabled = true) {
   return useQuery({
     queryKey: assetQueryKeys.scanProtected(ref),
     queryFn: () => protectedScanAsset(ref),
-    enabled: Boolean(ref && ref.trim()),
+    enabled: enabled && Boolean(ref && ref.trim()),
+  })
+}
+
+export function useNextTagQuery(alias?: string, enabled = true) {
+  return useQuery({
+    queryKey: ['assets', 'nextTag', alias || ''],
+    queryFn: () => getNextTag(alias),
+    enabled: enabled && alias !== undefined,
+    staleTime: 0,
+    gcTime: 0,
+  })
+}
+
+export function useValidateTagQuery(assetTag: string, enabled = true) {
+  return useQuery({
+    queryKey: ['assets', 'validateTag', assetTag],
+    queryFn: () => validateTag(assetTag),
+    enabled: enabled && Boolean(assetTag && assetTag.trim()),
+    staleTime: 0,
+    gcTime: 0,
   })
 }

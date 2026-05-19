@@ -59,7 +59,7 @@ export default function ScrollTopButton({ scrollContainerRef }: ScrollTopButtonP
         fixed bottom-16 right-3 z-30
         flex items-center justify-center
         h-12 w-12 rounded-full
-        bg-orange-500 text-white
+        bg-orange-500 text-on-accent
         shadow-lg backdrop-blur-sm
         transition-all duration-200
         hover:bg-orange-600 hover:scale-110

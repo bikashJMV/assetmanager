@@ -2,7 +2,7 @@ export default function AppFooter() {
   const year = new Date().getFullYear()
 
   return (
-    <footer className="w-full bg-orange-500 text-white">
+    <footer className="w-full bg-orange-500 text-on-accent">
       <div className="mx-auto flex flex-col gap-2 px-4 py-4 text-xs sm:flex-row sm:items-center sm:justify-between">
         
         {/* Left */}

@@ -9,7 +9,6 @@ class EmployeeBase(BaseModel):
     name: str
     email: Optional[str] = None
     department: Optional[str] = None
-    is_active: bool = True
     role: str = 'employee'
 
 
@@ -22,7 +21,6 @@ class EmployeeUpdate(BaseModel):
     name: Optional[str] = None
     email: Optional[str] = None
     department: Optional[str] = None
-    is_active: Optional[bool] = None
     role: Optional[str] = None
 
 
@@ -32,7 +30,6 @@ class EmployeeOut(BaseModel):
     name: str
     email: Optional[str] = None
     department: Optional[str] = None
-    is_active: bool
     role: str = 'employee'
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None

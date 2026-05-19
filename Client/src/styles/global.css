@@ -188,7 +188,7 @@
 .text-muted { color: var(--muted); }
 .text-subtle { color: var(--subtle); }
 .text-accent { color: var(--accent); }
-.text-white { color: var(--on-accent); }
+.text-on-accent { color: var(--on-accent); }
 .bg-accent { background-color: var(--accent); }
 .bg-accent-hover { background-color: var(--accent-hover); }
 .border-base { border-color: var(--border); }

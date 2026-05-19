@@ -1,326 +1,798 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useState, useRef } from 'react'
 import {
   getOverviewAnalysisData,
   hasActiveAdminAccess,
-  type OverviewAnalysisEmployeeLoad,
-  type OverviewAnalysisMetric,
+  listWarrantyNotifications,
   type OverviewAnalysisSnapshot,
+  type WarrantyNotification,
 } from '../../api'
 import { getUserFacingMessage, logDevError } from '../../utils/errors'
-import { formatDisplay, formatEnumLabel } from '../../utils/formatDisplay'
+import { formatEnumLabel } from '../../utils/formatDisplay'
 
-const EMPLOYEE_LOAD_LIMIT = 5
+// ─────────────────────────────────────────────────────────────────────────────
+// Types
+// ─────────────────────────────────────────────────────────────────────────────
 
-export default function OverviewAnalysis() {
-  const [accessState, setAccessState] = useState<'checking' | 'allowed' | 'denied'>('checking')
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
-  const [snapshot, setSnapshot] = useState<OverviewAnalysisSnapshot | null>(null)
+type LoadState = 'idle' | 'loading' | 'success' | 'error'
 
-  const loadOverview = useCallback(async () => {
-    setLoading(true)
-    setError('')
-    try {
-      const next = await getOverviewAnalysisData({ employeeLimit: EMPLOYEE_LOAD_LIMIT })
-      setAccessState('allowed')
-      setSnapshot(next)
-    } catch (err) {
-      logDevError('overviewAnalysis.load', err)
-      setError(getUserFacingMessage(err, 'Unable to load overview analysis right now.'))
-    } finally {
-      setLoading(false)
-    }
-  }, [])
+type DashboardData = {
+  snapshot: OverviewAnalysisSnapshot
+  warrantyAlerts: WarrantyNotification[]
+}
 
-  useEffect(() => {
-    let mounted = true
+// ─────────────────────────────────────────────────────────────────────────────
+// Status Colors
+// ─────────────────────────────────────────────────────────────────────────────
 
-    void (async () => {
-      setLoading(true)
-      setError('')
-      try {
-        const allowed = await hasActiveAdminAccess()
-        if (!mounted) return
+const STATUS_COLORS: Record<
+  string,
+  {
+    bar: string
+    dot: string
+    soft: string
+    text: string
+  }
+> = {
+  assigned: {
+    bar: 'bg-blue-500',
+    dot: 'bg-blue-500',
+    soft: 'bg-blue-500/10',
+    text: 'text-blue-400',
+  },
+  in_stock: {
+    bar: 'bg-violet-500',
+    dot: 'bg-violet-500',
+    soft: 'bg-violet-500/10',
+    text: 'text-violet-400',
+  },
+  lost: {
+    bar: 'bg-orange-500',
+    dot: 'bg-orange-500',
+    soft: 'bg-orange-500/10',
+    text: 'text-orange-400',
+  },
+  retired: {
+    bar: 'bg-zinc-500',
+    dot: 'bg-zinc-500',
+    soft: 'bg-zinc-500/10',
+    text: 'text-zinc-400',
+  },
+  disposed: {
+    bar: 'bg-red-500',
+    dot: 'bg-red-500',
+    soft: 'bg-red-500/10',
+    text: 'text-red-400',
+  },
+  in_repair: {
+    bar: 'bg-emerald-500',
+    dot: 'bg-emerald-500',
+    soft: 'bg-emerald-500/10',
+    text: 'text-emerald-400',
+  },
+}
 
-        if (!allowed) {
-          setAccessState('denied')
-          setSnapshot(null)
-          return
-        }
-
-        setAccessState('allowed')
-        const next = await getOverviewAnalysisData({ employeeLimit: EMPLOYEE_LOAD_LIMIT })
-        if (!mounted) return
-        setSnapshot(next)
-      } catch (err) {
-        if (!mounted) return
-        logDevError('overviewAnalysis.bootstrap', err)
-        setError(getUserFacingMessage(err, 'Unable to load overview analysis right now.'))
-      } finally {
-        if (mounted) setLoading(false)
-      }
-    })()
-
-    return () => {
-      mounted = false
-    }
-  }, [])
-
-  const hasAnyOverviewData = useMemo(() => {
-    if (!snapshot) return false
-    return (
-      snapshot.totalAssets > 0 ||
-      snapshot.activeEmployees > 0 ||
-      snapshot.statusBreakdown.some((item) => item.count > 0) ||
-      snapshot.categoryBreakdown.some((item) => item.count > 0) ||
-      snapshot.employeeLoad.length > 0
-    )
-  }, [snapshot])
+function getStatusColor(label: string) {
+  const key = label.toLowerCase().replace(/\s+/g, '_')
 
   return (
-    <section className="" aria-labelledby="overview-analysis-title">
-      {accessState === 'checking' && loading && !snapshot ? <OverviewLoadingState /> : null}
+    STATUS_COLORS[key] ?? {
+      bar: 'bg-cyan-500',
+      dot: 'bg-cyan-500',
+      soft: 'bg-cyan-500/10',
+      text: 'text-cyan-400',
+    }
+  )
+}
 
-      {accessState === 'denied' ? (
-        <InlineStatePanel
-          title="Admin access required"
-          message="This section is only available to administrators. Please sign in with an admin account to see the full company summary."
-        />
-      ) : null}
+const CATEGORY_COLORS = [
+  'bg-violet-500',
+  'bg-blue-500',
+  'bg-cyan-500',
+  'bg-emerald-500',
+  'bg-orange-500',
+  'bg-pink-500',
+  'bg-amber-500',
+]
 
-      {error && !snapshot ? (
-        <InlineStatePanel
-          title="Summary data is not available"
-          message={error}
-          action={
-            <button
-              type="button"
-              onClick={() => void loadOverview()}
-              className="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white transition hover:bg-accent-hover"
-            >
-              Try again
-            </button>
-          }
-        />
-      ) : null}
+function getCategoryColor(index: number) {
+  return CATEGORY_COLORS[index % CATEGORY_COLORS.length]
+}
 
-      {accessState === 'allowed' && error && snapshot ? (
-        <InlineStatePanel
-          title="Showing the last available summary"
-          message={error}
-          tone="warning"
-        />
-      ) : null}
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────────────
 
-      {accessState === 'allowed' && !loading && snapshot && !hasAnyOverviewData ? (
-        <InlineStatePanel
-          title="No summary data available"
-          message="No data available at this time."
-        />
-      ) : null}
+function computePercent(value: number, total: number): number {
+  if (total <= 0) return 0
+  return Math.round((value / total) * 100)
+}
 
-      {accessState === 'allowed' && snapshot && hasAnyOverviewData ? (
-        <>
-          <section className="grid lg:mb-4 grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <OverviewMetricCard label="Total Assets" value={snapshot.totalAssets} detail="All active assets currently recorded." />
-            <OverviewMetricCard label="Assigned Assets" value={snapshot.assignedAssets} detail="Assets currently assigned to employees." />
-            <OverviewMetricCard label="Ready to Use" value={snapshot.inStockAssets} detail="Assets currently available for assignment" />
-            <OverviewMetricCard label="Active Employees" value={snapshot.activeEmployees} detail="Employees currently active in the company." />
-          </section>
+function computeUtilizationRate(assigned: number, total: number): number {
+  if (total <= 0) return 0
+  return Math.round((assigned / total) * 100)
+}
 
-          <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1.1fr_1.1fr_0.9fr]">
-            <BreakdownSection
-              title="Asset Status"
-              subtitle="Where the assets are right now."
-              items={snapshot.statusBreakdown}
-              emptyLabel="No status data available."
-              labelFormatter={formatEnumLabel}
-            />
+function computeWarrantySeverityCounts(alerts: WarrantyNotification[]) {
+  return alerts.reduce(
+    (acc, a) => {
+      if (a.severity === 'expired') acc.expired += 1
+      else acc.dueSoon += 1
 
-            <BreakdownSection
-              title="Asset Categories"
-              subtitle="Types of assets we currently have."
-              items={snapshot.categoryBreakdown}
-              emptyLabel="No category data available."
-            />
+      return acc
+    },
+    {
+      expired: 0,
+      dueSoon: 0,
+    },
+  )
+}
 
-            <EmployeeLoadSection rows={snapshot.employeeLoad} />
-          </div>
-        </>
-      ) : null}
+// ─────────────────────────────────────────────────────────────────────────────
+// Shared UI
+// ─────────────────────────────────────────────────────────────────────────────
+
+function Panel({
+  title,
+  subtitle,
+  children,
+}: {
+  title: string
+  subtitle?: string
+  children: React.ReactNode
+}) {
+  return (
+    <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 shadow-sm backdrop-blur">
+      <div className="mb-4 flex items-start justify-between gap-3">
+        <div>
+          <h2 className="text-sm font-semibold text-[var(--text)]">{title}</h2>
+          {subtitle ? (
+            <p className="mt-0.5 text-xs text-[var(--muted)]">{subtitle}</p>
+          ) : null}
+        </div>
+      </div>
+
+      {children}
     </section>
   )
 }
 
-function OverviewMetricCard({
+function DataBar({
+  ratio,
+  colorClass,
+}: {
+  ratio: number
+  colorClass: string
+}) {
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+
+    const id = requestAnimationFrame(() => {
+      el.style.width = `${Math.min(Math.max(ratio, 0), 1) * 100}%`
+    })
+
+    return () => cancelAnimationFrame(id)
+  }, [ratio])
+
+  return (
+    <div className="h-1.5 overflow-hidden rounded-full bg-[var(--surface-2)]">
+      <div
+        ref={ref}
+        className={`h-full rounded-full transition-all duration-700 ${colorClass}`}
+        style={{ width: '0%' }}
+      />
+    </div>
+  )
+}
+
+function KpiCard({
   label,
   value,
-  detail,
+  sub,
+  accent,
 }: {
   label: string
-  value: number
-  detail: string
+  value: number | string
+  sub?: string
+  accent?: string
 }) {
   return (
-    <article className="rounded-xl border border-base bg-surface-2 p-5">
-      <p className="text-xs uppercase tracking-[0.16em] text-subtle">{label}</p>
-      <p className="mt-4 text-3xl font-semibold tracking-tight text-primary">{value.toLocaleString()}</p>
-      <p className="mt-2 text-sm text-muted">{detail}</p>
+    <article className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
+      <div className="flex items-start justify-between gap-2">
+        <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--muted)]">
+          {label}
+        </p>
+
+        {accent ? (
+          <span
+            className={`h-2 w-2 rounded-full ${accent}`}
+            aria-hidden="true"
+          />
+        ) : null}
+      </div>
+
+      <p className="mt-3 text-2xl font-semibold tracking-tight text-[var(--text)]">
+        {typeof value === 'number' ? value.toLocaleString() : value}
+      </p>
+
+      {sub ? (
+        <p className="mt-1 text-xs text-[var(--muted)]">{sub}</p>
+      ) : null}
     </article>
   )
 }
 
-function BreakdownSection({
-  title,
-  subtitle,
-  items,
-  emptyLabel,
-  labelFormatter,
-}: {
-  title: string
-  subtitle: string
-  items: OverviewAnalysisMetric[]
-  emptyLabel: string
-  labelFormatter?: (value: string) => string
-}) {
-  const total = items.reduce((sum, item) => sum + item.count, 0)
-
+function EmptyState({ message }: { message: string }) {
   return (
-    <section className="rounded-xl border border-base bg-surface-2 p-5">
-      <div>
-        <h3 className="text-lg font-semibold text-primary">{title}</h3>
-        <p className="mt-1 text-sm text-muted">{subtitle}</p>
-      </div>
+    <div className="flex min-h-[120px] items-center justify-center rounded-xl border border-dashed border-[var(--border)] bg-[var(--surface-2)] p-4 text-center text-sm text-[var(--subtle)]">
+      {message}
+    </div>
+  )
+}
 
-      {items.length === 0 || total === 0 ? (
-        <p className="mt-6 text-sm text-subtle">{emptyLabel}</p>
-      ) : (
-        <div className="mt-5 space-y-3">
-          {items.map((item) => {
-            const ratio = total > 0 ? Math.round((item.count / total) * 100) : 0
-            return (
-              <div key={item.label} className="rounded-xl border border-base bg-surface p-4">
-                <div className="flex items-center justify-between gap-3">
-                  <p className="text-sm font-semibold text-primary">
-                    {labelFormatter ? labelFormatter(item.label) : item.label}
-                  </p>
-                  <p className="text-sm font-semibold text-primary">{item.count.toLocaleString()}</p>
-                </div>
-                <div className="mt-3 h-2 rounded-full bg-app">
-                  <div
-                    className="h-2 rounded-full bg-accent transition-[width]"
-                    style={{ width: `${Math.min(Math.max(ratio, 0), 100)}%` }}
-                  />
-                </div>
-                <p className="mt-2 text-xs text-subtle">{ratio}% of all assets</p>
-              </div>
-            )
-          })}
+// ─────────────────────────────────────────────────────────────────────────────
+// Main Component
+// ─────────────────────────────────────────────────────────────────────────────
+
+export default function OverviewAnalysis() {
+  const [loadState, setLoadState] = useState<LoadState>('idle')
+  const [error, setError] = useState('')
+  const [data, setData] = useState<DashboardData | null>(null)
+  const [accessDenied, setAccessDenied] = useState(false)
+
+  const load = useCallback(async () => {
+    setLoadState('loading')
+    setError('')
+
+    try {
+      const allowed = await hasActiveAdminAccess()
+
+      if (!allowed) {
+        setAccessDenied(true)
+        setLoadState('error')
+        return
+      }
+
+      const [snapshot, warrantyAlerts] = await Promise.all([
+        getOverviewAnalysisData({ employeeLimit: 10 }),
+        listWarrantyNotifications(100),
+      ])
+
+      setData({
+        snapshot,
+        warrantyAlerts,
+      })
+
+      setLoadState('success')
+    } catch (err) {
+      logDevError('overviewAnalytics.load', err)
+
+      setError(
+        getUserFacingMessage(
+          err,
+          'Unable to load analytics dashboard right now.',
+        ),
+      )
+
+      setLoadState('error')
+    }
+  }, [])
+
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  if (accessDenied) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-[var(--bg)] p-6 text-[var(--text)]">
+        <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-8 text-center">
+          <h1 className="text-xl font-semibold">Admin Access Required</h1>
+          <p className="mt-2 text-sm text-[var(--muted)]">
+            This dashboard is restricted to administrators.
+          </p>
         </div>
-      )}
-    </section>
+      </main>
+    )
+  }
+
+  if (loadState === 'loading' && !data) {
+    return (
+      <main className="min-h-screen bg-[var(--bg)] p-6 text-[var(--text)]">
+        <div className="mx-auto max-w-7xl animate-pulse space-y-4">
+          <div className="h-10 w-64 rounded bg-[var(--surface-2)]" />
+          <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div
+                key={i}
+                className="h-32 rounded-xl bg-[var(--surface-2)]"
+              />
+            ))}
+          </div>
+        </div>
+      </main>
+    )
+  }
+
+  if (loadState === 'error' && !data) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-[var(--bg)] p-6 text-[var(--text)]">
+        <div className="rounded-xl border border-red-500/20 bg-red-500/10 p-6">
+          <p className="text-sm font-semibold text-red-400">
+            Failed to load analytics
+          </p>
+          <p className="mt-1 text-sm text-[var(--muted)]">{error}</p>
+        </div>
+      </main>
+    )
+  }
+
+  if (!data) return null
+
+  const { snapshot, warrantyAlerts } = data
+
+  const utilizationRate = computeUtilizationRate(
+    snapshot.assignedAssets,
+    snapshot.totalAssets,
   )
-}
 
-function EmployeeLoadSection({ rows }: { rows: OverviewAnalysisEmployeeLoad[] }) {
+  const unassignedAssets = Math.max(
+    0,
+    snapshot.totalAssets - snapshot.assignedAssets,
+  )
+
+  const statusTotal = snapshot.statusBreakdown.reduce(
+    (sum, item) => sum + item.count,
+    0,
+  )
+
+  const categoryTotal = snapshot.categoryBreakdown.reduce(
+    (sum, item) => sum + item.count,
+    0,
+  )
+
+  const departmentMap = new Map<
+    string,
+    {
+      employees: number
+      assets: number
+    }
+  >()
+
+  for (const row of snapshot.employeeLoad) {
+    const dept = row.department?.trim()
+
+    if (!dept) continue
+
+    const existing = departmentMap.get(dept) ?? {
+      employees: 0,
+      assets: 0,
+    }
+
+    departmentMap.set(dept, {
+      employees: existing.employees + 1,
+      assets: existing.assets + row.assigned_assets,
+    })
+  }
+
+  const departments = Array.from(departmentMap.entries())
+    .map(([dept, data]) => ({
+      dept,
+      ...data,
+    }))
+    .sort((a, b) => b.assets - a.assets)
+
+  const maxDepartmentAssets = Math.max(
+    ...departments.map((d) => d.assets),
+    1,
+  )
+
+
+
+  const { expired, dueSoon } = computeWarrantySeverityCounts(
+    warrantyAlerts,
+  )
+
   return (
-    <section className="rounded-xl border border-base bg-surface-2 p-5">
-      <div>
-        <h3 className="text-lg font-semibold text-primary">Employees with the most assets</h3>
-        <p className="mt-1 text-sm text-muted">Employees with the most number of assigned assets.</p>
-      </div>
+    <main className="min-h-screen bg-[var(--bg)] text-[var(--text)]">
+      <div className="mx-auto max-w-7xl lg:p-4">
 
-      {rows.length === 0 ? (
-        <p className="mt-6 text-sm text-subtle">No employees with assigned assets found.</p>
-      ) : (
-        <div className="mt-5 space-y-3">
-          {rows.map((row, index) => (
-            <article key={row.employee_id} className="rounded-xl border border-base bg-surface p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-sm font-semibold text-primary">{row.employee_name}</p>
-                  <p className="mt-1 text-xs text-subtle">
-                    {[
-                      row.display_employee_id ? `ID ${row.display_employee_id}` : null,
-                      row.department ? formatDisplay(row.department) : null,
-                    ]
-                      .filter(Boolean)
-                      .join(' | ') || 'Employee details unavailable'}
+        {/* Header */}
+        <div className="flex flex-wrap items-center justify-center gap-4 text-center">
+          <h2 className="mt-1 font-bold tracking-tight text-[var(--text)] sm:text-2xl">
+            Operational asset and employee metrics across the organization.
+          </h2>
+        </div>
+
+        {/* Dashboard */}
+        <div className="mt-4 grid gap-4">
+
+          {/* KPI ROW */}
+          <section className="grid grid-cols-2 gap-4 xl:grid-cols-4">
+            <KpiCard
+              label="Total Assets"
+              value={snapshot.totalAssets}
+              sub="All inventory records"
+              accent="bg-violet-500"
+            />
+
+            <KpiCard
+              label="Assigned Assets"
+              value={snapshot.assignedAssets}
+              sub={`${utilizationRate}% utilization rate`}
+              accent="bg-blue-500"
+            />
+
+            <KpiCard
+              label="Ready To Use"
+              value={snapshot.inStockAssets}
+              sub="Available inventory"
+              accent="bg-emerald-500"
+            />
+
+            <KpiCard
+              label="Active Employees"
+              value={snapshot.activeEmployees}
+              sub="Current workforce"
+              accent="bg-amber-500"
+            />
+          </section>
+
+          {/* MAIN GRID */}
+          <section className="grid grid-cols-1 gap-4 xl:grid-cols-[1.05fr_1.1fr_0.9fr]">
+
+            {/* Status */}
+            <Panel
+              title="Asset Status"
+              subtitle="Where assets currently exist"
+            >
+              {snapshot.statusBreakdown.length === 0 ? (
+                <EmptyState message="No status data available." />
+              ) : (
+                <div className="space-y-3">
+                  {snapshot.statusBreakdown
+                    .slice()
+                    .sort((a, b) => b.count - a.count)
+                    .map((item) => {
+                      const percent = computePercent(item.count, statusTotal)
+
+                      const colors = getStatusColor(item.label)
+
+                      return (
+                        <div key={item.label}>
+                          <div className="mb-1 flex items-center justify-between gap-3 text-sm">
+                            <div className="flex items-center gap-2">
+                              <span
+                                className={`h-2 w-2 rounded-full ${colors.dot}`}
+                              />
+
+                              <span className="text-[var(--text)]/80">
+                                {formatEnumLabel(item.label)}
+                              </span>
+                            </div>
+
+                            <div className="flex items-center gap-3 text-xs">
+                              <span className="font-semibold text-[var(--text)]">
+                                {item.count}
+                              </span>
+
+                              <span className={colors.text}>
+                                {percent}%
+                              </span>
+                            </div>
+                          </div>
+
+                          <DataBar
+                            ratio={item.count / statusTotal}
+                            colorClass={colors.bar}
+                          />
+                        </div>
+                      )
+                    })}
+                </div>
+              )}
+            </Panel>
+
+            {/* Categories */}
+            <Panel
+              title="Asset Categories"
+              subtitle="Inventory grouped by category"
+            >
+              {snapshot.categoryBreakdown.length === 0 ? (
+                <EmptyState message="No category data available." />
+              ) : (
+                <div className="space-y-3">
+                  {snapshot.categoryBreakdown
+                    .slice()
+                    .sort((a, b) => b.count - a.count)
+                    .map((item, idx) => {
+                      const percent = computePercent(item.count, categoryTotal)
+
+                      return (
+                        <div key={item.label}>
+                          <div className="mb-1 flex items-center justify-between gap-3 text-sm">
+                            <div className="flex items-center gap-2">
+                              <span
+                                className={`h-2 w-2 rounded-full ${getCategoryColor(idx)}`}
+                              />
+
+                              <span className="text-[var(--text)]/80">
+                                {item.label}
+                              </span>
+                            </div>
+
+                            <div className="flex items-center gap-3 text-xs">
+                              <span className="font-semibold text-[var(--text)]">
+                                {item.count}
+                              </span>
+
+                              <span className="text-[var(--muted)]">
+                                {percent}%
+                              </span>
+                            </div>
+                          </div>
+
+                          <DataBar
+                            ratio={item.count / categoryTotal}
+                            colorClass={getCategoryColor(idx)}
+                          />
+                        </div>
+                      )
+                    })}
+                </div>
+              )}
+            </Panel>
+
+            {/* Top Employees */}
+            <Panel
+              title="Employees With Most Assets"
+              subtitle="Top assigned asset holders"
+            >
+              {snapshot.employeeLoad.length === 0 ? (
+                <EmptyState message="No assignment data available." />
+              ) : (
+                <div className="space-y-2">
+                  {snapshot.employeeLoad.map((row, idx) => (
+                    <div
+                      key={row.employee_id}
+                      className="flex items-center justify-between rounded-lg border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2"
+                    >
+                      <div className="flex min-w-0 items-center gap-3">
+                        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-violet-500 to-blue-500 text-xs font-bold text-[var(--text)]">
+                          {idx + 1}
+                        </div>
+
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium text-[var(--text)]">
+                            {row.employee_name}
+                          </p>
+
+                          <p className="truncate text-[11px] text-[var(--subtle)]">
+                            {[
+                              row.display_employee_id,
+                              row.department,
+                            ]
+                              .filter(Boolean)
+                              .join(' | ') || 'Employee'}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="text-right">
+                        <p className="text-lg font-semibold text-[var(--text)]">
+                          {row.assigned_assets}
+                        </p>
+
+                        <p className="text-[10px] uppercase tracking-wide text-[var(--subtle)]">
+                          Assets
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Panel>
+          </section>
+
+          {/* SECOND ROW */}
+          <section className="grid grid-cols-1 gap-4 xl:grid-cols-[1.2fr_0.8fr]">
+
+            {/* Workforce */}
+            <Panel
+              title="Department Asset Distribution"
+              subtitle="Assets grouped by employee department"
+            >
+              {departments.length === 0 ? (
+                <EmptyState message="No department data available." />
+              ) : (
+                <div className="space-y-3">
+                  {departments.map((dept, idx) => (
+                    <div
+                      key={dept.dept}
+                      className="rounded-lg border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2.5"
+                    >
+                      <div className="mb-2 flex items-center justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-medium text-[var(--text)]">
+                            {dept.dept}
+                          </p>
+
+                          <p className="text-[11px] text-[var(--subtle)]">
+                            {dept.employees} employee
+                            {dept.employees !== 1 ? 's' : ''}
+                          </p>
+                        </div>
+
+                        <p className="text-sm font-semibold text-[var(--text)]">
+                          {dept.assets} assets
+                        </p>
+                      </div>
+
+                      <DataBar
+                        ratio={dept.assets / maxDepartmentAssets}
+                        colorClass={getCategoryColor(idx)}
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Panel>
+
+            {/* Insights */}
+            <Panel
+              title="Operational Insights"
+              subtitle="Derived directly from live inventory metrics"
+            >
+              <div className="space-y-3">
+
+                <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 p-3">
+                  <p className="text-sm font-medium text-[var(--text)]">
+                    {computePercent(
+                      snapshot.inStockAssets,
+                      snapshot.totalAssets,
+                    )}% of assets are currently available for use.
                   </p>
                 </div>
-                <span className="inline-flex min-w-[3rem] items-center justify-center rounded-full border border-base bg-surface-2 px-3 py-1 text-xs font-semibold text-primary">
-                  #{index + 1}
-                </span>
-              </div>
 
-              <div className="mt-4 flex items-end justify-between gap-3">
-                <p className="text-xs uppercase tracking-[0.16em] text-subtle">Assigned Assets</p>
-                <p className="text-2xl font-semibold tracking-tight text-primary">
-                  {row.assigned_assets.toLocaleString()}
-                </p>
-              </div>
-            </article>
-          ))}
-        </div>
-      )}
-    </section>
-  )
-}
+                {snapshot.categoryBreakdown.length > 0 ? (
+                  <div className="rounded-lg border border-violet-500/20 bg-violet-500/10 p-3">
+                    <p className="text-sm font-medium text-[var(--text)]">
+                      {
+                        snapshot.categoryBreakdown
+                          .slice()
+                          .sort((a, b) => b.count - a.count)[0]?.label
+                      }{' '}
+                      is the largest inventory category.
+                    </p>
+                  </div>
+                ) : null}
 
-function OverviewLoadingState() {
-  return (
-    <section className="space-y-6" aria-live="polite" aria-busy="true">
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-        {Array.from({ length: 4 }).map((_, index) => (
-          <div key={index} className="animate-pulse rounded-xl border border-base bg-surface-2 p-5">
-            <div className="h-3 w-24 rounded bg-surface" />
-            <div className="mt-4 h-8 w-20 rounded bg-surface" />
-            <div className="mt-3 h-3 w-full rounded bg-surface" />
-          </div>
-        ))}
-      </div>
+                {snapshot.employeeLoad.length > 0 ? (
+                  <div className="rounded-lg border border-blue-500/20 bg-blue-500/10 p-3">
+                    <p className="text-sm font-medium text-[var(--text)]">
+                      {
+                        snapshot.employeeLoad
+                          .slice()
+                          .sort(
+                            (a, b) =>
+                              b.assigned_assets - a.assigned_assets,
+                          )[0]?.employee_name
+                      }{' '}
+                      currently has the highest assigned asset count.
+                    </p>
+                  </div>
+                ) : null}
 
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1.1fr_1.1fr_0.9fr]">
-        {Array.from({ length: 3 }).map((_, index) => (
-          <div key={index} className="animate-pulse rounded-xl border border-base bg-surface-2 p-5">
-            <div className="h-5 w-40 rounded bg-surface" />
-            <div className="mt-2 h-3 w-52 rounded bg-surface" />
-            <div className="mt-5 space-y-3">
-              {Array.from({ length: 3 }).map((__, rowIndex) => (
-                <div key={rowIndex} className="rounded-xl border border-base bg-surface p-4">
-                  <div className="h-3 w-28 rounded bg-app" />
-                  <div className="mt-3 h-2 w-full rounded bg-app" />
+                <div className="rounded-lg border border-orange-500/20 bg-orange-500/10 p-3">
+                  <p className="text-sm font-medium text-white">
+                    {unassignedAssets} assets remain unassigned.
+                  </p>
                 </div>
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>
-    </section>
-  )
-}
+              </div>
+            </Panel>
+          </section>
 
-function InlineStatePanel({
-  title,
-  message,
-  action,
-  tone = 'default',
-}: {
-  title: string
-  message: string
-  action?: ReactNode
-  tone?: 'default' | 'warning'
-}) {
-  return (
-    <section
-      className={`rounded-xl border p-5 ${tone === 'warning'
-        ? 'border-accent-soft bg-[color:var(--accent-soft)]/10'
-        : 'border-base bg-surface-2'
-        }`}
-    >
-      <p className="text-sm font-semibold text-primary">{title}</p>
-      <p className="mt-2 text-sm text-muted">{message}</p>
-      {action ? <div className="mt-4">{action}</div> : null}
-    </section>
+          {/* THIRD ROW */}
+          <section className="grid grid-cols-1 gap-4 xl:grid-cols-[0.9fr_1.1fr]">
+
+            {/* Warranty KPIs */}
+            <Panel
+              title="Warranty Risk"
+              subtitle="Warranty notification system"
+            >
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 xl:grid-cols-1">
+
+                <div className="rounded-lg border border-red-500/20 bg-red-500/10 p-3">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-red-300">
+                    Expired
+                  </p>
+
+                  <p className="mt-2 text-2xl font-semibold text-[var(--text)]">
+                    {expired}
+                  </p>
+                </div>
+
+                <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-3">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-amber-300">
+                    Due Soon
+                  </p>
+
+                  <p className="mt-2 text-2xl font-semibold text-[var(--text)]">
+                    {dueSoon}
+                  </p>
+                </div>
+
+                <div className="rounded-lg border border-blue-500/20 bg-blue-500/10 p-3">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-blue-300">
+                    Total Alerts
+                  </p>
+
+                  <p className="mt-2 text-2xl font-semibold text-[var(--text)]">
+                    {warrantyAlerts.length}
+                  </p>
+                </div>
+              </div>
+            </Panel>
+
+            {/* Warranty Alerts */}
+            <Panel
+              title="Warranty Alerts"
+              subtitle="Live notification records"
+            >
+              {warrantyAlerts.length === 0 ? (
+                <EmptyState message="No active warranty alerts." />
+              ) : (
+                <div className="space-y-2">
+                  {warrantyAlerts.slice(0, 10).map((alert) => {
+                    const expired = alert.severity === 'expired'
+
+                    return (
+                      <div
+                        key={alert.notification_id}
+                        className={`flex items-start justify-between gap-3 rounded-lg border px-3 py-2 ${
+                          expired
+                            ? 'border-red-500/20 bg-red-500/5'
+                            : 'border-amber-500/20 bg-amber-500/5'
+                        }`}
+                      >
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-medium text-[var(--text)]">
+                            {alert.category_name ?? 'Asset'} ·{' '}
+                            {alert.asset_tag ?? '—'}
+                          </p>
+
+                          <p className="mt-0.5 text-[11px] text-[var(--muted)]">
+                            {alert.message}
+                          </p>
+
+                          {alert.current_employee_name ? (
+                            <p className="mt-1 text-[10px] text-[var(--subtle)]">
+                              Holder: {alert.current_employee_name}
+                            </p>
+                          ) : null}
+                        </div>
+
+                        <span
+                          className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-bold ${
+                            expired
+                              ? 'bg-red-500/15 text-red-300'
+                              : 'bg-amber-500/15 text-amber-300'
+                          }`}
+                        >
+                          {expired
+                            ? `${Math.abs(alert.days_remaining)}d ago`
+                            : `${alert.days_remaining}d left`}
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </Panel>
+          </section>
+        </div>
+      </div>
+    </main>
   )
 }

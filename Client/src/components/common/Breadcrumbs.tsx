@@ -11,7 +11,6 @@ function labelForSegment(seg: string): string {
     'new': 'New',
     analysis: 'Analysis',
     notifications: 'Notifications',
-    'recycle-bin': 'Recycle Bin',
     guide: 'Guide',
     scan: 'Scan',
     'Assets': 'Assets',

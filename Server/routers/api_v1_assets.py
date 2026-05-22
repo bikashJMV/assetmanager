@@ -15,7 +15,6 @@ from repositories.asset_detail_repository import AssetDetailRepository
 from repositories.asset_repository import AssetRepository
 from repositories.errors import NotFoundError, ValidationError
 from schemas.asset import AssetCreate, AssetQrLabelsExportRequest, AssetUpdate
-from schemas.asset_admin import SoftDeleteAssetRequest
 from services.asset_service import asset_service
 from services.asset_csv_export_service import asset_csv_export_service
 from services.qr_label_pdf_service import qr_label_pdf_service
@@ -50,8 +49,7 @@ def _calculate_changes(old: dict[str, Any], new: dict[str, Any]) -> list[dict[st
     ignore = {
         "updated_at", "created_at", "id", 
         "category_id", "manufacturer_id", "location_id",
-        "created_by_employee_id", "updated_by", "deleted_by_employee_id",
-        "deleted_at", "is_deleted"
+        "created_by_employee_id", "updated_by"
     }
 
     def _add_change(field: str, label: str, old_val: Any, new_val: Any):
@@ -111,147 +109,6 @@ def _json_error(status_code: int, *, message: str, code: str, details: str | Non
             data=None,
         ),
     )
-
-@router.get("/recycle-bin")
-async def list_recycle_bin(
-    employee: EmployeeContext = Depends(require_privileged),
-) -> JSONResponse:
-    """
-    Purpose: List all entries in the recycle bin (deleted assets/employees).
-    Method/Route: GET /api/v1/assets/recycle-bin
-    Response: 200 Guideline envelope `{data:[{id, type, name, ...}]}`; Errors: 500 envelope.
-    Notes: Privileged only.
-    """
-    try:
-        rows = await AssetRepository.list_recycle_bin_entries()
-        return JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content=success_response(
-                message="Recycle bin entries retrieved successfully.",
-                data=rows,
-                status_code=200,
-            ),
-        )
-    except Exception as exc:
-        return _json_error(500, message="Failed to retrieve recycle bin.", code="INTERNAL_ERROR", details=str(exc))
-
-
-@router.post("/recycle-bin/{entry_id}/restore")
-async def restore_recycle_bin_entry(
-    entry_id: str,
-    request: Request,
-    employee: EmployeeContext = Depends(require_privileged),
-) -> JSONResponse:
-    """
-    Purpose: Restore a soft-deleted entity (asset/employee) from the recycle bin.
-    Method/Route: POST /api/v1/assets/recycle-bin/{entry_id}/restore
-    Response: 200 Guideline envelope `{data:{asset_id, recycle_bin_id}}`; Errors: 400/404/500 envelope.
-    Notes: Privileged only.
-    """
-    try:
-        from repositories.recycle_bin_repository import RecycleBinRepository
-        entry = await RecycleBinRepository.get_entry(entry_id)
-        if not entry:
-            return _json_error(404, message="Recycle bin entry not found.", code="NOT_FOUND")
-
-        entity_type = entry.get("entity_type")
-
-        if entity_type == "asset":
-            request_id = getattr(request.state, "request_id", None)
-            ip_address = request.client.host if request.client else None
-            user_agent = request.headers.get("user-agent")
-
-            result = await asset_service.restore_asset(
-                asset_id=entry["entity_id"],
-                recycle_bin_id=entry_id,
-                actor=employee,
-                request_id=request_id,
-                ip_address=ip_address,
-                user_agent=user_agent,
-            )
-
-            return JSONResponse(
-                status_code=status.HTTP_200_OK,
-                content=success_response(
-                    message="Asset restored successfully.",
-                    data=result,
-                    status_code=200,
-                ),
-            )
-
-        elif entity_type == "employee":
-            from repositories.employee_repository import EmployeeRepository
-            await EmployeeRepository.restore_from_payload(entry["payload"])
-            await RecycleBinRepository.mark_restored(
-                recycle_bin_id=entry_id,
-                restored_by_employee_id=employee.id,
-            )
-            return JSONResponse(
-                status_code=status.HTTP_200_OK,
-                content=success_response(
-                    message="Employee restored successfully.",
-                    data={"employee_id": entry["entity_id"], "recycle_bin_id": entry_id},
-                    status_code=200,
-                ),
-            )
-
-        else:
-            return _json_error(400, message=f"Unsupported entity type: {entity_type}", code="UNSUPPORTED_ENTITY_TYPE")
-
-    except ValidationError as exc:
-        return _json_error(400, message=str(exc), code="VALIDATION_ERROR")
-    except Exception as exc:
-        return _json_error(500, message="Failed to restore entry.", code="INTERNAL_ERROR", details=str(exc))
-
-
-@router.delete("/recycle-bin/{entry_id}")
-async def delete_recycle_bin_entry_permanent(
-    entry_id: str,
-    employee: EmployeeContext = Depends(require_privileged),
-) -> JSONResponse:
-    """
-    Purpose: Permanently delete an entity from the recycle bin (hard delete).
-    Method/Route: DELETE /api/v1/assets/recycle-bin/{entry_id}
-    Response: 200 Guideline envelope; Errors: 404/500 envelope.
-    Notes: Privileged only.
-    """
-    try:
-        from repositories.recycle_bin_repository import RecycleBinRepository
-        entry = await RecycleBinRepository.get_entry(entry_id)
-        if not entry:
-            return _json_error(404, message="Recycle bin entry not found.", code="NOT_FOUND")
-
-        async with pool().acquire() as conn:
-            async with conn.transaction():
-                # Step 1 — delete from the actual underlying table
-                if entry["entity_type"] == "asset":
-                    await conn.execute(
-                        "DELETE FROM assets WHERE id = $1::uuid",
-                        entry["entity_id"]
-                    )
-                elif entry["entity_type"] == "employee":
-                    await conn.execute(
-                        "DELETE FROM employees WHERE id = $1::uuid",
-                        entry["entity_id"]
-                    )
-
-                # Step 2 — remove from recycle bin
-                await conn.execute(
-                    "DELETE FROM recycle_bin_entries WHERE id = $1::uuid",
-                    entry_id
-                )
-
-        return JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content=success_response(
-                message="Entry permanently deleted.",
-                data={"entry_id": entry_id},
-                status_code=200,
-            ),
-        )
-    except Exception as exc:
-        return _json_error(500, message="Failed to delete entry permanently.", code="INTERNAL_ERROR", details=str(exc))
-
 
 @router.get("/next-tag")
 async def get_next_asset_tag(
@@ -492,10 +349,15 @@ async def bulk_insert_assets(
 
         inserted = result["inserted"]
         failed_rows = result["failed_rows"]
+
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content=success_response(
-                message=f"Processed bulk import: {inserted} inserted, {len(failed_rows)} failed.",
+                message=(
+                    f"Bulk import complete: {inserted} asset(s) saved."
+                    if not failed_rows
+                    else f"Import failed — {len(failed_rows)} issue(s) found. No assets were saved."
+                ),
                 data={"inserted": inserted, "failed_rows": failed_rows},
                 status_code=200,
             ),
@@ -1305,7 +1167,7 @@ async def export_asset_audit_trail_pdf(
                 if part
             ]
         ) or "—"
-        generated_at = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+        generated_at = datetime.utcnow().strftime("%Y-%m-%d")
 
         pdf_bytes = audit_trail_pdf_service.build_pdf(
             header=AuditTrailPdfAssetHeader(
@@ -1329,50 +1191,6 @@ async def export_asset_audit_trail_pdf(
         return _json_error(400, message=str(exc), code="VALIDATION_ERROR")
     except Exception as exc:
         return _json_error(500, message="Failed to export audit trail PDF.", code="INTERNAL_ERROR", details=str(exc))
-
-
-@router.post("/{asset_id}/soft-delete")
-async def soft_delete_asset(
-    asset_id: str,
-    payload: SoftDeleteAssetRequest,
-    request: Request,
-    employee: EmployeeContext = Depends(require_privileged),
-) -> JSONResponse:
-    """
-    Purpose: Soft-delete an asset (move to recycle bin).
-    Method/Route: POST /api/v1/assets/{asset_id}/soft-delete
-    Request: Path `asset_id` (uuid); JSON body `{note?: string}`.
-    Response: 200 envelope `{data:{asset_id,recycle_bin_id}}`; Errors: 400/404/500 envelope.
-    Notes: Privileged only (`require_privileged`).
-    """
-    try:
-        request_id = getattr(request.state, "request_id", None)
-        ip_address = request.client.host if request.client else None
-        user_agent = request.headers.get("user-agent")
-
-        result = await asset_service.soft_delete_asset(
-            asset_id=asset_id,
-            actor=employee,
-            reason=payload.note,
-            request_id=request_id,
-            ip_address=ip_address,
-            user_agent=user_agent,
-        )
-
-        return JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content=success_response(
-                message="Asset moved to recycle bin.",
-                data=result,
-                status_code=200,
-            ),
-        )
-    except ValidationError as exc:
-        return _json_error(400, message=str(exc), code="VALIDATION_ERROR")
-    except NotFoundError as exc:
-        return _json_error(404, message=str(exc), code="NOT_FOUND")
-    except Exception as exc:
-        return _json_error(500, message="Failed to delete asset.", code="INTERNAL_ERROR", details=str(exc))
 
 
 @router.get("/{ref}/detail")

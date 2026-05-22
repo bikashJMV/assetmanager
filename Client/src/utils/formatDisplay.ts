@@ -78,6 +78,18 @@ export function formatDateTime(value: unknown): string {
   return `${datePart}, ${timePart}`
 }
 
+const _mediumDateFmt = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' })
+
+export function formatDateMedium(value: string | null | undefined): string {
+  if (!value) return 'N/A'
+  try {
+    const d = parseToDate(value.trim())
+    return d ? _mediumDateFmt.format(d) : 'N/A'
+  } catch {
+    return 'N/A'
+  }
+}
+
 export function getInventoryStatusTone(status: string): { dot: string; border: string; bg: string; text: string } {
   const normalized = status.trim().toLowerCase()
   if (normalized === 'assigned') {

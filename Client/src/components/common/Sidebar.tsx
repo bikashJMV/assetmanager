@@ -894,7 +894,6 @@ export default function Sidebar({
         className="sm:hidden fixed top-3 left-4 z-30 flex h-10 w-10 items-center justify-center rounded-2xl border border-white/15 bg-slate-950/85 p-2 text-on-accent shadow-[0_14px_36px_rgba(15,23,42,0.34)] backdrop-blur transition hover:bg-slate-900"
         onClick={() => setMobileOpen(true)}
         aria-label="Open navigation"
-        title="Open navigation"
       >
         <AnimatedNavIcon name="list-chevrons-up-down" />
       </button>
@@ -946,7 +945,6 @@ export default function Sidebar({
                   className="flex h-9 w-9 items-center justify-center rounded-2xl border border-base bg-surface text-muted hover:bg-surface-3 hover:text-primary transition"
                   onClick={closeMobileNav}
                   aria-label="Close"
-                  title="Close"
                   type="button"
                 >
                   <span className="text-lg leading-none">&times;</span>

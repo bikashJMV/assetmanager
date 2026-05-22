@@ -232,7 +232,6 @@ export default function LogViewer() {
                     navigator.clipboard.writeText(log.message)
                     showToast({ variant: 'success', message: 'Copied to clipboard' })
                   }}
-                  title="Click to copy"
                 >
                   <span className="text-[#666] shrink-0 whitespace-nowrap min-w-[70px] select-none text-[10px]">{relTime}</span>
                   <span className={`shrink-0 font-bold px-1 rounded text-[9px] select-none min-w-[48px] text-center ${getLevelColor(log.level)}`}>

@@ -224,8 +224,6 @@ async def _ensure_asset(
                    category_id=$3,
                    status=$4,
                    model=$5,
-                   is_deleted=false,
-                   deleted_at=null,
                    updated_at=now()
              where asset_tag=$1
             """,
@@ -239,8 +237,8 @@ async def _ensure_asset(
 
     inserted = await conn.fetchrow(
         """
-        insert into assets(asset_tag,serial_number,category_id,status,model,custom_fields,metadata,is_deleted)
-        values($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,false)
+        insert into assets(asset_tag,serial_number,category_id,status,model,custom_fields,metadata)
+        values($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb)
         returning id
         """,
         asset_tag,
@@ -378,4 +376,3 @@ if __name__ == "__main__":
 
     asyncio.run(seed_dummy_data(assets_count=args.assets))
     print(f"Seeded dummy data: employees={len(DUMMY_EMPLOYEES)}, assets={args.assets}")
-

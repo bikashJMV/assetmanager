@@ -30,9 +30,6 @@ class ServiceHooks:
     async def on_asset_returned(self, *, ctx: HookContext, payload: dict[str, Any]) -> None:
         return
 
-    async def on_asset_deleted(self, *, ctx: HookContext, payload: dict[str, Any]) -> None:
-        return
-
     async def on_employee_created(self, *, ctx: HookContext, payload: dict[str, Any]) -> None:
         return
 

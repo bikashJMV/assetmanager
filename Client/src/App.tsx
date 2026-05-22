@@ -1,5 +1,4 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
-import { FEATURES } from './utils/featureFlags'
 import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { User } from 'oidc-client-ts'
 
@@ -37,7 +36,6 @@ const Guide = lazy(() => import('./components/common/Guide'))
 const Analysis = lazy(() => import('./components/pages/Analysis'))
 const LogsPage = lazy(() => import('./components/pages/LogsPage'))
 const QrBatches = lazy(() => import('./components/pages/QrBatches'))
-const RecycleBin = lazy(() => import('./components/pages/RecycleBin'))
 const Notifications = lazy(() => import('./components/pages/Notifications'))
 
 const Employee = lazy(() => import('./components/pages/Employee'))
@@ -217,7 +215,6 @@ function AppRoutes() {
                     <Route path="/employee/new" element={<NewEmployee />} />
                     <Route path="/analysis" element={<Analysis />} />
                     <Route path="/qr-generate/batches" element={<QrBatches />} />
-                    {FEATURES.RECYCLE_BIN && <Route path="/recycle-bin" element={<RecycleBin />} />}
                   </Route>
 
                   <Route element={<RequireItOps sessionEmployee={sessionEmployee} />}>

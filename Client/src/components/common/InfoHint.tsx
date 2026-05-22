@@ -150,7 +150,6 @@ export default function InfoHint({
         ref={triggerRef}
         type="button"
         aria-label={ariaLabel}
-        title="Page help"
         aria-expanded={open ? 'true' : 'false'}
         aria-controls={open ? panelId : undefined}
         onClick={toggle}

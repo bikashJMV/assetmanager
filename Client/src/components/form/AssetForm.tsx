@@ -26,6 +26,7 @@ type Props = {
   lockedCategoryLabel?: string
   qr_reservation_id?: string
   isStatusDisabled?: boolean
+  isDepartmentDisabled?: boolean
   initialCategories?: CategoryRecord[]
 }
 
@@ -80,6 +81,7 @@ export default function AssetForm({
   lockedCategoryLabel,
   qr_reservation_id,
   isStatusDisabled = false,
+  isDepartmentDisabled = false,
   initialCategories,
 }: Props) {
 
@@ -147,6 +149,7 @@ export default function AssetForm({
       const num = parts[parts.length - 1]
       setSeqPart(num)
     } catch (err) {
+      logDevError('assetForm.autoAssign', err)
       showToast({ message: 'Failed to generate auto-assigned tag.', variant: 'error' })
     }
   }
@@ -193,6 +196,7 @@ export default function AssetForm({
         const result = await validateTag(form.asset_tag)
         setTagValidation(result)
       } catch (err) {
+        logDevError('assetForm.tagValidation', err)
         setTagValidation(null)
       } finally {
         setIsValidating(false)
@@ -477,9 +481,6 @@ export default function AssetForm({
         <section className="p-2.5 sm:p-3 space-y-4">
           {isLegacyTag && (
             <div className="bg-amber-500/10 border border-amber-500/20 text-amber-600 dark:text-amber-400 p-3 rounded-lg text-xs leading-relaxed space-y-1">
-              <p className="font-semibold flex items-center gap-1.5">
-                ⚠️ Legacy Tag Format Detected
-              </p>
               <p>
                 This QR label uses the legacy tag format. The asset will be registered with the tag <strong>{form.asset_tag}</strong>. Future batches will utilize the new categorized <strong>JMV-{currentAlias}-xxxxx</strong> format.
               </p>
@@ -490,13 +491,6 @@ export default function AssetForm({
           <div>
             <p className="text-xs uppercase tracking-[0.14em] text-muted mb-2">Core Details</p>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {/* <Field
-                label="Asset Tag"
-                value={isEditing ? form.asset_tag : ''}
-                placeholder={isEditing ? 'AST-00001' : 'Auto-generated on save'}
-                onChange={(v) => setForm((c) => ({ ...c, asset_tag: v }))}
-                disabled
-              /> */}
               <div>
                 <label htmlFor="asset-form-tag" className="block text-muted text-xs mb-0.5 flex justify-between items-center">
                   <span>Asset Tag {isTagReadOnly ? <span className="text-accent">*</span> : ''}</span>
@@ -522,7 +516,7 @@ export default function AssetForm({
                   />
                 ) : (
                   <div className="flex items-stretch rounded-lg overflow-hidden border border-base bg-app focus-within:border-[color:var(--accent)] focus-within:ring-2 focus-within:ring-[color:var(--accent-soft)] transition">
-                    <span className="flex items-center bg-surface-2 text-muted text-sm font-semibold px-3 border-r border-base select-none">
+                    <span className="flex shrink-0 items-center whitespace-nowrap bg-surface-2 text-muted text-sm font-semibold px-3 border-r border-base select-none">
                       {categories.length === 0 ? (
                         <span className="animate-pulse text-subtle">Loading...</span>
                       ) : (
@@ -537,7 +531,7 @@ export default function AssetForm({
                       placeholder="00000"
                       onChange={handleSeqChange}
                       disabled={categories.length === 0}
-                      className="w-full bg-transparent py-2 px-3 text-primary placeholder:text-subtle text-sm outline-none border-none disabled:opacity-40 disabled:cursor-not-allowed"
+                      className="min-w-0 w-full bg-transparent py-2 px-3 text-primary placeholder:text-subtle text-sm outline-none border-none disabled:opacity-40 disabled:cursor-not-allowed"
                     />
                   </div>
                 )}
@@ -619,6 +613,8 @@ export default function AssetForm({
                   hideLabel
                   dense
                   triggerId="asset-form-department"
+                  disabled={isDepartmentDisabled}
+                  title={isDepartmentDisabled ? "Department cannot be changed while asset is assigned" : undefined}
                 />
               </div>
 
@@ -732,7 +728,7 @@ export default function AssetForm({
               <button
                 type="button"
                 onClick={addExtraPair}
-                className="text-accent bg-orange-500 text-on-accent px-2 text-md font-semibold hover:underline hover:decoration-black transition rounded"
+                className="bg-orange-500 text-on-accent px-2 text-md font-semibold hover:underline hover:decoration-white transition rounded"
                 aria-label="Add additional detail"
               >
                 + Add

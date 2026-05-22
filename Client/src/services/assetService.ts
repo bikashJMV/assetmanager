@@ -76,14 +76,6 @@ export async function getAssetDetail(ref: string): Promise<AssetDetailRecord> {
   })
 }
 
-export async function softDeleteAsset(assetId: string, note?: string): Promise<{ asset_id: string; recycle_bin_id: string }> {
-  return apiRequest<{ asset_id: string; recycle_bin_id: string }>({
-    method: 'POST',
-    url: `/api/v1/assets/${encodeURIComponent(assetId)}/soft-delete`,
-    data: { note: note?.trim() || null },
-  })
-}
-
 function extractDownloadFileName(contentDisposition: string | undefined, fallback: string): string {
   const raw = (contentDisposition || '').trim()
   if (!raw) return fallback
@@ -283,4 +275,15 @@ export async function validateTag(assetTag: string): Promise<{
     url: '/api/v1/assets/validate-tag',
     data: { asset_tag: assetTag },
   })
+}
+
+export type AssignmentActivityItem = { month: string; count: number }
+
+export async function getAssignmentActivity(fromDate: string): Promise<AssignmentActivityItem[]> {
+  const resp = await apiRequest<{ items: AssignmentActivityItem[] }>({
+    method: 'GET',
+    url: '/api/v1/meta/assignment-activity',
+    params: { from_date: fromDate },
+  })
+  return resp.items
 }

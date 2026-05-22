@@ -6,7 +6,7 @@ Application service layer used by FastAPI routers in `routers/`. Services orches
 
 | File | Role |
 | --- | --- |
-| `asset_service.py` | `AssetService`: create asset (with meta entity resolution), soft delete, restore, bulk insert, assign/return delegation to `AssignmentService` |
+| `asset_service.py` | `AssetService`: create asset (with meta entity resolution), bulk insert, assign/return delegation to `AssignmentService` |
 | `assignment_service.py` | `AssignmentService`: transactional assign and return flows with row-level locking, audit trail, and fire-and-forget email notifications |
 | `audit_service.py` | `AuditService`: writes append-only `asset_logs` and `asset_events` rows via `AuditRepository`; builds `ActorSnapshot` from `EmployeeContext` |
 | `hooks.py` | `ServiceHooks` no-op facade with `on_asset_assigned`, `on_asset_returned`, `on_asset_deleted`, `on_employee_created`; `service_hooks` singleton for future side effects without router changes |
@@ -19,9 +19,7 @@ Application service layer used by FastAPI routers in `routers/`. Services orches
 Key methods:
 
 - `create_asset(payload, actor, ...)` — resolves category, manufacturer, and location via `MetaRepository`; auto-generates asset tag if absent; writes `asset_created` audit event.
-- `bulk_insert_assets(rows, actor, ...)` — calls `create_asset` per row; partial failures are logged; raises `ValidationError` only if all rows fail.
-- `soft_delete_asset(asset_id, actor, ...)` — marks `is_deleted=true`, inserts `recycle_bin_entries` row, writes `asset_deleted` audit event, fires `on_asset_deleted` hook.
-- `restore_asset(asset_id, recycle_bin_id, actor, ...)` — clears `is_deleted`, marks recycle bin entry restored, writes `asset_restored` audit event.
+- `bulk_insert_assets(rows, actor, ...)` — calls `create_asset` per row inside a batch transaction; any row failure rolls back the batch and returns failed-row details.
 - `assign_asset` / `return_asset` — thin wrappers that delegate to `AssignmentService`.
 
 ## `assignment_service.py` — `AssignmentService`
@@ -38,7 +36,7 @@ Email notifications are sent **after** the transaction commits and never roll ba
 - `write_asset_log(asset_id, actor, note, ...)` — inserts into `asset_logs` (human-readable note + metadata JSON).
 - `write_asset_event(asset_id, event_type, actor, payload, ...)` — inserts into `asset_events` with an `actor_snapshot` (sub, employee_id, name, department) embedded in the payload JSON.
 
-`AssetEventType` enum values: `asset_created`, `asset_updated`, `asset_assigned`, `asset_returned`, `qr_scanned`, `asset_deleted`, `asset_restored`, `bulk_imported`.
+`AssetEventType` enum values include historical `asset_deleted` and `asset_restored` values so existing audit rows remain displayable.
 
 ## `qr_service.py` — `QRService`
 

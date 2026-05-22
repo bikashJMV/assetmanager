@@ -63,3 +63,23 @@ export async function downloadQrBatchPdf(batchId: string): Promise<{ pdfBlob: Bl
   const pdfBlob = new Blob([blob], { type: 'application/pdf' })
   return { pdfBlob, fileName }
 }
+
+export async function downloadUnlinkedQrPdf(): Promise<{ pdfBlob: Blob; fileName: string }> {
+  const resp = await api.request<Blob>({
+    method: 'GET',
+    url: '/api/v1/qr/batches/unlinked/pdf',
+    responseType: 'blob',
+  })
+
+  const blob = resp.data
+  if (!(blob instanceof Blob) || !blob.size) {
+    throw new Error('Unlinked QR export returned an empty file.')
+  }
+
+  const fileName = extractDownloadFileName(
+    resp.headers['content-disposition'],
+    'Unlinked QRs.pdf',
+  )
+  const pdfBlob = new Blob([blob], { type: 'application/pdf' })
+  return { pdfBlob, fileName }
+}

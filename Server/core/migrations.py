@@ -183,7 +183,6 @@ CREATE VIEW public.v_asset_inventory AS
     a.warranty_expiry,
     a.custom_fields,
     a.metadata,
-    a.is_deleted,
     a.created_at,
     a.updated_at,
     a.created_by,
@@ -300,7 +299,6 @@ CREATE VIEW public.v_asset_inventory AS
     a.warranty_expiry,
     a.custom_fields,
     a.metadata,
-    a.is_deleted,
     a.created_at,
     a.updated_at,
     a.created_by,
@@ -385,7 +383,6 @@ CREATE OR REPLACE VIEW public.v_asset_inventory AS
     a.warranty_expiry,
     a.custom_fields,
     a.metadata,
-    a.is_deleted,
     a.created_at,
     a.updated_at,
     a.created_by,
@@ -419,8 +416,7 @@ CREATE OR REPLACE VIEW public.v_asset_inventory AS
      LEFT JOIN public.departments ad ON ad.id = a.department_id
      LEFT JOIN public.asset_assignments aa ON aa.asset_id = a.id AND aa.returned_at IS NULL
      LEFT JOIN public.employees e ON e.id = aa.employee_id
-     LEFT JOIN public.departments d ON d.id = e.department_id
-  WHERE a.is_deleted = false;
+     LEFT JOIN public.departments d ON d.id = e.department_id;
 
 ALTER TABLE public.v_asset_inventory OWNER TO assetmanager_user;
 
@@ -473,6 +469,110 @@ BEGIN
   -- that only deactivated it), deactivate it to keep it out of the dropdown.
   UPDATE asset_categories SET is_active = false WHERE slug = 'pen';
 END$$;
+"""
+
+MIGRATION_010_REMOVE_ASSET_SOFT_DELETE = """
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+     WHERE table_schema = 'public'
+       AND table_name = 'assets'
+       AND column_name = 'is_deleted'
+  ) THEN
+    DELETE FROM assets WHERE is_deleted = true;
+  END IF;
+END$$;
+DELETE FROM recycle_bin_entries WHERE entity_type = 'asset';
+
+DROP VIEW IF EXISTS public.v_warranty_notifications;
+DROP VIEW IF EXISTS public.v_asset_inventory;
+
+DROP INDEX IF EXISTS idx_assets_is_deleted;
+DROP INDEX IF EXISTS idx_assets_category;
+DROP INDEX IF EXISTS idx_assets_location;
+DROP INDEX IF EXISTS idx_assets_status;
+DROP INDEX IF EXISTS idx_assets_updated_at;
+
+ALTER TABLE assets
+  DROP COLUMN IF EXISTS is_deleted,
+  DROP COLUMN IF EXISTS deleted_at,
+  DROP COLUMN IF EXISTS deleted_by_employee_id;
+
+CREATE INDEX IF NOT EXISTS idx_assets_category   ON assets (category_id);
+CREATE INDEX IF NOT EXISTS idx_assets_location   ON assets (location_id);
+CREATE INDEX IF NOT EXISTS idx_assets_status     ON assets (status);
+CREATE INDEX IF NOT EXISTS idx_assets_updated_at ON assets (updated_at DESC);
+
+CREATE OR REPLACE VIEW public.v_asset_inventory AS
+ SELECT a.id,
+    a.asset_tag,
+    a.serial_number,
+    a.model,
+    a.status,
+    a.purchase_date,
+    a.warranty_expiry,
+    a.custom_fields,
+    a.metadata,
+    a.created_at,
+    a.updated_at,
+    a.created_by,
+    a.updated_by,
+    c.id AS category_id,
+    c.slug AS category_slug,
+    c.name AS category_name,
+    c.alias_code AS category_alias_code,
+    m.id AS manufacturer_id,
+    m.name AS manufacturer_name,
+    l.id AS location_id,
+    l.name AS location_name,
+    l.code AS location_code,
+    aa.id AS assignment_id,
+    e.id AS current_employee_id,
+    e.employee_id AS current_employee_business_id,
+    e.name AS current_employee_name,
+    e.email AS current_employee_email,
+    aa.assigned_at,
+    true AS current_employee_is_active,
+    e.erp_active AS current_employee_erp_active,
+    d.name AS current_employee_department,
+    a.department_id AS asset_department_id,
+    ad.name AS asset_department_name,
+    a.source,
+    a.qr_reservation_id
+   FROM assets a
+     LEFT JOIN asset_categories c ON c.id = a.category_id
+     LEFT JOIN manufacturers m ON m.id = a.manufacturer_id
+     LEFT JOIN locations l ON l.id = a.location_id
+     LEFT JOIN departments ad ON ad.id = a.department_id
+     LEFT JOIN asset_assignments aa ON aa.asset_id = a.id AND aa.returned_at IS NULL
+     LEFT JOIN employees e ON e.id = aa.employee_id
+     LEFT JOIN departments d ON d.id = e.department_id;
+
+CREATE OR REPLACE VIEW public.v_warranty_notifications AS
+ SELECT gen_random_uuid()::text AS notification_id,
+    a.id::text AS asset_id,
+    a.asset_tag,
+    a.model,
+    c.name AS category_name,
+    aa.employee_id::text AS current_employee_id,
+    e.name AS current_employee_name,
+    a.warranty_expiry::text AS warranty_expiry,
+    a.warranty_expiry - CURRENT_DATE AS days_remaining,
+        CASE
+            WHEN a.warranty_expiry < CURRENT_DATE THEN 'expired'::text
+            WHEN a.warranty_expiry <= (CURRENT_DATE + 30) THEN 'due_soon'::text
+            ELSE NULL::text
+        END AS severity,
+        CASE
+            WHEN a.warranty_expiry < CURRENT_DATE THEN 'Warranty expired on '::text || a.warranty_expiry::text
+            ELSE ('Warranty expires in '::text || ((a.warranty_expiry - CURRENT_DATE)::text)) || ' days'::text
+        END AS message
+   FROM assets a
+     JOIN asset_categories c ON a.category_id = c.id
+     LEFT JOIN asset_assignments aa ON aa.asset_id = a.id AND aa.returned_at IS NULL
+     LEFT JOIN employees e ON e.id = aa.employee_id
+  WHERE a.warranty_expiry IS NOT NULL;
 """
 
 
@@ -529,5 +629,10 @@ async def run_database_migrations() -> None:
         async with conn.transaction():
             await conn.execute(MIGRATION_009_PEN_TO_OTHER)
         logger.info("[MigrationRunner] Migration 009 SUCCESS.")
+
+        logger.info("[MigrationRunner] Executing Migration 010: Remove asset soft-delete columns and predicates...")
+        async with conn.transaction():
+            await conn.execute(MIGRATION_010_REMOVE_ASSET_SOFT_DELETE)
+        logger.info("[MigrationRunner] Migration 010 SUCCESS.")
 
     logger.info("[MigrationRunner] All database migrations verified successfully!")

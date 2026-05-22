@@ -4,7 +4,6 @@ import {
   getSessionEmployee,
   getWelcomeNotification,
   listWarrantyNotifications,
-  type SessionEmployee,
   type WelcomeNotification,
   type WarrantyNotification,
 } from '../../api'
@@ -50,7 +49,6 @@ function calculateWindowDays(toDateInput: string): number {
 }
 
 export default function Notifications() {
-  const [profile, setProfile] = useState<SessionEmployee | null>(null)
   const [notifications, setNotifications] = useState<WarrantyNotification[]>([])
   const [welcome, setWelcome] = useState<WelcomeNotification | null>(null)
   const [errorDebug, setErrorDebug] = useState<string | undefined>(undefined)
@@ -73,7 +71,6 @@ export default function Notifications() {
         listWarrantyNotifications(calculateWindowDays(toDate)),
         getWelcomeNotification(),
       ])
-      setProfile(sessionProfile)
       setNotifications(rows)
 
       const profileIsPrivileged = Boolean(
@@ -135,17 +132,51 @@ export default function Notifications() {
     setVisibleCount(NOTIFICATION_PAGE_SIZE)
   }, [filteredNotifications])
 
-  const isPrivileged = Boolean(profile && profile?.role !== 'employee')
-  const audienceLabel = isPrivileged ? 'Showing alerts for all assets.' : 'Showing only alerts for assets currently assigned to you.'
-
   return (
     <main className="min-h-screen bg-app text-primary sm:px-6">
-      <div className="mx-auto max-w-6xl ">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="min-w-0">
-            <p className="mt-1 text-sm leading-snug text-muted">{audienceLabel}</p>
-          </div>
-          <div className="flex shrink-0 items-center gap-2">
+      <div className="mx-auto max-w-6xl">
+        <div className="flex flex-wrap items-end gap-2 py-3">
+          {/* date filters — full-width on mobile, auto-width on sm+ */}
+          <label className="flex w-full flex-col gap-1 sm:w-auto">
+            <span className="text-xs font-semibold uppercase tracking-[0.08em] text-subtle">From</span>
+            <input
+              type="date"
+              value={fromDate}
+              onChange={(event) => setFromDate(event.target.value)}
+              className="w-full rounded-lg border border-base bg-surface-2 px-3 py-2 text-sm text-primary outline-none focus:border-[color:var(--accent)] sm:w-auto"
+            />
+          </label>
+          <label className="flex w-full flex-col gap-1 sm:w-auto">
+            <span className="text-xs font-semibold uppercase tracking-[0.08em] text-subtle">To</span>
+            <input
+              type="date"
+              value={toDate}
+              onChange={(event) => setToDate(event.target.value)}
+              className="w-full rounded-lg border border-base bg-surface-2 px-3 py-2 text-sm text-primary outline-none focus:border-[color:var(--accent)] sm:w-auto"
+            />
+          </label>
+          <button
+            type="button"
+            onClick={() => {
+              setFromDate('')
+              setToDate('')
+            }}
+            className="h-10 w-full shrink-0 self-end rounded-lg border border-base bg-surface-2 px-4 text-sm font-semibold text-muted transition hover:bg-surface-3 hover:text-primary sm:w-auto"
+          >
+            Clear
+          </button>
+          {/* refresh + infohint — pushed to the right on sm+, left-aligned on mobile */}
+          <div className="flex shrink-0 items-center gap-2 self-end sm:ml-auto">
+            <RefreshButton
+              onClick={() => {
+                void loadNotifications()
+              }}
+              loading={loading}
+              iconOnly
+              ariaLabel="Refresh Notifications"
+              title={loading ? 'Refreshing notifications' : 'Refresh notifications'}
+              className="shrink-0"
+            />
             <InfoHint
               panelTitle={NOTIFICATIONS_PAGE_INFO_HINT.panelTitle}
               ariaLabel={NOTIFICATIONS_PAGE_INFO_HINT.ariaLabel}
@@ -162,50 +193,8 @@ export default function Notifications() {
                 </div>
               ))}
             </InfoHint>
-            <RefreshButton
-              onClick={() => {
-                void loadNotifications()
-              }}
-              loading={loading}
-              iconOnly
-              ariaLabel="Refresh Notifications"
-              title={loading ? 'Refreshing notifications' : 'Refresh notifications'}
-              className="shrink-0"
-            />
           </div>
         </div>
-        <section className="p-4">
-          <div className="flex flex-row items-end gap-3">
-            <label className="flex-1">
-              <span className="mb-1 block text-xs font-semibold uppercase tracking-[0.08em] text-subtle">From</span>
-              <input
-                type="date"
-                value={fromDate}
-                onChange={(event) => setFromDate(event.target.value)}
-                className="w-full rounded-lg border border-base bg-surface-2 px-3 py-2 text-sm text-primary outline-none focus:border-[color:var(--accent)]"
-              />
-            </label>
-            <label className="flex-1">
-              <span className="mb-1 block text-xs font-semibold uppercase tracking-[0.08em] text-subtle">To</span>
-              <input
-                type="date"
-                value={toDate}
-                onChange={(event) => setToDate(event.target.value)}
-                className="w-full rounded-lg border border-base bg-surface-2 px-3 py-2 text-sm text-primary outline-none focus:border-[color:var(--accent)]"
-              />
-            </label>
-            <button
-              type="button"
-              onClick={() => {
-                setFromDate('')
-                setToDate('')
-              }}
-              className="h-10 shrink-0 rounded-lg border border-base bg-surface-2 px-4 text-sm font-semibold text-muted transition hover:bg-surface-3 hover:text-primary"
-            >
-              Clear
-            </button>
-          </div>
-        </section>
 
         <section className=" py-3">
           {welcome ? (
@@ -256,12 +245,18 @@ function NotificationRows({
   const canLoadMore = visibleCount < rows.length
 
   return (
-    <section className=" p-3">
+    <section className="p-3">
       <p className="mb-2 text-sm font-semibold text-primary">{title}</p>
       {loading ? (
         <Loader embedded />
       ) : rows.length === 0 ? (
-        <p className="text-sm text-subtle">No alerts in this category.</p>
+        <div className="flex flex-col items-center justify-center py-20 gap-2 text-center">
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-10 w-10 text-subtle" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+          </svg>
+          <p className="text-base font-semibold text-primary">No new notifications</p>
+          <p className="text-sm text-subtle">You're all caught up. No warranty alerts at this time.</p>
+        </div>
       ) : (
         <div className="space-y-2">
           {visibleRows.map((row) => (

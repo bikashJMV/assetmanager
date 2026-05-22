@@ -7,10 +7,8 @@ import asyncpg
 from core.asset_db_types import AssetDateCoercionError, normalize_asset_date_fields_inplace
 from core.authnexus import EmployeeContext
 from repositories.asset_write_repository import AssetWriteRepository
-from repositories.errors import NotFoundError, ValidationError
-from repositories.recycle_bin_repository import RecycleBinRepository
+from repositories.errors import ValidationError
 from services.audit_service import AssetEventType, audit_service
-from services.hooks import HookContext, service_hooks
 
 
 class AssetService:
@@ -24,82 +22,6 @@ class AssetService:
     """
 
     @staticmethod
-    async def soft_delete_asset(
-        *,
-        asset_id: str,
-        actor: EmployeeContext,
-        reason: str | None = None,
-        request_id: str | None = None,
-        ip_address: str | None = None,
-        user_agent: str | None = None,
-    ) -> dict[str, Any]:
-        updated = await AssetWriteRepository.mark_soft_deleted(
-            asset_id=asset_id,
-            deleted_by_employee_id=actor.id,
-        )
-
-        label = str(updated.get("asset_tag") or updated.get("serial_number") or asset_id)
-        recycle_id = await RecycleBinRepository.insert_entry(
-            entity_type="asset",
-            entity_id=asset_id,
-            label=label,
-            payload={"reason": (reason or "").strip() or None},
-            deleted_by_employee_id=actor.id,
-        )
-
-        await audit_service.write_asset_event(
-            asset_id=asset_id,
-            event_type=AssetEventType.ASSET_DELETED,
-            actor=actor,
-            payload={"recycle_bin_id": recycle_id, "reason": (reason or "").strip() or None},
-            ip_address=ip_address,
-            user_agent=user_agent,
-        )
-        await audit_service.write_asset_log(
-            asset_id=asset_id,
-            actor=actor,
-            note=f"Asset soft-deleted. {('Reason: ' + reason.strip()) if reason and reason.strip() else ''}".strip(),
-            metadata={"op": "asset.soft_delete"},
-        )
-
-        await service_hooks.on_asset_deleted(
-            ctx=HookContext(request_id=request_id, actor_sub=actor.sub, actor_employee_id=actor.employee_id),
-            payload={"asset_id": asset_id, "recycle_bin_id": recycle_id},
-        )
-
-        return {"asset_id": asset_id, "recycle_bin_id": recycle_id}
-
-    @staticmethod
-    async def restore_asset(
-        *,
-        asset_id: str,
-        recycle_bin_id: str,
-        actor: EmployeeContext,
-        request_id: Optional[str] = None,
-        ip_address: Optional[str] = None,
-        user_agent: Optional[str] = None,
-    ) -> dict[str, Any]:
-        await AssetWriteRepository.mark_restored(asset_id=asset_id, restored_by_employee_id=actor.id)
-        await RecycleBinRepository.mark_restored(recycle_bin_id=recycle_bin_id, restored_by_employee_id=actor.id)
-
-        await audit_service.write_asset_event(
-            asset_id=asset_id,
-            event_type=AssetEventType.ASSET_RESTORED,
-            actor=actor,
-            payload={"recycle_bin_id": recycle_bin_id},
-            ip_address=ip_address,
-            user_agent=user_agent,
-        )
-        await audit_service.write_asset_log(
-            asset_id=asset_id,
-            actor=actor,
-            note="Asset restored from recycle bin.",
-            metadata={"op": "asset.restore"},
-        )
-
-        return {"asset_id": asset_id, "recycle_bin_id": recycle_bin_id}
-
-    @staticmethod
     async def create_asset(
         *,
         payload: dict[str, Any],
@@ -108,6 +30,7 @@ class AssetService:
         user_agent: Optional[str] = None,
         event_type: AssetEventType = AssetEventType.ASSET_CREATED,
         qr_reservation_id: Optional[str] = None,
+        _bulk_conn=None,
     ) -> dict[str, Any]:
         from repositories.meta_repository import MetaRepository
         from repositories.qr_repository import QrRepository
@@ -245,6 +168,55 @@ class AssetService:
         # PATH B — Direct form submit
         # ─────────────────────────────────────────────────────────────
         asset_tag = (payload.get("asset_tag") or "").strip()
+
+        # Bulk-import fast path: caller provides an external connection that is
+        # already enrolled in a batch transaction.  No retry loop — any error
+        # propagates up so the caller can roll back the whole batch.
+        if _bulk_conn is not None:
+            if not asset_tag:
+                row = await _bulk_conn.fetchrow(
+                    "SELECT alias_code FROM asset_categories WHERE id = $1::uuid",
+                    category_id,
+                )
+                alias_code = row["alias_code"] if row and row["alias_code"] else None
+                if not alias_code:
+                    raise ValidationError(f"Category {category_id} has no alias_code mapping.")
+                asset_tag = await _bulk_conn.fetchval("SELECT fn_next_asset_tag($1);", alias_code)
+            asset = await AssetWriteRepository.create_asset(
+                asset_tag=asset_tag,
+                category_id=category_id,
+                manufacturer_id=manufacturer_id,
+                location_id=location_id,
+                model=payload.get("model"),
+                serial_number=payload["serial_number"],
+                status=payload.get("status"),
+                purchase_date=payload.get("purchase_date"),
+                warranty_expiry=payload.get("warranty_expiry"),
+                custom_fields=payload.get("custom_fields"),
+                metadata=payload.get("metadata"),
+                qr_code=payload.get("qr_code"),
+                created_by_employee_id=actor.id,
+                department_id=payload.get("department_id"),
+                conn=_bulk_conn,
+            )
+            await audit_service.write_asset_event(
+                asset_id=asset["id"],
+                event_type=event_type,
+                actor=actor,
+                payload={"asset_tag": asset["asset_tag"], "category_id": category_id},
+                ip_address=ip_address,
+                user_agent=user_agent,
+                conn=_bulk_conn,
+            )
+            await audit_service.write_asset_log(
+                asset_id=asset["id"],
+                actor=actor,
+                note=payload.get("log_note") or "Asset created via bulk import.",
+                metadata={"op": "asset.create", "source": "bulk_import"},
+                conn=_bulk_conn,
+            )
+            return asset
+
         asset: dict[str, Any] | None = None
         for _attempt in range(3):
             if not asset_tag:
@@ -306,30 +278,52 @@ class AssetService:
         actor: EmployeeContext,
         ip_address: Optional[str] = None,
         user_agent: Optional[str] = None,
-    ) -> int:
+    ) -> dict[str, Any]:
         import logging
         logger = logging.getLogger(__name__)
+        from repositories.db import pool
 
-        count = 0
-        failed_rows: list[str] = []
-
-        for i, row in enumerate(rows):
-            try:
-                await AssetService.create_asset(
-                    payload=row,
-                    actor=actor,
-                    ip_address=ip_address,
-                    user_agent=user_agent,
-                    event_type=AssetEventType.BULK_IMPORTED,
+        # ── Pre-flight: find every serial number already in the database ──────
+        serial_numbers = [r["serial_number"] for r in rows if r.get("serial_number")]
+        if serial_numbers:
+            async with pool().acquire() as _chk:
+                existing = await _chk.fetch(
+                    "SELECT serial_number FROM assets WHERE serial_number = ANY($1::text[])",
+                    serial_numbers,
                 )
-                count += 1
-            except Exception as exc:
-                tag = row.get("asset_tag") or row.get("serial_number") or f"row {i + 1}"
-                reason = str(exc)
-                failed_rows.append(f"{tag}: {reason}")
-                logger.error("[bulk_insert] Row failed — %s: %s", tag, exc, exc_info=True)
+            if existing:
+                failed_rows = [
+                    f"{row['serial_number']}: Serial number already exists in the system."
+                    for row in existing
+                ]
+                return {"inserted": 0, "failed_rows": failed_rows}
 
-        return {"inserted": count, "failed_rows": failed_rows}
+        # ── All-or-nothing insert — single transaction across every row ────────
+        count = 0
+        try:
+            async with pool().acquire() as conn:
+                async with conn.transaction():
+                    for row in rows:
+                        await AssetService.create_asset(
+                            payload=row,
+                            actor=actor,
+                            ip_address=ip_address,
+                            user_agent=user_agent,
+                            event_type=AssetEventType.BULK_IMPORTED,
+                            _bulk_conn=conn,
+                        )
+                        count += 1
+        except Exception as exc:
+            failing_row = rows[count] if count < len(rows) else {}
+            tag = (
+                failing_row.get("asset_tag")
+                or failing_row.get("serial_number")
+                or f"row {count + 1}"
+            )
+            logger.error("[bulk_insert] Batch rolled back at %s: %s", tag, exc, exc_info=True)
+            return {"inserted": 0, "failed_rows": [f"{tag}: {exc}"]}
+
+        return {"inserted": count, "failed_rows": []}
 
 
     @staticmethod
@@ -398,4 +392,3 @@ class AssetService:
 
 
 asset_service = AssetService()
-

@@ -55,7 +55,6 @@ export default function DataPagination({
 
   const pageSizeControl = (
     <div className="inline-flex items-center gap-2 text-xs text-subtle">
-      <span>Rows per page</span>
       <div className={`min-w-[104px] ${loading ? 'pointer-events-none opacity-60' : ''}`}>
         <FilterSelect
           label="Rows per page"

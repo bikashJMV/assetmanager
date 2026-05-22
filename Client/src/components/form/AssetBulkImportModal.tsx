@@ -27,7 +27,7 @@ type Phase =
   | { name: 'preview'; rows: AssetImportParsedRow[]; mapping: HeaderMappingEntry[]; fileName: string }
   | { name: 'importing' }
   | { name: 'error'; errors: string[]; mapping?: HeaderMappingEntry[] }
-  | { name: 'success'; inserted: number; failed_rows: string[] }
+  | { name: 'success'; inserted: number }
 
 type Props = {
   open: boolean
@@ -119,17 +119,21 @@ export default function AssetBulkImportModal({ open, onClose, onSuccess, default
       const result = await bulkInsertAssets(inputs)
       if (!mountedRef.current) return
 
-      if (result.inserted === 0) {
-        const errors = result.failed_rows?.length
-          ? result.failed_rows
-          : ['No assets were saved. All rows failed on the server.']
-        setPhase({ name: 'error', errors })
-        showToast({ variant: 'error', title: 'Import failed', message: 'No assets were saved.', durationMs: 0 })
+      // Backend guarantees: if failed_rows is non-empty, inserted is always 0
+      // (all-or-nothing transaction — nothing is saved when any row fails).
+      if (result.failed_rows && result.failed_rows.length > 0) {
+        setPhase({ name: 'error', errors: result.failed_rows })
+        showToast({
+          variant: 'error',
+          title: 'Import failed',
+          message: 'No assets were saved. Fix the issues below and try again.',
+          durationMs: 0,
+        })
         return
       }
 
-      setPhase({ name: 'success', inserted: result.inserted, failed_rows: result.failed_rows ?? [] })
-      showToast({ variant: 'success', message: `Imported ${result.inserted} new asset${result.inserted === 1 ? '' : 's'}.` })
+      setPhase({ name: 'success', inserted: result.inserted })
+      showToast({ variant: 'success', message: `Imported ${result.inserted} asset${result.inserted === 1 ? '' : 's'} successfully.` })
       onSuccess()
     } catch (err) {
       logDevError('assetBulkImport.rpc', err)
@@ -139,7 +143,7 @@ export default function AssetBulkImportModal({ open, onClose, onSuccess, default
       showToast({
         variant: 'error',
         title: 'Import failed',
-        message: 'No assets were saved. See details below.',
+        message: 'No assets were saved. Fix the issues below and try again.',
         durationMs: 0,
       })
     }
@@ -175,10 +179,6 @@ export default function AssetBulkImportModal({ open, onClose, onSuccess, default
           <h3 id="asset-bulk-import-title" className="min-w-0 flex-1 pt-1 text-xl font-semibold tracking-tight text-primary">
             Bulk import assets
           </h3>
-          <p className="mt-1 text-sm text-muted">
-            Column names are matched flexibly — e.g. “Brand”, “Sr No”, “Category”. Short headers like “Type” or “Vendor”
-            map to custom fields; use category_slug / manufacturer_name for category and manufacturer.
-          </p>
         </div>
 
         {/* Scrollable body */}
@@ -232,8 +232,7 @@ export default function AssetBulkImportModal({ open, onClose, onSuccess, default
                   Ready to import {phase.rows.length} asset{phase.rows.length === 1 ? '' : 's'}
                 </p>
                 <p className="text-xs text-muted mt-0.5">
-                  All {phase.rows.length} rows passed validation. The import is atomic — if anything fails on the
-                  server, nothing will be saved.
+                  All {phase.rows.length} rows validated. If any duplicate entries or formatting errors are found, the entire import will be safely canceled.
                 </p>
               </div>
 
@@ -243,7 +242,7 @@ export default function AssetBulkImportModal({ open, onClose, onSuccess, default
                   onClick={() => { setPhase({ name: 'idle' }); if (inputRef.current) inputRef.current.value = '' }}
                   className="flex-1 border border-base bg-surface text-primary py-2 rounded-lg hover:bg-surface-2 transition text-sm"
                 >
-                  ← Pick a different file
+                  ← back to import
                 </button>
                 <button
                   type="button"
@@ -274,26 +273,8 @@ export default function AssetBulkImportModal({ open, onClose, onSuccess, default
                 <p className="text-lg font-semibold text-primary">
                   {phase.inserted} asset{phase.inserted === 1 ? '' : 's'} imported
                 </p>
-                <p className="text-sm text-muted mt-1">
-                  {phase.failed_rows.length === 0
-                    ? 'All rows were saved successfully.'
-                    : `${phase.failed_rows.length} row${phase.failed_rows.length === 1 ? '' : 's'} failed — see details below.`}
-                </p>
+                <p className="text-sm text-muted mt-1">All rows were saved successfully.</p>
               </div>
-              {phase.failed_rows.length > 0 && (
-                <div
-                  className="max-h-52 overflow-y-auto rounded-xl border border-red-500/35 bg-red-500/[0.06] py-3 pl-4 pr-3 dark:border-red-400/35 dark:bg-red-400/[0.08]"
-                  role="region"
-                  aria-label="Failed rows"
-                >
-                  <p className="text-sm font-semibold text-primary">Rows not saved</p>
-                  <ul className="mt-2.5 list-disc space-y-2 pl-5 text-sm leading-snug text-muted marker:text-red-600 dark:marker:text-red-400">
-                    {phase.failed_rows.map((line, idx) => (
-                      <li key={idx} className="break-words pl-0.5">{line}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
               <button
                 type="button"
                 onClick={handleClose}

@@ -152,6 +152,19 @@
     accent-color: var(--accent);
   }
 
+  /* Global focus ring — accent orange instead of browser-default blue */
+  input:focus-visible,
+  textarea:focus-visible,
+  select:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 0px;
+  }
+
+  /* Also override Tailwind's ring utility default color */
+  :root {
+    --tw-ring-color: var(--accent-soft);
+  }
+
   html, body, #root {
     transition: background-color 200ms ease, color 200ms ease;
   }

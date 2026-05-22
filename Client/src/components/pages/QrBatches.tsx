@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQrBatchesQuery } from '../../queries/qr'
-import { downloadQrBatchPdf, type QrBatch } from '../../services/qrService'
+import { downloadQrBatchPdf, downloadUnlinkedQrPdf, type QrBatch } from '../../services/qrService'
 import { formatDateTime } from '../../utils/formatDisplay'
 import { getUserFacingMessage, logDevError } from '../../utils/errors'
 import DataPagination from '../common/DataPagination'
@@ -14,9 +14,32 @@ export default function QrBatches() {
   const [limit, setLimit] = useState(50)
   const [modalOpen, setModalOpen] = useState(false)
   const [downloadingId, setDownloadingId] = useState<string | null>(null)
+  const [downloadingUnlinked, setDownloadingUnlinked] = useState(false)
 
   const { data, isLoading, isError, error } = useQrBatchesQuery(page, limit)
   const { showToast } = useToast()
+
+  const handleDownloadUnlinked = async () => {
+    if (downloadingUnlinked) return
+    setDownloadingUnlinked(true)
+    try {
+      const { pdfBlob, fileName } = await downloadUnlinkedQrPdf()
+      const blobUrl = URL.createObjectURL(pdfBlob)
+      const link = document.createElement('a')
+      link.href = blobUrl
+      link.download = fileName
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 120_000)
+      showToast({ message: 'Unlinked QR PDF downloaded.', variant: 'success' })
+    } catch (err) {
+      logDevError('qr.downloadUnlinkedPdf', err)
+      showToast({ message: getUserFacingMessage(err, 'Failed to download unlinked QR PDF.'), variant: 'error' })
+    } finally {
+      setDownloadingUnlinked(false)
+    }
+  }
 
   const handleDownload = async (batch: QrBatch) => {
     if (downloadingId) return
@@ -64,12 +87,40 @@ export default function QrBatches() {
             <h1 className="text-xl sm:text-2xl font-semibold text-primary">QR Batches</h1>
             <p className="text-sm text-muted mt-1">Manage bulk generated QR codes.</p>
           </div>
-          <button
-            onClick={() => setModalOpen(true)}
-            className="inline-flex h-11 shrink-0 items-center gap-2 rounded-xl border border-transparent bg-accent px-4 text-sm font-semibold text-on-accent shadow-sm hover:bg-accent-hover transition"
-          >
-            Generate New Batch
-          </button>
+          <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
+            {data && data.total > 0 && (
+              <DataPagination
+                currentPage={page}
+                totalCount={data.total}
+                pageSize={limit}
+                pageSizeOptions={[20, 50, 100]}
+                onPageChange={setPage}
+                onPageSizeChange={(newSize) => {
+                  setLimit(newSize)
+                  setPage(1)
+                }}
+                itemLabel="batches"
+                showSummary={false}
+                showNavigation={false}
+              />
+            )}
+            <button
+              onClick={handleDownloadUnlinked}
+              disabled={downloadingUnlinked}
+              className="inline-flex h-9 shrink-0 items-center gap-2 rounded-xl border border-base bg-surface px-4 text-sm font-semibold text-primary shadow-sm hover:border-accent-soft hover:bg-[color:var(--accent-soft)]/20 hover:text-accent transition disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <span className="w-4 h-4">
+                <AnimatedNavIcon name={downloadingUnlinked ? 'refresh-cw' : 'download'} />
+              </span>
+              {downloadingUnlinked ? 'Preparing...' : 'Download Unlinked QRs'}
+            </button>
+            <button
+              onClick={() => setModalOpen(true)}
+              className="inline-flex h-9 shrink-0 items-center gap-2 rounded-xl border border-base bg-surface px-4 text-sm font-semibold text-primary shadow-sm hover:border-accent-soft hover:bg-[color:var(--accent-soft)]/20 hover:text-accent transition"
+            >
+              Generate New Batch
+            </button>
+          </div>
         </div>
 
         {isError && (
@@ -138,6 +189,7 @@ export default function QrBatches() {
               setPage(1)
             }}
             itemLabel="batches"
+            showPageSizeSelector={false}
           />
         )}
       </div>

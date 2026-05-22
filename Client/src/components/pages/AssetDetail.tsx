@@ -13,12 +13,13 @@ import Error from '../common/Error'
 import Loader from '../common/Loader'
 import ConfirmDialog from '../common/ConfirmDialog'
 import { getErrorDebugDetail, getUserFacingMessage, logDevError } from '../../utils/errors'
-import { formatDateTime, formatDisplay, formatEnumLabel } from '../../utils/formatDisplay'
+import { formatDateMedium, formatDateTime, formatDisplay, formatEnumLabel } from '../../utils/formatDisplay'
 import AssetChangeHistory from '../asset/AssetChangeHistory'
 import InventoryStatusBadge from '../common/InventoryStatusBadge'
 import AnimatedNavIcon, { type IconName } from '../common/AnimatedNavIcon'
 import { useToast } from '../../hooks/useToast'
 import EmployeeAssignLookup from '../common/EmployeeAssignLookup'
+import Tooltip from '../common/Tooltip'
 
 const ASSIGNABLE_STATUSES = new Set(['in_stock', 'assigned'])
 
@@ -362,11 +363,10 @@ export default function AssetDetail() {
 
   return (
     <main className="min-h-screen bg-app text-primary px-4 sm:px-6 py-4 sm:py-5">
-      <div className="max-w-7xl mx-auto flex flex-wrap items-center gap-2">
-        <div className="flex flex-wrap items-center gap-2">
-          <h1 className="sr-only">{formatDisplay(asset.asset_tag)}</h1>
-          <div className="flex items-center gap-2 ml-auto">
-            Actions:
+      <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2 py-2">
+        <h1 className="sr-only">{formatDisplay(asset.asset_tag)}</h1>
+        <div className="flex flex-wrap items-center justify-end gap-2 flex-1">
+          <div className="flex items-center gap-1">
             {canManage ? (
               <HeaderActionButton
                 icon="edit"
@@ -383,80 +383,91 @@ export default function AssetDetail() {
             />
             <HeaderActionLabelButton
               icon="download"
-              label="QRs"
+              label="QR"
               onClick={handleDownloadQr}
               disabled={actionLoading || !qrDataUri}
             />
-            {canManage ? (
-              <>
+          </div>
+          {canManage && (
+            <>
+              <div className="border-l border-base mx-1 h-5 self-center" />
+              <div className="flex items-center gap-1">
                 <HeaderActionLabelButton
                   icon="download"
-                  label="Audit trail"
+                  label="Audit"
                   onClick={() => void handleExportAuditTrailPdf()}
                   disabled={actionLoading || auditTrailPdfExporting}
                 />
                 {hasAssignmentHistory ? (
                   <HeaderActionLabelButton
                     icon="download"
-                    label="Asset history"
+                    label="History"
                     onClick={() => void handleExportHistoryPdf()}
                     disabled={actionLoading || historyPdfExporting}
                   />
                 ) : null}
-              </>
-            ) : null}
-          </div>
+              </div>
+            </>
+          )}
         </div>
       </div>
 
       <div className="max-w-7xl mx-auto mt-3 space-y-3">
         <div className="grid grid-cols-1 lg:grid-cols-[1.7fr_0.8fr] gap-3 items-start">
-          <section className="rounded-xl border border-base bg-gradient-to-r from-[color:var(--surface-2)] via-[color:var(--bg)] to-[color:var(--surface-3)] px-3 py-3 sm:px-4 sm:py-4 flex flex-col gap-2.5">
-            <p className="text-xs text-subtle leading-relaxed">
-              Snapshot: status, holder employment, and how this asset is labeled.
-            </p>
-            <div className="flex flex-wrap items-center gap-2">
+          <section className="relative rounded-xl border border-base bg-gradient-to-br from-[color:var(--surface-2)] to-[color:var(--surface)] p-3 sm:p-4 flex flex-col gap-3 before:absolute before:inset-0 before:rounded-xl before:bg-gradient-to-br before:from-accent/5 before:to-transparent before:pointer-events-none">
+            <div className="flex flex-wrap items-start justify-between gap-2">
               <InventoryStatusBadge status={asset.status} size="md" />
+              <span className="font-mono text-xs px-2 py-0.5 rounded-full border border-base bg-surface-3">{asset.asset_tag}</span>
             </div>
-            <div>
-              <p className="text-muted text-xs uppercase tracking-wide">Inventory</p>
-              <p className="text-xl sm:text-2xl font-bold leading-tight">{assetTitle}</p>
-              <p className="text-sm text-subtle">Location: {formatDisplay(asset.location_name)}</p>
+            <div className="flex flex-col gap-0.5">
+              <p className="text-2xl sm:text-3xl font-bold leading-tight">{assetTitle}</p>
+              <p className="text-sm text-subtle">{asset.category_name} &middot; {formatDisplay(asset.location_name)}</p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 mt-2">
+              <div className="rounded-lg border border-base bg-surface px-3 py-1.5 text-xs">
+                <span className="text-subtle mr-1.5">Dept:</span>
+                <span className="font-medium">{formatDisplay(asset.asset_department_name)}</span>
+              </div>
+              <div className="rounded-lg border border-base bg-surface px-3 py-1.5 text-xs">
+                <span className="text-subtle mr-1.5">Purchase:</span>
+                <span className="font-medium">{formatDateMedium(asset.purchase_date)}</span>
+              </div>
+              <div className="rounded-lg border border-base bg-surface px-3 py-1.5 text-xs">
+                <span className="text-subtle mr-1.5">Warranty:</span>
+                <span className="font-medium">{formatDateMedium(asset.warranty_expiry)}</span>
+              </div>
             </div>
           </section>
 
-          <section className=" px-3 w-full lg:min-w-[36px]">
-            <div className="flex items-center justify-center min-h-[9.5rem]">
-              {qrLoading ? (
-                <div className="h-36 w-36 rounded-lg border border-base bg-surface-2 animate-pulse" />
-              ) : qrError ? (
-                <div className="text-xs text-accent text-center space-y-1">
-                  <p>{qrError}</p>
-                  <button
-                    type="button"
-                    className="text-accent font-semibold hover:underline"
-                    onClick={() => {
-                      if (!detail?.asset.asset_tag) return
-                      setQrError(null)
-                      setQrLoading(true)
-                      void buildAssetQrDataUri(detail.asset.asset_tag)
-                        .then((uri) => setQrDataUri(uri))
-                        .catch((err) => setQrError(getUserFacingMessage(err, 'Unable to load QR')))
-                        .finally(() => setQrLoading(false))
-                    }}
-                  >
-                    Retry
-                  </button>
-                </div>
-              ) : qrDataUri ? (
-                <img
-                  src={qrDataUri}
-                  alt={`QR for ${asset.asset_tag}`}
-                  className="h-36 w-36 rounded-lg border border-base bg-white"
-                />
-              ) : null}
-            </div>
-
+          <section className="bg-surface border border-base rounded-xl p-4 flex items-center justify-center">
+            {qrLoading ? (
+              <div className="h-36 w-36 rounded-lg bg-gradient-to-r from-surface-2 via-surface-3 to-surface-2 animate-pulse" />
+            ) : qrError ? (
+              <div className="text-xs text-accent text-center space-y-1">
+                <p>{qrError}</p>
+                <button
+                  type="button"
+                  className="text-accent font-semibold hover:underline"
+                  onClick={() => {
+                    if (!detail?.asset.asset_tag) return
+                    setQrError(null)
+                    setQrLoading(true)
+                    void buildAssetQrDataUri(detail.asset.asset_tag)
+                      .then((uri) => setQrDataUri(uri))
+                      .catch((err) => setQrError(getUserFacingMessage(err, 'Unable to load QR')))
+                      .finally(() => setQrLoading(false))
+                  }}
+                >
+                  Retry
+                </button>
+              </div>
+            ) : qrDataUri ? (
+              <img
+                src={qrDataUri}
+                alt={`QR for ${asset.asset_tag}`}
+                className="h-36 w-36 rounded-lg bg-white shadow-md"
+              />
+            ) : null}
           </section>
         </div>
 
@@ -503,36 +514,41 @@ export default function AssetDetail() {
 
         {canManage ? (
           <section className="bg-surface border border-base rounded-xl p-4 sm:p-5">
-            <h2 className="text-sm font-semibold uppercase tracking-[0.14em] text-subtle mb-2">Assign or return</h2>
-            <p className="text-xs  mb-3 text-black font-bold  leading-relaxed">
+            <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.14em] text-subtle mb-2">
+              <span className="w-2 h-2 rounded-full bg-accent"></span>
+              Assign or return
+            </h2>
+            <p className="text-xs mb-3 text-muted font-medium leading-relaxed">
               {canManage
-                ? 'Move custody by assigning to an employee code, or close the open assignment to return the asset to stock. Assignments are exclusive—one active holder at a time.'
-                : 'Read-only: you can view this asset but cannot change custody. Admin or IT Ops access is required to assign or return.'}
+                ? 'Assign a holder for temporary ownership, or return to stock. One active holder at a time.'
+                : 'View-only access. Contact an Admin to assign or return this asset.'}
             </p>
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
-              <EmployeeAssignLookup
-                id="asset-detail-assignee"
-                label="Employee"
-                value={assignQuery}
-                onChange={setAssignQuery}
-                selectedEmployee={selectedAssignee}
-                onSelectedEmployeeChange={setSelectedAssignee}
-                placeholder="Search by user name or employee code"
-                hideLabel
-                disabled={actionLoading}
-              />
+              <div className="rounded-lg focus-within:ring-2 focus-within:ring-accent/40 transition-all duration-150">
+                <EmployeeAssignLookup
+                  id="asset-detail-assignee"
+                  label="Employee"
+                  value={assignQuery}
+                  onChange={setAssignQuery}
+                  selectedEmployee={selectedAssignee}
+                  onSelectedEmployeeChange={setSelectedAssignee}
+                  placeholder="Search by name or employee code"
+                  hideLabel
+                  disabled={actionLoading}
+                />
+              </div>
               <input
                 value={assignNotes}
                 onChange={(e) => setAssignNotes(e.target.value)}
-                placeholder="Optional notes"
+                placeholder="Note (optional)"
                 disabled={actionLoading}
-                className="w-full bg-surface-2 border border-base rounded-lg px-3 py-2.5 text-sm"
+                className="w-full bg-surface-2 border border-base rounded-lg px-1 py-1 text-sm focus-visible:ring-2 focus-visible:ring-accent/40 focus:border-accent transition"
               />
               <div className="flex gap-2">
                 <button
                   onClick={openAssignDialog}
                   disabled={actionLoading}
-                  className="flex-1 bg-accent text-on-accent font-semibold px-3 py-2.5 rounded-lg text-sm disabled:opacity-60"
+                  className="flex-1 bg-accent text-on-accent font-semibold px-3 py-2.5 rounded-lg text-sm disabled:opacity-60 shadow-sm hover:shadow-accent/20 hover:shadow-md active:scale-[0.98] transition-all"
                   type="button"
                 >
                   Assign
@@ -540,17 +556,24 @@ export default function AssetDetail() {
                 <button
                   onClick={openReturnDialog}
                   disabled={actionLoading || !openAssignment}
-                  className="flex-1 border border-base text-muted px-3 py-2.5 rounded-lg text-sm hover:bg-surface-2 disabled:opacity-60"
+                  className="flex-1 border border-base text-muted px-3 py-2.5 rounded-lg text-sm hover:bg-surface-2 disabled:opacity-60 hover:border-accent/30 transition"
                   type="button"
                 >
                   Return
                 </button>
               </div>
             </div>
-            <p className="text-[11px]  text-black font-bold  mt-2">
+            <p className="text-xs text-muted mt-2 leading-relaxed">
               Reassigning to a different code ends the previous holder’s assignment automatically and opens a new row in history.
             </p>
-            {error ? <p className="text-accent text-sm mt-2">{error}</p> : null}
+            {error ? (
+              <p className="text-accent text-sm mt-2 flex items-start gap-1.5">
+                <span className="flex h-4 w-4 shrink-0 mt-0.5 items-center justify-center">
+                  <AnimatedNavIcon name="alert-triangle" />
+                </span>
+                <span>{error}</span>
+              </p>
+            ) : null}
           </section>
         ) : null}
 
@@ -572,20 +595,20 @@ export default function AssetDetail() {
             title="Components"
             description="Sub-items bundled with this asset—such as modules, docks, or accessories—each stored as its own line with type and serials where tracked."
           >
-            <div className="overflow-x-auto rounded-lg border border-base">
-              <table className="w-full min-w-[680px] text-sm">
-                <thead className="bg-surface-2 text-muted uppercase text-xs">
+            <div className="overflow-x-auto ring-1 ring-[color:var(--border)] rounded-xl">
+              <table className="w-full min-w-[680px] text-xs sm:text-sm">
+                <thead className="bg-surface-2/80 border-b-2 border-[color:var(--border)]">
                   <tr>
-                    <th className="px-3 py-2 text-left">Type</th>
-                    <th className="px-3 py-2 text-left">Manufacturer</th>
-                    <th className="px-3 py-2 text-left">Model</th>
-                    <th className="px-3 py-2 text-left">Serial</th>
-                    <th className="px-3 py-2 text-left">Metadata</th>
+                    <th className="px-3 py-2 text-left uppercase text-xs font-semibold tracking-wider text-subtle">Type</th>
+                    <th className="px-3 py-2 text-left uppercase text-xs font-semibold tracking-wider text-subtle">Manufacturer</th>
+                    <th className="px-3 py-2 text-left uppercase text-xs font-semibold tracking-wider text-subtle">Model</th>
+                    <th className="px-3 py-2 text-left uppercase text-xs font-semibold tracking-wider text-subtle">Serial</th>
+                    <th className="px-3 py-2 text-left uppercase text-xs font-semibold tracking-wider text-subtle">Metadata</th>
                   </tr>
                 </thead>
-                <tbody>
+                <tbody className="divide-y divide-[color:var(--border)]">
                   {detail.components.map((component) => (
-                    <tr key={component.id} className="border-t border-base">
+                    <tr key={component.id} className="hover:bg-surface-2/60 transition-colors duration-100 even:bg-surface/50">
                       <td className="px-3 py-2 capitalize">{formatDisplay(component.component_type)}</td>
                       <td className="px-3 py-2">{formatDisplay(component.manufacturer_name)}</td>
                       <td className="px-3 py-2">{formatDisplay(component.model)}</td>
@@ -606,7 +629,7 @@ export default function AssetDetail() {
         {canManage && (
           <Section
             title="Assignment History"
-            description="All assigns/returns in order with holder ERP status."
+            // description="All assigns/returns in order with holder ERP status."
             action={
               hasAssignmentHistory ? (
                 <button
@@ -620,28 +643,29 @@ export default function AssetDetail() {
                   <span className="flex h-4 w-4 items-center justify-center">
                     <AnimatedNavIcon name="download" />
                   </span>
-                  <span>{historyPdfExporting ? 'Exporting...' : 'Export PDF'}</span>
+                  <span>{historyPdfExporting ? 'pdf...' : 'PDF'}</span>
                 </button>
               ) : null
             }
           >
-            <div className="overflow-x-auto rounded-lg border border-base">
-              <table className="w-full min-w-[720px] text-sm">
-                <thead className="bg-surface-2 text-muted uppercase text-xs">
+            <div className="overflow-x-auto ring-1 ring-[color:var(--border)] rounded-xl">
+              <table className="w-full min-w-[720px] text-xs sm:text-sm">
+                <thead className="bg-surface-2/80 border-b-2 border-[color:var(--border)]">
                   <tr>
-                    <th className="px-3 py-2 text-left">Employee</th>
-                    <th className="px-3 py-2 text-left">Employee ID</th>
-                    <th className="px-3 py-2 text-left">Assigned At</th>
-                    <th className="px-3 py-2 text-left">Returned At</th>
+                    <th className="px-3 py-2 text-left uppercase text-xs font-semibold tracking-wider text-subtle">S No.</th>
+                    <th className="px-3 py-2 text-left uppercase text-xs font-semibold tracking-wider text-subtle">Employee</th>
+                    <th className="px-3 py-2 text-left uppercase text-xs font-semibold tracking-wider text-subtle">Employee ID</th>
+                    <th className="px-3 py-2 text-left uppercase text-xs font-semibold tracking-wider text-subtle">Assigned At</th>
+                    <th className="px-3 py-2 text-left uppercase text-xs font-semibold tracking-wider text-subtle">Returned At</th>
                   </tr>
                 </thead>
-                <tbody>
+                <tbody className="divide-y divide-[color:var(--border)]">
                   {detail.assignments.map((entry) => (
                     <AssignmentRow key={entry.id} entry={entry} />
                   ))}
                   {detail.assignments.length === 0 && (
                     <tr>
-                      <td colSpan={6} className="px-3 py-8 text-center text-subtle">No assignment history</td>
+                      <td colSpan={4} className="px-3 py-8 text-center text-subtle">No assignment history</td>
                     </tr>
                   )}
                 </tbody>
@@ -670,11 +694,13 @@ export default function AssetDetail() {
                 <span className="flex h-4 w-4 items-center justify-center">
                   <AnimatedNavIcon name="download" />
                 </span>
-                <span>{auditTrailPdfExporting ? 'Downloading...' : 'Download PDF'}</span>
+                <span>{auditTrailPdfExporting ? 'pdf...' : 'PDF'}</span>
               </button>
             }
           >
-            <AssetChangeHistory events={visibleLifecycleEvents} isCapped={detail.lifecycle_is_capped} />
+            <div className="mt-1 rounded-lg overflow-hidden">
+              <AssetChangeHistory events={visibleLifecycleEvents} isCapped={detail.lifecycle_is_capped} />
+            </div>
           </Section>
         ) : null}
       </div>
@@ -682,6 +708,7 @@ export default function AssetDetail() {
       {canManage && showEdit && (
         <AssetForm
           isStatusDisabled={asset.status === 'assigned'}
+          isDepartmentDisabled={asset.status === 'assigned'}
           prefill={{
             asset_tag: asset.asset_tag || undefined,
             category_slug: asset.category_slug,
@@ -691,6 +718,7 @@ export default function AssetDetail() {
             location_name: asset.location_name || undefined,
             purchase_date: asset.purchase_date || undefined,
             warranty_expiry: asset.warranty_expiry || undefined,
+            department_id: asset.asset_department_id || undefined,
             status: asset.status,
             custom_fields: asset.custom_fields,
             metadata: (asset as Record<string, unknown>).metadata as Record<string, unknown> ?? undefined,
@@ -764,13 +792,13 @@ export default function AssetDetail() {
 
 function Section({ title, description, action, children }: { title: string; description?: ReactNode; action?: ReactNode; children: ReactNode }) {
   return (
-    <section className="bg-surface border border-base rounded-xl p-4 sm:p-5">
+    <section className="bg-surface ring-1 ring-[color:var(--border)] shadow-sm rounded-xl p-4 sm:p-5">
       <div className="flex items-center justify-between mb-2">
-        <h2 className="text-sm font-semibold uppercase tracking-[0.14em] text-muted">{title}</h2>
+        <h2 className="text-xs font-bold uppercase tracking-widest text-muted border-l-2 border-accent pl-2">{title}</h2>
         {action}
       </div>
       {description ? (
-        <div className="text-xs text-subtle mb-3 leading-relaxed">
+        <div className="text-xs text-subtle mb-3 leading-relaxed max-w-prose">
           {description}
         </div>
       ) : null}
@@ -791,18 +819,19 @@ function HeaderActionButton({
   disabled?: boolean
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      aria-label={label}
-      title={label}
-      className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-base bg-surface text-primary transition hover:border-accent-soft hover:bg-[color:var(--accent-soft)]/15 hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
-    >
-      <span className="flex h-5 w-5 items-center justify-center">
-        <AnimatedNavIcon name={icon} />
-      </span>
-    </button>
+    <Tooltip content={label}>
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={disabled}
+        aria-label={label}
+        className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-base bg-surface text-primary transition-all duration-150 active:scale-95 hover:border-accent-soft hover:bg-[color:var(--accent-soft)]/15 hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        <span className="flex h-5 w-5 items-center justify-center">
+          <AnimatedNavIcon name={icon} />
+        </span>
+      </button>
+    </Tooltip>
   )
 }
 
@@ -823,7 +852,6 @@ function HeaderActionLabelButton({
       onClick={onClick}
       disabled={disabled}
       aria-label={label}
-      title={label}
       className="inline-flex h-9 items-center gap-2 rounded-xl border border-base bg-surface px-3 text-sm font-semibold text-primary transition hover:border-accent-soft hover:bg-[color:var(--accent-soft)]/15 hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
     >
       <span className="flex h-5 w-5 items-center justify-center">
@@ -846,9 +874,9 @@ function HeaderActionLabelButton({
 
 function InfoRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-baseline gap-2 sm:gap-4 sm:py-2.5">
-      <dt className="text-[11px] uppercase tracking-[0.12em] text-subtle shrink-0 w-28 sm:w-40">{label}</dt>
-      <dd className="text-sm text-primary break-words min-w-0">{value}</dd>
+    <div className="flex items-baseline gap-2 sm:gap-4 py-2.5 hover:bg-surface-2/50 rounded-md px-1 -mx-1 transition">
+      <dt className="font-medium text-[11px] uppercase tracking-[0.12em] text-subtle shrink-0 w-32 sm:w-44">{label}</dt>
+      <dd className="text-sm font-medium text-primary break-words min-w-0">{value}</dd>
     </div>
   )
 }
@@ -916,11 +944,12 @@ function formatEmployeeAssignSummary(employee: EmployeeRecord | null): string {
 
 function AssignmentRow({ entry }: { entry: AssetAssignmentRecord }) {
   return (
-    <tr className="border-t border-base">
+    <tr className="hover:bg-surface-2/60 transition-colors duration-100 even:bg-surface/50">
       <td className="px-3 py-2 text-primary">{formatDisplay(entry.employee?.name)}</td>
       <td className="px-3 py-2 text-primary">{formatDisplay(entry.employee?.employee_id)}</td>
       <td className="px-3 py-2 text-primary">{formatDateTime(entry.assigned_at)}</td>
-      <td className="px-3 py-2 text-primary">{entry.returned_at ? formatDateTime(entry.returned_at) : <span className="text-amber-500 font-medium">With Employee</span>}</td>
+      <td className="px-3 py-2 text-primary">{entry.returned_at ? formatDateTime(entry.returned_at) : <span className="inline-flex items-center gap-1 text-amber-500 font-medium"><span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>With Employee</span>}</td>
     </tr>
   )
 }
+

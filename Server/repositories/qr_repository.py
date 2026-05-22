@@ -209,3 +209,18 @@ class QrRepository:
             )
         return row
 
+    @staticmethod
+    async def list_all_unlinked() -> list[dict[str, Any]]:
+        """Return all unlinked reservations across all batches, oldest first."""
+        async with pool().acquire() as conn:
+            return await fetch_dicts(
+                conn,
+                """
+                SELECT r.id, r.created_at, b.batch_code
+                FROM   qr_tag_reservations r
+                JOIN   qr_batches b ON b.id = r.batch_id
+                WHERE  r.status = 'unlinked'
+                ORDER  BY r.created_at ASC
+                """,
+            )
+

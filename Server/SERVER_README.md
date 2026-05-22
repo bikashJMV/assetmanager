@@ -123,7 +123,6 @@ All routes return the standard envelope: `{status, status_code, message, timesta
 | POST   | `/api/v1/assets/{asset_tag}/logs`        | Authenticated | Create a manual log entry                                                           |
 | POST   | `/api/v1/assets/assign`                  | Privileged    | Assign asset to employee                                                            |
 | POST   | `/api/v1/assets/return`                  | Privileged    | Return asset from employee                                                          |
-| POST   | `/api/v1/assets/{id}/soft-delete`        | Privileged    | Soft-delete asset (moves to Recycle Bin)                                            |
 
 ### Assignments — `/api/v1/assignments`
 
@@ -174,9 +173,9 @@ All routes return the standard envelope: `{status, status_code, message, timesta
 
 | Method | Path                                       | Auth       | Description                                     |
 | ------ | ------------------------------------------ | ---------- | ----------------------------------------------- |
-| GET    | `/api/v1/recycle-bin`                    | Privileged | List all soft-deleted entries                   |
-| POST   | `/api/v1/recycle-bin/{entry_id}/restore` | Privileged | Restore asset or employee                       |
-| DELETE | `/api/v1/recycle-bin/{entry_id}`         | Privileged | Permanently delete (hard delete, transactional) |
+| GET    | `/api/v1/recycle-bin`                    | Privileged | List soft-deleted employee entries              |
+| POST   | `/api/v1/recycle-bin/{entry_id}/restore` | Privileged | Restore employee                                |
+| DELETE | `/api/v1/recycle-bin/{entry_id}`         | Privileged | Permanently delete employee entry               |
 
 ### Observability
 
@@ -329,3 +328,178 @@ Error responses add an `error` object:
 - [`../README.md`](../README.md) — project overview and setup order
 - [`../Client/CLIENT_README.md`](../Client/CLIENT_README.md) — frontend documentation
 - [`services/README.md`](./services/README.md) — service layer
+<br/>
+
+## API Workflows
+
+This section explains how to perform common operations using the API.
+
+### Asset Management
+
+#### How to create a new asset
+This workflow logs a new physical asset into the system. It requires privileged access.
+
+*   **Endpoint:** `POST /api/v1/assets`
+*   **Header:** `Authorization: Bearer <token>`
+*   **Request Body:**
+    ```json
+    {
+      "asset_tag": "JMV-LAP-00123",
+      "category_slug": "laptops",
+      "serial_number": "SN123456789",
+      "purchase_date": "2026-05-19",
+      "warranty_expiry": "2029-05-19",
+      "location_code": "loc-main-office",
+      "custom_fields": {
+        "ram_gb": 16,
+        "cpu_model": "i7-12700H"
+      }
+    }
+    ```
+*   **Response (`201 Created`):**
+    ```json
+    {
+      "status": "success",
+      "status_code": 201,
+      "message": "Asset created successfully.",
+      "timestamp": "2026-05-19T10:00:00Z",
+      "data": {
+        "id": "a1b2c3d4-e5f6-7890-1234-567890abcdef",
+        "asset_tag": "JMV-LAP-00123",
+        "category_slug": "laptops",
+        "serial_number": "SN123456789",
+        "status": "in_stock",
+        "created_at": "2026-05-19T10:00:00Z",
+        "updated_at": "2026-05-19T10:00:00Z"
+      }
+    }
+    ```
+
+---
+#### How to edit an individual asset
+This workflow updates the properties of an existing asset using its unique ID.
+
+*   **Endpoint:** `PUT /api/v1/assets/{id}`
+*   **Header:** `Authorization: Bearer <token>`
+*   **Request Body:**
+    ```json
+    {
+      "model": "ThinkPad T14 Gen 3",
+      "location_code": "loc-remote-wh",
+      "status": "in_repair"
+    }
+    ```
+*   **Response (`200 OK`):**
+    ```json
+    {
+      "status": "success",
+      "status_code": 200,
+      "message": "Asset updated successfully.",
+      "timestamp": "2026-05-19T11:00:00Z",
+      "data": {
+        "id": "a1b2c3d4-e5f6-7890-1234-567890abcdef",
+        "asset_tag": "JMV-LAP-00123",
+        "model": "ThinkPad T14 Gen 3",
+        "location_code": "loc-remote-wh",
+        "status": "in_repair",
+        "updated_at": "2026-05-19T11:00:00Z"
+      }
+    }
+    ```
+
+---
+#### How to view the audit trail for an asset
+This workflow retrieves the complete log history for a single asset, showing all changes and events.
+
+*   **Endpoint:** `GET /api/v1/assets/{asset_tag}/logs`
+*   **Header:** `Authorization: Bearer <token>`
+*   **Response (`200 OK`):**
+    ```json
+    {
+      "status": "success",
+      "status_code": 200,
+      "message": "Asset logs retrieved.",
+      "timestamp": "2026-05-19T12:00:00Z",
+      "data": [
+        {
+          "id": "log-uuid-1",
+          "asset_id": "a1b2c3d4-e5f6-7890-1234-567890abcdef",
+          "note": "Status changed to in_repair.",
+          "created_at": "2026-05-19T11:00:00Z"
+        },
+        {
+          "id": "log-uuid-0",
+          "asset_id": "a1b2c3d4-e5f6-7890-1234-567890abcdef",
+          "note": "Asset created.",
+          "created_at": "2026-05-19T10:00:00Z"
+        }
+      ]
+    }
+    ```
+
+---
+### Asset Assignment
+
+#### How to assign an asset to someone
+This workflow assigns an available asset to a specific employee.
+
+*   **Endpoint:** `POST /api/v1/assignments/assign`
+*   **Header:** `Authorization: Bearer <token>`
+*   **Request Body:**
+    ```json
+    {
+      "asset_tag": "JMV-LAP-00123",
+      "employee_id": "EMP456",
+      "assigned_at": "2026-05-20T09:00:00Z",
+      "notes": "Standard issue for new marketing hire."
+    }
+    ```
+*   **Response (`200 OK`):**
+    ```json
+    {
+      "status": "success",
+      "status_code": 200,
+      "message": "Asset assigned successfully.",
+      "timestamp": "2026-05-20T09:00:05Z",
+      "data": {
+        "ok": true,
+        "assignment_id": "assign-uuid-1",
+        "asset_id": "a1b2c3d4-e5f6-7890-1234-567890abcdef",
+        "employee_id": "emp-uuid-456",
+        "status": "assigned",
+        "message": "Asset JMV-LAP-00123 assigned to employee EMP456"
+      }
+    }
+    ```
+
+---
+#### How to take a return from someone
+This workflow returns an asset from an employee, making it available in stock again.
+
+*   **Endpoint:** `POST /api/v1/assignments/return`
+*   **Header:** `Authorization: Bearer <token>`
+*   **Request Body:**
+    ```json
+    {
+      "asset_tag": "JMV-LAP-00123",
+      "returned_at": "2026-05-20T17:00:00Z",
+      "notes": "Employee offboarding."
+    }
+    ```
+*   **Response (`200 OK`):**
+    ```json
+    {
+      "status": "success",
+      "status_code": 200,
+      "message": "Asset returned successfully.",
+      "timestamp": "2026-05-20T17:00:05Z",
+      "data": {
+        "ok": true,
+        "assignment_id": "assign-uuid-1",
+        "asset_id": "a1b2c3d4-e5f6-7890-1234-567890abcdef",
+        "status": "in_stock",
+        "message": "Asset JMV-LAP-00123 was returned."
+      }
+    }
+    ```
+---

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date
 from typing import Any, Optional
 
 from core.asset_db_types import AssetDateCoercionError, normalize_asset_date_fields_inplace
@@ -8,66 +8,7 @@ from repositories.db import fetchrow_dict, pool
 from repositories.errors import NotFoundError, ValidationError
 from repositories.meta_repository import MetaRepository
 
-
-def _now() -> datetime:
-    return datetime.now(timezone.utc)
-
-
 class AssetWriteRepository:
-    @staticmethod
-    async def mark_soft_deleted(
-        *,
-        asset_id: str,
-        deleted_by_employee_id: Optional[str],
-    ) -> dict[str, Any]:
-        if not (asset_id or "").strip():
-            raise ValidationError("asset_id is required")
-
-        async with pool().acquire() as conn:
-            row = await fetchrow_dict(
-                conn,
-                """
-                update assets
-                   set is_deleted=true,
-                       deleted_at=$2,
-                       deleted_by_employee_id=$3::uuid,
-                       updated_at=now()
-                 where id=$1::uuid and coalesce(is_deleted,false)=false
-                 returning id::text as id, asset_tag, serial_number
-                """,
-                asset_id,
-                _now(),
-                deleted_by_employee_id,
-            )
-            if not row:
-                raise NotFoundError("Asset not found or already deleted")
-            return row
-
-    @staticmethod
-    async def mark_restored(*, asset_id: str, restored_by_employee_id: Optional[str]) -> dict[str, Any]:
-        if not (asset_id or "").strip():
-            raise ValidationError("asset_id is required")
-
-        async with pool().acquire() as conn:
-            row = await fetchrow_dict(
-                conn,
-                """
-                update assets
-                   set is_deleted=false,
-                       deleted_at=null,
-                       deleted_by_employee_id=null,
-                       updated_at=now(),
-                       updated_by=$2::uuid
-                 where id=$1::uuid and coalesce(is_deleted,false)=true
-                 returning id::text as id, asset_tag, serial_number
-                """,
-                asset_id,
-                restored_by_employee_id,
-            )
-            if not row:
-                raise NotFoundError("Asset not found or not deleted")
-            return row
-
     @staticmethod
     async def create_asset(
         *,

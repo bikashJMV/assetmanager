@@ -25,7 +25,6 @@ from routers.api_v1_employees import router as api_v1_employees_router
 from routers.api_v1_assignments import router as api_v1_assignments_router
 from routers.api_v1_meta import router as api_v1_meta_router
 from routers.api_v1_authz import router as api_v1_authz_router
-from routers.api_v1_recycle_bin import router as api_v1_recycle_bin_router
 from routers.api_auth import router as api_auth_router
 from routers.api_v1_qr import router as api_v1_qr_router
 from routers import health
@@ -79,7 +78,6 @@ def create_app() -> FastAPI:
 
     app.include_router(health.api_router)
     app.include_router(api_v1_assets_router)
-    app.include_router(api_v1_recycle_bin_router)
     app.include_router(api_v1_employees_router)
     app.include_router(api_v1_assignments_router)
     app.include_router(api_v1_meta_router)

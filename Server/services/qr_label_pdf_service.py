@@ -26,6 +26,9 @@ class QRLabelPDFService:
     max_font_size = 7.5
     min_font_size = 5.0
 
+    # Orange used for heading and "AMS" brand in footer
+    _ORANGE = (0.937, 0.447, 0.133)  # #EF7222
+
     def build_empty_notice_pdf(self, title: str, body: str) -> bytes:
         """Single-page PDF when there are no labels to print (empty selection or nothing printable)."""
         buffer = BytesIO()
@@ -33,6 +36,7 @@ class QRLabelPDFService:
         pdf.setTitle("Asset Manager — Export notice")
         page_width, page_height = A4
         self._draw_header(pdf, page_width, page_height)
+        self._draw_footer(pdf, page_width, page_number=1, total_pages=1)
 
         margin_x = self.page_margin_x
         max_text_width = page_width - (2 * margin_x)
@@ -107,7 +111,8 @@ class QRLabelPDFService:
         pdf.setTitle("Asset Manager QRs")
         page_width, page_height = A4
         header_height = 15 * mm
-        available_height = page_height - (2 * self.page_margin_y) - header_height
+        footer_height = 8 * mm
+        available_height = page_height - (2 * self.page_margin_y) - header_height - footer_height
 
         columns = max(
             1,
@@ -118,13 +123,18 @@ class QRLabelPDFService:
             int((available_height + self.label_gap) // (self.label_size + self.label_gap)),
         )
         labels_per_page = columns * rows
+        total_pages = max(1, -(-len(cleaned) // labels_per_page))  # ceiling division
 
+        current_page = 1
         self._draw_header(pdf, page_width, page_height, title)
+        self._draw_footer(pdf, page_width, page_number=current_page, total_pages=total_pages)
 
         for index, (qr_uuid, asset_tag) in enumerate(cleaned):
             if index > 0 and index % labels_per_page == 0:
                 pdf.showPage()
+                current_page += 1
                 self._draw_header(pdf, page_width, page_height, title)
+                self._draw_footer(pdf, page_width, page_number=current_page, total_pages=total_pages)
 
             page_index = index % labels_per_page
             row = page_index // columns
@@ -139,12 +149,39 @@ class QRLabelPDFService:
 
     def _draw_header(self, pdf: canvas.Canvas, page_width: float, page_height: float, title: str = "Asset Manager") -> None:
         pdf.saveState()
-        pdf.setFont("Helvetica-Bold", 16)
-        pdf.setFillColorRGB(0, 0, 0)
         y = page_height - self.page_margin_y
+        pdf.setFont("Helvetica-Bold", 16)
+        pdf.setFillColorRGB(*self._ORANGE)
         pdf.drawCentredString(page_width / 2.0, y - 5, title)
+        pdf.setStrokeColorRGB(*self._ORANGE)
         pdf.setLineWidth(1)
         pdf.line(self.page_margin_x, y - 10, page_width - self.page_margin_x, y - 10)
+        pdf.restoreState()
+
+    def _draw_footer(self, pdf: canvas.Canvas, page_width: float, page_number: int, total_pages: int) -> None:
+        """Draw bottom-right pagination: orange 'AMS' + black '/page'."""
+        pdf.saveState()
+        y = self.page_margin_y - 4 * mm
+        font_size = 8
+
+        ams_text = "AMS"
+        slash_text = f"/{page_number}"
+
+        ams_width = stringWidth(ams_text, "Helvetica-Bold", font_size)
+        slash_width = stringWidth(slash_text, "Helvetica", font_size)
+        total_width = ams_width + slash_width
+        start_x = page_width - self.page_margin_x - total_width
+
+        # "AMS" in orange
+        pdf.setFont("Helvetica-Bold", font_size)
+        pdf.setFillColorRGB(*self._ORANGE)
+        pdf.drawString(start_x, y, ams_text)
+
+        # "/page" in black
+        pdf.setFont("Helvetica", font_size)
+        pdf.setFillColorRGB(0, 0, 0)
+        pdf.drawString(start_x + ams_width, y, slash_text)
+
         pdf.restoreState()
 
     def _draw_label(self, pdf: canvas.Canvas, x: float, y: float, qr_uuid: str, asset_tag: str) -> None:

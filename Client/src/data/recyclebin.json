@@ -13,7 +13,7 @@
     {
       "heading": "what it is used for.",
       "bullets": [
-        "The Recycle Bin lists employees and assets that were soft-deleted from the app. Records stay here until someone restores them; they do not disappear on a timer.",
+        "The Recycle Bin lists employees that were soft-deleted from the app. Records stay here until someone restores them; they do not disappear on a timer.",
         "Each row shows the item type, what was deleted (first name or model / id), when it was deleted, and who deleted it (first name / employee id when available)."
       ]
     },

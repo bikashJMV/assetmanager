@@ -106,18 +106,6 @@ export type EmployeeAssetPortfolio = {
   assets: EmployeeAssignedAssetRecord[]
 }
 
-export type RecycleBinEntry = {
-  entry_id: string
-  entity_type: 'asset' | 'employee'
-  entity_id: string
-  label: string
-  payload: Record<string, unknown>
-  deleted_at: string
-  deleted_by_employee_id: string
-  deleted_by_employee_id_code: string | null
-  deleted_by_employee_name: string | null
-}
-
 export type EmployeeListFilters = {
   search?: string
   department?: string
@@ -1045,50 +1033,6 @@ export async function fetchAssetAuditTrailPdf(ref: string, options: { limit?: nu
 async function getAssetIdentityByTag(assetTag: string): Promise<{ id: string; asset_tag: string }> {
   const asset = await getAsset(assetTag)
   return { id: asset.id, asset_tag: asset.asset_tag || assetTag }
-}
-
-export async function softDeleteAssetById(assetId: string, note?: string): Promise<{ asset_id: string; recycle_bin_id: string }> {
-  return await requestBackend<{ asset_id: string; recycle_bin_id: string }>({
-    url: `/api/v1/assets/${assetId}/soft-delete`,
-    method: 'POST',
-    data: { note }
-  })
-}
-
-/** Soft-delete: moves employee to Recycle Bin; main directory hides them until restore. Not for Active/Inactive (use employee upsert / is_active). */
-export async function softDeleteEmployeeById(employeeId: string, note?: string): Promise<{ employee_id: string; recycle_bin_id: string }> {
-  return await requestBackend<{ employee_id: string; recycle_bin_id: string }>({
-    url: `/api/v1/employees/${employeeId}/soft-delete`,
-    method: 'POST',
-    data: { note }
-  })
-}
-
-/**
- * Hard delete: removes dependent audit/assignment rows, then the employee row.
- * Only valid after soft-delete (open bin row). Migrations 27 + 46; call from Recycle Bin UI only.
- */
-export async function deleteRecycleBinEntryPermanently(entryId: string) {
-  return await requestBackend({
-    url: `/api/v1/recycle-bin/${entryId}`,
-    method: 'DELETE'
-  })
-}
-
-export async function listRecycleBinEntries(): Promise<RecycleBinEntry[]> {
-  const rows = await requestBackend<Record<string, unknown>[]>({
-    url: '/api/v1/recycle-bin',
-    method: 'GET'
-  })
-  // Backend returns `id` as the primary key; normalise to `entry_id` for the frontend type.
-  return rows.map((r) => ({ ...r, entry_id: r.entry_id ?? r.id } as unknown as RecycleBinEntry))
-}
-
-export async function restoreRecycleBinEntry(entryId: string): Promise<{ asset_id: string; recycle_bin_id: string }> {
-  return await requestBackend<{ asset_id: string; recycle_bin_id: string }>({
-    url: `/api/v1/recycle-bin/${entryId}/restore`,
-    method: 'POST'
-  })
 }
 
 export async function createLog(assetTag: string, note: string) {

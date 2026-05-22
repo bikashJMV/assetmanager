@@ -1,5 +1,4 @@
 import type { IconName } from './AnimatedNavIcon'
-import { FEATURES } from '../../utils/featureFlags'
 
 export type SidebarNavVisibility = 'always' | 'authenticated' | 'manage' | 'it_ops'
 
@@ -82,14 +81,12 @@ export const sidebarSections: SidebarNavSection[] = [
     items: [
       { id: 'qr-batches', type: 'link', label: 'QR Batches', to: '/qr-generate/batches', icon: 'qr', visibility: 'manage' },
       { id: 'analysis', type: 'link', label: 'Analysis', to: '/analysis', icon: 'chart-column', visibility: 'manage' },
-      // { id: 'notifications', type: 'link', label: 'Notifications', to: '/notifications', icon: 'bell', visibility: 'authenticated' },
       {
         id: 'settings',
         type: 'group',
         label: 'Settings',
         icon: 'settings',
         children: [
-          ...(FEATURES.RECYCLE_BIN ? [{ id: 'recycle-bin', type: 'link' as const, label: 'Recycle Bin', to: '/recycle-bin', icon: 'trash' as const, visibility: 'manage' as const }] : []),
           { id: 'guide', type: 'link', label: 'Guide', to: '/guide', icon: 'guide' },
           { id: 'theme-toggle', type: 'action', label: 'Theme: Light/Dark', icon: 'settings', action: 'toggle-theme' },
           {

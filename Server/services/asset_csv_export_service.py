@@ -69,7 +69,7 @@ class AssetCsvExportService:
             yield _csv_line(columns)
 
             select_cols = ", ".join(_quote_ident(c) for c in columns)
-            query = f"select {select_cols} from v_asset_inventory where is_deleted = false order by updated_at desc"
+            query = f"select {select_cols} from v_asset_inventory order by updated_at desc"
 
             async with conn.transaction():
                 async for record in conn.cursor(query, prefetch=prefetch):
@@ -79,4 +79,3 @@ class AssetCsvExportService:
 
 
 asset_csv_export_service = AssetCsvExportService()
-

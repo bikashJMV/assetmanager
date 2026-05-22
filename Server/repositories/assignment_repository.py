@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import datetime
 from typing import Any, Optional
 
-from repositories.db import fetchrow_dict, pool
+from repositories.db import fetchrow_dict, fetch_dicts, pool
 from repositories.errors import ValidationError
 
 
@@ -30,5 +31,29 @@ class AssignmentRepository:
                  limit 1
                 """,
                 tag,
+            )
+
+    @staticmethod
+    async def count_assignments_by_month(from_date: str) -> list[dict[str, Any]]:
+        """
+        Assignment count per month for the 12 months starting from from_date (YYYY-MM).
+        Returns rows only for months that have at least one assignment.
+        """
+        year, month = from_date.split('-')
+        start = datetime.date(int(year), int(month), 1)
+        async with pool().acquire() as conn:
+            return await fetch_dicts(
+                conn,
+                """
+                SELECT
+                    TO_CHAR(DATE_TRUNC('month', assigned_at), 'YYYY-MM') AS month,
+                    COUNT(*)::int AS count
+                FROM asset_assignments
+                WHERE assigned_at >= DATE_TRUNC('month', $1::date)
+                  AND assigned_at <  DATE_TRUNC('month', $1::date) + INTERVAL '12 months'
+                GROUP BY DATE_TRUNC('month', assigned_at)
+                ORDER BY DATE_TRUNC('month', assigned_at) ASC
+                """,
+                start,
             )
 

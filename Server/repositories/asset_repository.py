@@ -121,17 +121,11 @@ class AssetRepository:
 
         async with pool().acquire() as conn:
             rows = await conn.fetch(
-                "select asset_tag from assets where coalesce(is_deleted,false)=false and asset_tag = any($1::text[]) order by asset_tag asc",
+                "select asset_tag from assets where asset_tag = any($1::text[]) order by asset_tag asc",
                 tags,
             )
         return [str(r["asset_tag"]).strip() for r in rows if r and r["asset_tag"]]
-    @staticmethod
-    async def list_recycle_bin_entries() -> list[dict[str, Any]]:
-        async with pool().acquire() as conn:
-            return await fetch_dicts(
-                conn,
-                "select * from recycle_bin_entries where restored_at is null order by deleted_at desc"
-            )
+
     @staticmethod
     async def get_next_asset_tag_atomic(conn: Any | None = None) -> str:
         """

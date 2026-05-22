@@ -25,37 +25,41 @@ const PERSISTENT_TOAST_DURATION_MS = 0
 function toastTone(variant: ToastVariant) {
   if (variant === 'success') {
     return {
-      card: 'border-emerald-200 bg-white',
-      iconWrap: 'bg-emerald-50 text-emerald-600',
-      title: 'text-emerald-700',
-      message: 'text-slate-700',
-      close: 'text-slate-400 hover:bg-emerald-50 hover:text-emerald-700',
+      bar: 'border-l-4 border-l-emerald-500',
+      iconWrap: 'bg-emerald-500/10 text-emerald-500',
+      title: 'text-primary',
+      message: 'text-muted',
+      close: 'text-subtle hover:bg-surface-3 hover:text-primary',
+      progress: 'bg-emerald-500',
     }
   }
   if (variant === 'error') {
     return {
-      card: 'border-red-200 bg-red-50/40 shadow-[0_20px_52px_rgba(127,29,29,0.14)]',
-      iconWrap: 'bg-white text-red-600 ring-1 ring-red-100',
-      title: 'text-red-700',
-      message: 'text-slate-800',
-      close: 'text-red-400 hover:bg-white hover:text-red-700',
+      bar: 'border-l-4 border-l-red-500',
+      iconWrap: 'bg-red-500/10 text-red-500',
+      title: 'text-primary',
+      message: 'text-muted',
+      close: 'text-subtle hover:bg-surface-3 hover:text-primary',
+      progress: 'bg-red-500',
     }
   }
   if (variant === 'warning') {
     return {
-      card: 'border-amber-200 bg-amber-50/50 shadow-[0_20px_52px_rgba(146,64,14,0.12)]',
-      iconWrap: 'bg-white text-amber-600 ring-1 ring-amber-100',
-      title: 'text-amber-700',
-      message: 'text-slate-800',
-      close: 'text-amber-400 hover:bg-white hover:text-amber-700',
+      bar: 'border-l-4 border-l-amber-500',
+      iconWrap: 'bg-amber-500/10 text-amber-500',
+      title: 'text-primary',
+      message: 'text-muted',
+      close: 'text-subtle hover:bg-surface-3 hover:text-primary',
+      progress: 'bg-amber-500',
     }
   }
   return {
-    card: 'border-sky-200 bg-white',
-    iconWrap: 'bg-sky-50 text-sky-600',
-    title: 'text-sky-700',
-    message: 'text-slate-700',
-    close: 'text-slate-400 hover:bg-sky-50 hover:text-sky-700',
+    bar: 'border-l-4 border-l-sky-500',
+    iconWrap: 'bg-sky-500/10 text-sky-500',
+    title: 'text-primary',
+    message: 'text-muted',
+    close: 'text-subtle hover:bg-surface-3 hover:text-primary',
+    progress: 'bg-sky-500',
   }
 }
 
@@ -166,34 +170,49 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           {toasts.map((toast) => {
             const tone = toastTone(toast.variant)
             const title = toast.title?.trim() || defaultTitleForVariant(toast.variant)
+            const durationMs =
+              typeof toast.durationMs === 'number'
+                ? toast.durationMs
+                : toast.variant === 'error' || toast.variant === 'warning'
+                  ? PERSISTENT_TOAST_DURATION_MS
+                  : DEFAULT_DURATION_MS
+            const hasProgress = durationMs > 0
 
             return (
               <section
                 key={toast.id}
-                className={`pointer-events-auto relative w-full rounded-2xl border px-4 py-3.5 ${tone.card}`}
+                className={`toast-enter pointer-events-auto relative w-full overflow-hidden rounded-xl border border-[color:var(--border)] bg-surface-2 shadow-lg backdrop-blur-sm ${tone.bar}`}
                 role="alert"
                 aria-live={toast.variant === 'error' ? 'assertive' : 'polite'}
               >
-                <div className="flex items-start gap-3">
-                  <div className={`mt-0.5 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${tone.iconWrap}`}>
+                <div className="flex items-start gap-3 px-4 py-3.5">
+                  <div className={`mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${tone.iconWrap}`}>
                     <ToastIcon variant={toast.variant} />
                   </div>
-                  <div className="min-w-0 flex-1 pr-8">
-                    <p className={`text-sm font-semibold ${tone.title}`}>{title}</p>
-                    <p className={`mt-1 text-[13px] leading-5 break-words ${tone.message}`}>{toast.message}</p>
+                  <div className="min-w-0 flex-1 pr-6">
+                    <p className={`text-sm font-semibold leading-snug ${tone.title}`}>{title}</p>
+                    <p className={`mt-0.5 text-[13px] leading-5 break-words ${tone.message}`}>{toast.message}</p>
                   </div>
                 </div>
                 <button
                   type="button"
                   aria-label="Close notification"
                   onClick={() => dismissToast(toast.id)}
-                  className={`absolute right-2 top-2 inline-flex h-9 w-9 items-center justify-center rounded-xl transition ${tone.close}`}
+                  className={`absolute right-2 top-2 inline-flex h-7 w-7 items-center justify-center rounded-lg transition ${tone.close}`}
                 >
-                  <svg viewBox="0 0 24 24" className="h-4.5 w-4.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden="true">
                     <path d="M18 6 6 18" />
                     <path d="m6 6 12 12" />
                   </svg>
                 </button>
+                {hasProgress && (
+                  <div className="absolute bottom-0 left-0 h-0.5 w-full">
+                    <div
+                      className={`toast-progress h-full w-full origin-left ${tone.progress}`}
+                      style={{ animationDuration: `${durationMs}ms` }}
+                    />
+                  </div>
+                )}
               </section>
             )
           })}

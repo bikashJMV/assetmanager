@@ -1,5 +1,6 @@
 ﻿.env
 *.pdf
+/docs
 ./context.md    
 sheet.xlsx
 Client/node_modules
@@ -59,3 +60,5 @@ pgpassfile
 
 deploy_key
 deploy_key.pub
+
+.claude

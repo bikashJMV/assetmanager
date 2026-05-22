@@ -5,6 +5,7 @@ from core.authnexus import EmployeeContext
 from services.qr_service import qr_service
 from schemas.qr import QrBatchCreateInput
 from services.qr_label_pdf_service import qr_label_pdf_service
+from repositories.qr_repository import QrRepository
 from core.api_response import success_response, error_response
 from repositories.errors import ValidationError, NotFoundError
 
@@ -89,6 +90,53 @@ async def list_qr_batches(
         )
     except Exception as exc:
         return _json_error(500, message="Failed to list QR batches.", code="INTERNAL_ERROR", details=str(exc))
+
+
+@router.get("/batches/unlinked/pdf")
+async def download_unlinked_qr_pdf(
+    employee: EmployeeContext = Depends(require_privileged),
+) -> Response:
+    """
+    Purpose: Download a printable PDF of all unlinked QR codes across all batches.
+    Method/Route: GET /api/v1/qr/batches/unlinked/pdf
+    Response: 200 application/pdf
+    Notes: Privileged only. Must stay registered BEFORE /batches/{batch_id} routes.
+    """
+    rows = await QrRepository.list_all_unlinked()
+
+    if not rows:
+        pdf_bytes = qr_label_pdf_service.build_empty_notice_pdf(
+            "No Unlinked QR Codes",
+            "All generated QR codes have already been linked to assets.",
+        )
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": 'inline; filename="unlinked-qrs-empty.pdf"',
+                "Cache-Control": "no-store",
+                "X-Exported-Qr-Count": "0",
+            },
+        )
+
+    labels = [
+        (str(r["id"]), str(r["id"])[:8].upper())
+        for r in rows
+    ]
+    pdf_bytes = qr_label_pdf_service.build_pdf(
+        labels,
+        title=f"Unlinked QR Codes — {len(labels)} total",
+    )
+    filename = f"Unlinked QRs ({len(labels)}).pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'inline; filename="{filename}"',
+            "Cache-Control": "no-store",
+            "X-Exported-Qr-Count": str(len(labels)),
+        },
+    )
 
 
 @router.get("/batches/{batch_id}")

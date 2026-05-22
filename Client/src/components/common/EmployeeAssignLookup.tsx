@@ -67,7 +67,7 @@ export default function EmployeeAssignLookup({
   )
 
   const normalizedQuery = value.trim()
-  const showMenu = open && !disabled
+  const showMenu = open && !disabled && normalizedQuery.length > 0
 
   useEffect(() => {
     if (!showMenu) return
@@ -201,9 +201,20 @@ export default function EmployeeAssignLookup({
     updateMenuPosition()
     window.addEventListener('resize', updateMenuPosition)
     window.addEventListener('scroll', updateMenuPosition, true)
+
+    // Close when sidebar toggle shifts the layout (body width change).
+    // Skip the first callback — it fires immediately on mount before any real shift.
+    let mounted = false
+    const resizeObserver = new ResizeObserver(() => {
+      if (!mounted) { mounted = true; return }
+      setOpen(false)
+    })
+    resizeObserver.observe(document.body)
+
     return () => {
       window.removeEventListener('resize', updateMenuPosition)
       window.removeEventListener('scroll', updateMenuPosition, true)
+      resizeObserver.disconnect()
     }
   }, [showMenu, results.length, loading, searchError])
 
@@ -254,7 +265,7 @@ export default function EmployeeAssignLookup({
           {required ? <span className="text-accent"> *</span> : null}
         </label>
       ) : null}
-      <div ref={triggerRef} className="flex gap-1">
+      <div ref={triggerRef}>
         <input
           id={id}
           role="combobox"
@@ -278,33 +289,8 @@ export default function EmployeeAssignLookup({
             if (!disabled) setOpen(true)
           }}
           onKeyDown={handleInputKeyDown}
-          className="min-w-0 flex-1 bg-surface-2 border border-base rounded-lg px-3 py-2.5 text-primary placeholder:text-subtle text-sm outline-none focus:border-[color:var(--accent)] focus:ring-2 focus:ring-[color:var(--accent-soft)] transition disabled:opacity-60"
+          className="w-full bg-surface-2 border border-base rounded-lg px-3 py-2.5 text-primary placeholder:text-subtle text-sm outline-none hover:border-[color:var(--accent-soft)] focus:border-[color:var(--accent)] focus:ring-2 focus:ring-[color:var(--accent-soft)] transition disabled:opacity-60"
         />
-        <button
-          type="button"
-          tabIndex={-1}
-          aria-label="Show employee suggestions"
-          disabled={disabled}
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={() => {
-            if (disabled) return
-            setOpen((current) => !current)
-          }}
-          className="shrink-0 rounded-lg border border-base bg-surface-2 px-2.5 text-muted outline-none transition hover:border-[color:var(--accent-soft)] hover:text-primary focus-visible:ring-2 focus-visible:ring-[color:var(--accent-soft)] disabled:opacity-60"
-        >
-          <svg
-            viewBox="0 0 24 24"
-            className={`h-5 w-5 transition ${showMenu ? 'rotate-180' : ''}`}
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.8"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
-          >
-            <path d="m6 9 6 6 6-6" />
-          </svg>
-        </button>
       </div>
       {hint ? <div className="text-[11px] text-muted mt-1 leading-snug">{hint}</div> : null}
 
@@ -315,7 +301,7 @@ export default function EmployeeAssignLookup({
               id={listboxId}
               role="listbox"
               aria-label="Employee suggestions"
-              className="fixed z-[150] overflow-y-auto rounded-xl border border-base bg-app p-1.5 shadow-[0_18px_48px_rgba(0,0,0,0.22)] dark:shadow-[0_18px_48px_rgba(0,0,0,0.45)]"
+              className="fixed z-[150] overflow-hidden rounded-2xl border border-[color:var(--border)] bg-surface-2 shadow-[0_24px_56px_rgba(0,0,0,0.28),0_4px_12px_rgba(0,0,0,0.12)] backdrop-blur-md"
               style={{
                 left: menuPosition.left,
                 width: menuPosition.width,
@@ -324,49 +310,101 @@ export default function EmployeeAssignLookup({
                 bottom: menuPosition.bottom,
               }}
             >
-              {loading ? (
-                <div className="px-3 py-2.5 text-sm text-muted">Searching employees...</div>
-              ) : searchError ? (
-                <div className="px-3 py-2.5 text-sm text-accent">{searchError}</div>
-              ) : results.length === 0 ? (
-                <div className="px-3 py-2.5 text-sm text-muted">
-                  {normalizedQuery
-                    ? "Not found, possibly employee is inactive or doesn't exist." // "Not found or possibly inactive."
-                    : 'Type a user name or employee ID to search.'}
-                </div>
-              ) : (
-                results.map((employee, index) => {
-                  const isActiveRow = index === activeIndex
-                  const isSelected =
-                    selectedEmployee?.id === employee.id ||
-                    selectedEmployee?.employee_id === employee.employee_id
+              <div className="overflow-y-auto p-1.5" style={{ maxHeight: menuPosition.maxHeight }}>
+                {loading ? (
+                  <div className="space-y-0.5">
+                    {[1, 2, 3].map((n) => (
+                      <div key={n} className="flex items-center gap-2.5 rounded-xl px-3 py-2">
+                        <div className="h-7 w-7 shrink-0 rounded-full bg-surface-3 animate-pulse" />
+                        <div className="flex-1 space-y-1">
+                          <div className="h-2.5 w-2/3 rounded-full bg-surface-3 animate-pulse" />
+                          <div className="h-2 w-1/3 rounded-full bg-surface-3 animate-pulse" />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : searchError ? (
+                  <div className="flex flex-col items-center gap-1.5 px-3 py-5 text-center">
+                    <svg viewBox="0 0 24 24" className="h-5 w-5 text-accent" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <circle cx="12" cy="12" r="10" /><path d="M12 8v4m0 4h.01" />
+                    </svg>
+                    <p className="text-xs text-muted">{searchError}</p>
+                  </div>
+                ) : results.length === 0 ? (
+                  <div className="flex flex-col items-center gap-1.5 px-3 py-5 text-center">
+                    <svg viewBox="0 0 24 24" className="h-5 w-5 text-subtle" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" />
+                    </svg>
+                    <p className="text-xs text-muted">
+                      {normalizedQuery ? "No match found. Employee may be inactive." : 'Type a name or employee ID to search.'}
+                    </p>
+                  </div>
+                ) : (
+                  results.map((employee, index) => {
+                    const isActiveRow = index === activeIndex
+                    const isSelected =
+                      selectedEmployee?.id === employee.id ||
+                      selectedEmployee?.employee_id === employee.employee_id
+                    const highlight = isActiveRow || isSelected
+                    const initial = (employee.name.trim() || employee.employee_id.trim() || '?')[0].toUpperCase()
 
-                  return (
-                    <button
-                      key={employee.id}
-                      type="button"
-                      role="option"
-                      aria-selected={isSelected}
-                      onMouseDown={(event) => {
-                        event.preventDefault()
-                        selectEmployee(employee)
-                      }}
-                      onMouseEnter={() => setActiveIndex(index)}
-                      className={`group flex w-full items-center rounded-lg px-3 py-2.5 text-left text-sm transition ${
-                        isActiveRow || isSelected
-                          ? 'bg-[color:var(--accent-soft)]/15 text-primary'
-                          : 'text-primary hover:bg-surface-3'
-                      }`}
-                    >
-                      <span className="min-w-0 truncate underline decoration-transparent underline-offset-[3px] transition group-hover:underline group-hover:decoration-[color:var(--accent)]">
-                        {employee.name.trim() || employee.employee_id}
-                        {employee.employee_id.trim() ? ` / ${employee.employee_id.trim()}` : ''}
-                        {employee.department?.trim() ? ` / ${employee.department.trim()}` : ''}
-                      </span>
-                    </button>
-                  )
-                })
-              )}
+                    return (
+                      <button
+                        key={employee.id}
+                        type="button"
+                        role="option"
+                        aria-selected={isSelected}
+                        onMouseDown={(e) => { e.preventDefault(); selectEmployee(employee) }}
+                        onMouseEnter={() => setActiveIndex(index)}
+                        className={`group relative flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left transition-colors duration-100 ${
+                          highlight
+                            ? 'bg-[color:var(--accent-soft)]/20'
+                            : 'hover:bg-surface-3'
+                        }`}
+                      >
+                        {/* accent left bar on active */}
+                        {highlight && (
+                          <span className="absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-full bg-accent" />
+                        )}
+
+                        {/* avatar */}
+                        <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-bold transition-colors ${
+                          highlight
+                            ? 'bg-accent text-on-accent'
+                            : 'bg-surface-3 text-muted group-hover:bg-accent/20 group-hover:text-accent'
+                        }`}>
+                          {initial}
+                        </div>
+
+                        {/* text */}
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-semibold text-primary leading-tight">
+                            {employee.name.trim() || employee.employee_id}
+                          </p>
+                          <div className="mt-0.5 flex items-center gap-1.5 flex-wrap">
+                            {employee.employee_id.trim() && (
+                              <span className="font-mono text-[10px] text-subtle">{employee.employee_id.trim()}</span>
+                            )}
+                            {employee.department?.trim() && (
+                              <>
+                                <span className="text-[10px] text-subtle/50">·</span>
+                                <span className="text-[10px] text-subtle">{employee.department.trim()}</span>
+                              </>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* selected checkmark */}
+                        {isSelected && (
+                          <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0 text-accent" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                            <path d="M20 6 9 17l-5-5" />
+                          </svg>
+                        )}
+                      </button>
+                    )
+                  })
+                )}
+              </div>
             </div>,
             document.body,
           )

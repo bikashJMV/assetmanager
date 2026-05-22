@@ -6,7 +6,9 @@ from fastapi.responses import JSONResponse
 from core.api_response import error_response, success_response
 from core.authnexus import EmployeeContext
 from core.authz import require_authenticated, require_privileged
+from core.roles import PRIVILEGED_ROLES
 from repositories.meta_repository import MetaRepository
+from repositories.assignment_repository import AssignmentRepository
 from repositories.db import pool, fetch_dicts
 
 router = APIRouter(prefix="/api/v1/meta", tags=["Meta (v1)"])
@@ -134,25 +136,34 @@ async def list_departments_with_ids(
 @router.get("/warranty-notifications")
 async def list_warranty_notifications(
     days_ahead: int = Query(default=30, ge=1, le=365, alias="limit"),
-    employee: EmployeeContext = Depends(require_privileged),
+    employee: EmployeeContext = Depends(require_authenticated),
 ) -> JSONResponse:
     """
     Purpose: List assets with expiring warranties for dashboard alerts.
     Method/Route: GET /api/v1/meta/warranty-notifications
     Response: 200 Guideline envelope `{data:[{asset_tag, warranty_expiry, ...}]}`; Errors: 500 envelope.
-    Notes: Privileged only.
+    Notes: Authenticated. Employees see only assets currently assigned to them; privileged roles see all.
     """
     try:
         async with pool().acquire() as conn:
-            # Query the view with a dynamic days_ahead filter
-            rows = await fetch_dicts(conn, """
-                select * 
-                  from v_warranty_notifications 
-                 where days_remaining <= $1 
-                 order by days_remaining asc
-                 limit 100
-            """, days_ahead)
-        
+            if employee.role not in PRIVILEGED_ROLES:
+                rows = await fetch_dicts(conn, """
+                    select *
+                      from v_warranty_notifications
+                     where days_remaining <= $1
+                       and current_employee_id = $2
+                     order by days_remaining asc
+                     limit 100
+                """, days_ahead, str(employee.employee_id))
+            else:
+                rows = await fetch_dicts(conn, """
+                    select *
+                      from v_warranty_notifications
+                     where days_remaining <= $1
+                     order by days_remaining asc
+                     limit 100
+                """, days_ahead)
+
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content=success_response(
@@ -203,7 +214,7 @@ async def get_dashboard_stats(
     try:
         async with pool().acquire() as conn:
             # Replicate dashboard stats logic
-            total_assets = await conn.fetchval("select count(*)::int from assets where coalesce(is_deleted,false)=false")
+            total_assets = await conn.fetchval("select count(*)::int from assets")
             assigned_assets = await conn.fetchval("select count(*)::int from asset_assignments where returned_at is null")
             
             active_employees = await conn.fetchval("select count(*)::int from employees")
@@ -237,7 +248,7 @@ async def get_public_dashboard_summary() -> JSONResponse:
     """
     try:
         async with pool().acquire() as conn:
-            total_assets = await conn.fetchval("select count(*)::int from assets where coalesce(is_deleted,false)=false")
+            total_assets = await conn.fetchval("select count(*)::int from assets")
             assigned_assets = await conn.fetchval("select count(*)::int from asset_assignments where returned_at is null")
             
             # Categories with counts
@@ -245,7 +256,6 @@ async def get_public_dashboard_summary() -> JSONResponse:
                 select c.name, count(a.id)::int as count
                   from assets a
                   join asset_categories c on a.category_id = c.id
-                 where coalesce(a.is_deleted,false)=false
                  group by c.name
                  order by count desc
             """)
@@ -268,7 +278,7 @@ async def get_public_dashboard_summary() -> JSONResponse:
 
 @router.get("/overview-analysis")
 async def get_overview_analysis(
-    limit: int = Query(default=5, ge=1, le=20),
+    limit: int = Query(default=100, ge=1, le=500),
     _: EmployeeContext = Depends(require_privileged),
 ) -> JSONResponse:
     """
@@ -339,3 +349,28 @@ async def get_overview_analysis(
         )
     except Exception as exc:
         return _json_error(500, message="Failed to retrieve overview analysis.", code="INTERNAL_ERROR", details=str(exc))
+
+
+@router.get("/assignment-activity")
+async def get_assignment_activity(
+    from_date: str = Query(..., pattern=r"^\d{4}-(0[1-9]|1[0-2])$", description="Start month in YYYY-MM format"),
+    employee: EmployeeContext = Depends(require_privileged),
+) -> JSONResponse:
+    """
+    Purpose: Assignment count per month for 12 months starting from from_date.
+    Method/Route: GET /api/v1/meta/assignment-activity?from_date=YYYY-MM
+    Response: 200 envelope with items [{month: 'YYYY-MM', count: int}]
+    Notes: Privileged only.
+    """
+    try:
+        rows = await AssignmentRepository.count_assignments_by_month(from_date)
+        return JSONResponse(
+            status_code=200,
+            content=success_response(
+                message="Assignment activity retrieved.",
+                data={"items": rows, "from_date": from_date},
+                status_code=200,
+            ),
+        )
+    except Exception as exc:
+        return _json_error(500, message="Failed to retrieve assignment activity.", code="INTERNAL_ERROR", details=str(exc))

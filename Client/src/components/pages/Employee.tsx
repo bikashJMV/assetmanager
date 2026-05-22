@@ -7,13 +7,13 @@ import ConfirmDialog from '../common/ConfirmDialog'
 import FilterPopup from '../common/FilterPopup'
 import FilterSelect, { type FilterSelectOption } from '../common/FilterSelect'
 import DataPagination from '../common/DataPagination'
-import PageHeaderActions from '../common/PageHeaderActions'
 import { useToast } from '../../hooks/useToast'
 import Loader from '../common/Loader'
 import InfoHint from '../common/InfoHint'
 import IconActionButton from '../common/IconActionButton'
 import AnimatedNavIcon, { type IconName } from '../common/AnimatedNavIcon'
 import RowActionMenu from '../common/RowActionMenu'
+import Tooltip from '../common/Tooltip'
 import type { EmployeeRecord, EmployeeRole, EmployeeUpsertInput } from '../../types/api'
 
 import {
@@ -178,19 +178,6 @@ export default function Employee() {
   const canManageEmployees = accessResolved && isAdmin
   const canManageAdminRole = accessResolved && (isAdmin || isItOps)
   const activeAdvancedFilterCount = getActiveAdvancedFilterCount(filtersInput)
-  const headerActions = canManageEmployees
-    ? [
-        {
-          id: 'new-employee',
-          label: 'New Employee',
-          icon: 'plus' as const,
-          onClick: () => {
-            setEditEmployee(null)
-            setCreateDialogOpen(true)
-          },
-        },
-      ]
-    : []
   const tableBusy = loading && employees.length > 0
   const requestIdRef = useRef(0)
 
@@ -517,9 +504,62 @@ export default function Employee() {
 
   return (
     <main className="flex min-h-screen flex-col bg-app px-4 py-6 text-primary sm:px-6 sm:py-8">
-      <PageHeaderActions
-        title="All Employees"
-        auxiliary={
+      {/* Row 1: Title + New Employee */}
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <h1 className="text-2xl font-semibold tracking-tight text-primary sm:text-3xl">All Employees</h1>
+        {canManageEmployees && (
+          <button
+            type="button"
+            onClick={() => { setEditEmployee(null); setCreateDialogOpen(true) }}
+            className="inline-flex min-h-9 items-center gap-2 rounded-xl border border-base bg-surface px-4 text-sm font-semibold text-primary shadow-sm transition hover:border-[color:var(--accent-soft)] hover:bg-[color:var(--accent-soft)]/20 hover:text-accent"
+          >
+            <span className="flex h-4 w-4 shrink-0 items-center justify-center">
+              <AnimatedNavIcon name="plus" />
+            </span>
+            <span>Employee</span>
+          </button>
+        )}
+      </div>
+
+      {/* Row 2: Controls — single row on desktop, 2 rows on mobile/tablet */}
+      <div className="mb-6 flex flex-col gap-2 lg:flex-row lg:items-center lg:gap-2">
+        {/* Search — grows to fill available space on desktop */}
+        <div className="min-w-0 lg:flex-1">
+          <input
+            type="text"
+            aria-label="Search employees"
+            value={searchInput}
+            onChange={(e) => handleSearchChange(e.target.value)}
+            placeholder="Search by ID, name, email..."
+            className="w-full bg-surface border border-base text-primary placeholder:text-subtle rounded-lg px-3 py-2 text-sm outline-none focus:border-[color:var(--accent)] transition"
+          />
+        </div>
+
+        {/* Controls row */}
+        <div className="flex items-center gap-2 flex-wrap lg:flex-nowrap lg:shrink-0">
+          {canManageEmployees ? (
+            <button
+              type="button"
+              onClick={openFiltersPopup}
+              className={`inline-flex h-9 items-center gap-2 rounded-lg border px-3 text-sm font-medium transition ${filtersOpen || activeAdvancedFilterCount > 0
+                ? 'border-accent-soft bg-[color:var(--accent-soft)]/15 text-primary'
+                : 'border-base bg-surface text-muted hover:border-accent-soft hover:bg-[color:var(--accent-soft)]/15 hover:text-accent'
+                }`}
+              aria-expanded={filtersOpen ? 'true' : 'false'}
+              aria-haspopup="dialog"
+            >
+              <span className="h-4 w-4 shrink-0">
+                <FilterIcon />
+              </span>
+              <span>Filters</span>
+              {activeAdvancedFilterCount > 0 && (
+                <span className="inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-accent px-1.5 py-0.5 text-[11px] font-semibold text-on-accent">
+                  {activeAdvancedFilterCount}
+                </span>
+              )}
+            </button>
+          ) : null}
+
           <DataPagination
             currentPage={currentPage}
             totalCount={totalEmployees}
@@ -532,103 +572,64 @@ export default function Employee() {
             onPageChange={handlePageChange}
             onPageSizeChange={handlePageSizeChange}
           />
-        }
-        actions={headerActions}
-      />
-      <div className="mb-6 space-y-3">
-        <div className="flex flex-col gap-3 lg:flex-row lg:flex-nowrap lg:items-center">
-          <div className="min-w-0 lg:flex-[1_1_320px]">
-            <input
-              type="text"
-              aria-label="Search employees"
-              value={searchInput}
-              onChange={(e) => handleSearchChange(e.target.value)}
-              placeholder="Search by ID, name, email..."
-              className="w-full bg-surface border border-base text-primary placeholder:text-subtle rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[color:var(--accent)] transition"
-            />
-          </div>
 
-          <div className="flex items-center gap-2 lg:flex-nowrap lg:shrink-0">
-            {canManageEmployees ? (
-              <button
-                type="button"
-                onClick={openFiltersPopup}
-                className={`inline-flex h-10 items-center gap-2 rounded-lg border px-3 text-sm font-medium transition ${filtersOpen || activeAdvancedFilterCount > 0
-                  ? 'border-accent-soft bg-[color:var(--accent-soft)]/15 text-primary'
-                  : 'border-base bg-surface text-muted hover:border-accent-soft hover:bg-[color:var(--accent-soft)]/15 hover:text-accent'
-                  }`}
-                aria-expanded={filtersOpen ? 'true' : 'false'}
-                aria-haspopup="dialog"
-              >
-                <span className="h-4 w-4 shrink-0">
-                  <FilterIcon />
-                </span>
-                <span>Filters</span>
-                {activeAdvancedFilterCount > 0 && (
-                  <span className="inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-accent px-1.5 py-0.5 text-[11px] font-semibold text-on-accent">
-                    {activeAdvancedFilterCount}
-                  </span>
-                )}
-              </button>
-            ) : null}
-
-            <RefreshButton
-              onClick={handleRefresh}
-              loading={loading}
-              iconOnly
-              ariaLabel="Refresh employees"
-              title={loading ? 'Refreshing employees' : 'Refresh employees'}
-              className="shrink-0 hover:border-accent-soft hover:bg-[color:var(--accent-soft)]/15 hover:text-accent"
-            />
-
-            <div className="inline-flex items-center rounded-lg border border-base bg-surface p-1">
+          <div className="inline-flex items-center rounded-lg border border-base bg-surface p-1">
+            <Tooltip content="Table layout">
               <button
                 type="button"
                 aria-label="Show table layout"
-                title="Table layout"
                 onClick={() => setViewMode('table')}
-                className={`inline-flex h-8 w-8 items-center justify-center rounded-md transition ${viewMode === 'table'
+                className={`inline-flex h-7 w-7 items-center justify-center rounded-md transition ${viewMode === 'table'
                   ? 'bg-accent text-on-accent'
                   : 'text-muted hover:bg-[color:var(--accent-soft)]/15 hover:text-accent'
                   }`}
               >
                 <TableViewIcon />
               </button>
+            </Tooltip>
+            <Tooltip content="Grid layout">
               <button
                 type="button"
                 aria-label="Show grid layout"
-                title="Grid layout"
                 onClick={() => setViewMode('grid')}
-                className={`inline-flex h-8 w-8 items-center justify-center rounded-md transition ${viewMode === 'grid'
+                className={`inline-flex h-7 w-7 items-center justify-center rounded-md transition ${viewMode === 'grid'
                   ? 'bg-accent text-on-accent'
                   : 'text-muted hover:bg-[color:var(--accent-soft)]/15 hover:text-accent'
                   }`}
               >
                 <GridViewIcon />
               </button>
-            </div>
-
-            {accessResolved && canManageEmployees ? (
-              <InfoHint
-                panelTitle={EMPLOYEE_PAGE_INFO_HINT.panelTitle}
-                ariaLabel={EMPLOYEE_PAGE_INFO_HINT.ariaLabel}
-                className="shrink-0"
-              >
-                {EMPLOYEE_PAGE_INFO_HINT.sections.map((section) => (
-                  <div key={section.heading}>
-                    <p className="font-medium text-primary">{section.heading}</p>
-                    <ul className="mt-1.5 list-disc space-y-1 pl-4">
-                      {section.bullets.map((text, i) => (
-                        <li key={`${section.heading}-${i}`}>{text}</li>
-                      ))}
-                    </ul>
-                  </div>
-                ))}
-              </InfoHint>
-            ) : null}
+            </Tooltip>
           </div>
-        </div>
 
+          {accessResolved && canManageEmployees ? (
+            <InfoHint
+              panelTitle={EMPLOYEE_PAGE_INFO_HINT.panelTitle}
+              ariaLabel={EMPLOYEE_PAGE_INFO_HINT.ariaLabel}
+              className="shrink-0"
+            >
+              {EMPLOYEE_PAGE_INFO_HINT.sections.map((section) => (
+                <div key={section.heading}>
+                  <p className="font-medium text-primary">{section.heading}</p>
+                  <ul className="mt-1.5 list-disc space-y-1 pl-4">
+                    {section.bullets.map((text, i) => (
+                      <li key={`${section.heading}-${i}`}>{text}</li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </InfoHint>
+          ) : null}
+
+          <RefreshButton
+            onClick={handleRefresh}
+            loading={loading}
+            iconOnly
+            ariaLabel="Refresh employees"
+            title={loading ? 'Refreshing...' : 'Refresh'}
+            className="shrink-0 hover:border-accent-soft hover:bg-[color:var(--accent-soft)]/15 hover:text-accent"
+          />
+        </div>
       </div>
 
       {accessResolved && !isAdmin && (
@@ -764,70 +765,103 @@ export default function Employee() {
           </div>
         ) : (
           <div className={`grid grid-cols-1 gap-4 transition-opacity md:grid-cols-2 xl:grid-cols-3 ${tableBusy ? 'opacity-60 pointer-events-none' : ''}`}>
-            {employees.map((employee) => (
-              <article
-                key={employee.id}
-                className="cursor-pointer rounded-xl border border-base bg-surface-2 p-4 transition hover:border-accent-soft hover:bg-[color:var(--accent-soft)]/10"
-                onClick={() => openEmployeeDetail(employee.id)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' || event.key === ' ') {
-                    event.preventDefault()
-                    openEmployeeDetail(employee.id)
-                  }
-                }}
-                tabIndex={0}
-                role="link"
-                aria-label={`Open ${employee.name} details`}
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <span className="text-left text-lg font-semibold text-primary transition hover:text-accent">
-                      {employee.name}
+            {employees.map((employee) => {
+              const initials = employee.name
+                .split(' ')
+                .filter(Boolean)
+                .slice(0, 2)
+                .map((n) => n[0].toUpperCase())
+                .join('')
+              return (
+                <article
+                  key={employee.id}
+                  className="group cursor-pointer rounded-2xl border border-base bg-surface-2 transition hover:border-accent-soft hover:shadow-md overflow-hidden"
+                  onClick={() => openEmployeeDetail(employee.id)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault()
+                      openEmployeeDetail(employee.id)
+                    }
+                  }}
+                  tabIndex={0}
+                  role="link"
+                  aria-label={`Open ${employee.name} details`}
+                >
+                  {/* Card header */}
+                  <div className="flex items-center gap-3 px-5 pt-5 pb-4">
+                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-accent/10 text-accent font-bold text-base select-none">
+                      {initials}
+                    </div>
+                    <div className="min-w-0">
+                      <p className="truncate text-base font-semibold text-primary group-hover:text-accent transition leading-snug">
+                        {employee.name}
+                      </p>
+                      <p className="truncate text-xs text-muted mt-0.5">{formatDisplay(employee.email)}</p>
+                    </div>
+                    <span className={`ml-auto shrink-0 inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-semibold tracking-wide ${
+                      employee.role === 'admin'
+                        ? 'bg-accent/15 text-accent'
+                        : employee.role === 'it_ops'
+                        ? 'bg-[color:var(--color-warning,#f59e0b)]/15 text-[color:var(--color-warning,#d97706)]'
+                        : 'bg-surface border border-base text-muted'
+                    }`}>
+                      {formatRoleLabel(employee.role)}
                     </span>
-                    <p className="text-sm text-muted">{formatDisplay(employee.email)}</p>
                   </div>
-                </div>
-                <div className="mt-4 space-y-1 text-sm">
-                  <p className="text-subtle uppercase tracking-[0.14em] text-[11px]">Employee ID</p>
-                  <p className="text-primary">{employee.employee_id}</p>
-                  <p className="text-subtle uppercase tracking-[0.14em] text-[11px] mt-3">Assigned Total</p>
-                  <div
-                    className="inline-flex items-center gap-2 rounded-lg border border-base bg-surface px-2.5 py-1 text-sm font-semibold text-primary"
-                    title={`Assigned total for ${employee.name}`}
-                  >
-                    <span>{getAssignedAssetDisplay(assignedAssetCounts[employee.id])}</span>
-                    <span className="text-xs text-muted">total</span>
+
+                  {/* Divider */}
+                  <div className="mx-5 h-px bg-base" />
+
+                  {/* Details */}
+                  <div className="px-5 py-4 space-y-2.5 text-sm">
+                    <div className="flex items-center gap-2">
+                      <span className="w-[6.5rem] shrink-0 text-[11px] font-medium uppercase tracking-[0.13em] text-subtle">Employee ID</span>
+                      <span className="text-subtle select-none">:</span>
+                      <span className="font-medium text-primary truncate">{formatDisplay(employee.employee_id)}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="w-[6.5rem] shrink-0 text-[11px] font-medium uppercase tracking-[0.13em] text-subtle">Department</span>
+                      <span className="text-subtle select-none">:</span>
+                      <span className="text-primary truncate">{formatDisplay(employee.department)}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="w-[6.5rem] shrink-0 text-[11px] font-medium uppercase tracking-[0.13em] text-subtle">Assigned</span>
+                      <span className="text-subtle select-none">:</span>
+                      <span
+                        className="inline-flex items-center rounded-md border border-base bg-surface px-2 py-0.5 text-xs font-semibold text-primary"
+                        title={`Assigned total for ${employee.name}`}
+                      >
+                        {getAssignedAssetDisplay(assignedAssetCounts[employee.id])}
+                      </span>
+                    </div>
                   </div>
-                  <p className="text-subtle uppercase tracking-[0.14em] text-[11px] mt-3">Department</p>
-                  <p className="text-primary">{formatDisplay(employee.department)}</p>
-                  <p className="text-subtle uppercase tracking-[0.14em] text-[11px] mt-3">Role</p>
-                  <p className="text-primary">{formatRoleLabel(employee.role)}</p>
-                </div>
-                {canManageEmployees && (
-                  <div
-                    className="mt-4 border-t border-base pt-4"
-                    onClick={(event) => event.stopPropagation()}
-                  >
-                    <EmployeeActions
-                      employee={employee}
-                      isAdmin={isAdmin}
-                      isItOps={isItOps}
-                      sessionEmployeeId={sessionEmployeeId}
-                      showQrDownload={SHOW_EMPLOYEE_ROW_QR_DOWNLOAD}
-                      bulkQrEmployeeId={null}
-                      onEdit={(employee) => {
-                        setCreateDialogOpen(false)
-                        setEditEmployee(employee)
-                      }}
-                      onSetRole={openRoleChange}
-                      onGrantAdmin={openGrantAdminConfirm}
-                      onRevokeAdmin={openRevokeAdminConfirm}
-                      onDownloadQrs={async () => {}}
-                    />
-                  </div>
-                )}
-              </article>
-            ))}
+
+                  {canManageEmployees && (
+                    <div
+                      className="border-t border-base px-5 py-3"
+                      onClick={(event) => event.stopPropagation()}
+                    >
+                      <EmployeeActions
+                        employee={employee}
+                        isAdmin={isAdmin}
+                        isItOps={isItOps}
+                        sessionEmployeeId={sessionEmployeeId}
+                        showQrDownload={SHOW_EMPLOYEE_ROW_QR_DOWNLOAD}
+                        bulkQrEmployeeId={null}
+                        onEdit={(employee) => {
+                          setCreateDialogOpen(false)
+                          setEditEmployee(employee)
+                        }}
+                        onSetRole={openRoleChange}
+                        onGrantAdmin={openGrantAdminConfirm}
+                        onRevokeAdmin={openRevokeAdminConfirm}
+                        onDownloadQrs={async () => {}}
+                      />
+                    </div>
+                  )}
+                </article>
+              )
+            })}
 
             {!loading && employees.length === 0 && (
               <div className="md:col-span-2 xl:col-span-3 bg-surface-2 border border-base rounded-xl p-8 text-center text-subtle">

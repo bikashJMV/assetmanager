@@ -221,12 +221,17 @@ services:
         condition: service_healthy
     ports:
       - "${CLIENT_PUBLISH_PORT}:80"
+    volumes:
+      - ./Client/src:/app/src
     networks:
       - ams-observability
     restart: unless-stopped
     develop:
       watch:
-        - path: ./Client
+        - path: ./Client/src
+          target: /app/src
+          action: sync
+        - path: ./Client/package.json
           action: rebuild
 
   pgadmin:

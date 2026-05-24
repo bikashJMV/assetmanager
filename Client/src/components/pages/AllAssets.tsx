@@ -475,7 +475,8 @@ export default function AllAssets() {
     setErrorDebug(undefined)
 
     try {
-      const { xlsxBlob, fileName } = await exportAssetsXlsx()
+      const exportedBy = sessionEmployeeQuery.data?.name ?? 'Administrator'
+      const { xlsxBlob, fileName } = await exportAssetsXlsx(exportedBy)
       const blobUrl = URL.createObjectURL(xlsxBlob)
       const link = document.createElement('a')
       link.href = blobUrl
@@ -611,7 +612,7 @@ export default function AllAssets() {
             : []),
           {
             id: 'scan-asset',
-            label: 'Scan Asset Now',
+            label: 'Scan Asset',
             icon: 'scan' as const,
             onClick: () => navigate('/assets/scan'),
           },
@@ -906,7 +907,12 @@ export default function AllAssets() {
                         </RowActionMenu>
                       </td>
                     ) : null}
-                    <td className="px-4 py-3 text-accent font-medium">{formatDisplay(asset.asset_tag)}</td>
+                    <td className="px-4 py-3">
+                      <span className="inline-flex items-center gap-1.5 border border-orange-500/40 bg-orange-500/10 rounded-md px-2 py-0.5 text-xs font-medium text-primary">
+                        <span className="h-2 w-2 rounded-full bg-orange-500" aria-hidden="true" />
+                        {formatDisplay(asset.asset_tag)}
+                      </span>
+                    </td>
                     <td className="px-4 py-3 text-muted">{formatDisplay(asset.category_name)}</td>
                     <td className="px-4 py-3 text-muted">{formatDisplay(asset.manufacturer_name)}</td>
                     <td className="px-4 py-3 text-muted">{formatDisplay(asset.model)}</td>

@@ -94,9 +94,12 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 error_code="MISSING_SUB",
             )
 
+        jwt_role = _extract_role(payload)
+
         try:
             employee: EmployeeContext = await resolve_employee_for_sub(
-                sub=sub
+                sub=sub,
+                jwt_role=jwt_role,
             )
         except PermissionError as exc:
             return self._error(
@@ -156,4 +159,20 @@ def _extract_preferred_username(payload: dict) -> Optional[str]:
     raw = payload.get("preferred_username")
     if isinstance(raw, str) and raw.strip():
         return raw.strip()
+    return None
+
+
+def _extract_role(payload: dict) -> Optional[str]:
+    """Extract role from nexus_projects[].roles[] for the configured project."""
+    projects = payload.get("nexus_projects")
+    if not isinstance(projects, list):
+        return None
+    project_id = settings.AUTH_PROJECT_ID
+    for project in projects:
+        if not isinstance(project, dict):
+            continue
+        if str(project.get("id") or "").strip() == project_id:
+            roles = project.get("roles")
+            if isinstance(roles, list) and roles:
+                return str(roles[0]).strip().lower()
     return None

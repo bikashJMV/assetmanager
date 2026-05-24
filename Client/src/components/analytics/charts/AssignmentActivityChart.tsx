@@ -14,8 +14,8 @@ function toFromDate(year: number, month: number): string {
 }
 
 function formatMonthLabel(yyyymm: string): string {
-  const [y, m] = yyyymm.split('-')
-  return `${MONTH_NAMES[parseInt(m, 10) - 1]} ${y.slice(2)}`
+  const [, m] = yyyymm.split('-')
+  return MONTH_NAMES[parseInt(m, 10) - 1]
 }
 
 function buildYearOptions(): number[] {
@@ -25,7 +25,7 @@ function buildYearOptions(): number[] {
 
 export default function AssignmentActivityChart() {
   const now = new Date()
-  const [selectedMonth, setSelectedMonth] = useState(now.getMonth() + 1) // 1-12
+  const [selectedMonth, setSelectedMonth] = useState(now.getMonth() + 1)
   const [selectedYear,  setSelectedYear]  = useState(now.getFullYear())
 
   const fromDate = toFromDate(selectedYear, selectedMonth)
@@ -36,60 +36,100 @@ export default function AssignmentActivityChart() {
   useChartResize(chartRef, containerRef)
 
   useEffect(() => {
-    if (!containerRef.current || loading || error || data.length === 0) return
+    if (!containerRef.current || loading || error) return
 
     if (!chartRef.current) {
       chartRef.current = echarts.init(containerRef.current, undefined, { renderer: 'svg' })
     }
 
     const colors = getChartColors()
+    const allZero = data.every((d) => d.count === 0)
+    const months  = data.map((d) => formatMonthLabel(d.month))
+    const counts  = data.map((d) => d.count)
+    const maxVal  = Math.max(...counts, 1)
 
-    chartRef.current.setOption({
-      backgroundColor: 'transparent',
-      tooltip: {
-        trigger: 'axis',
-        backgroundColor: colors.surface,
-        borderColor: colors.border,
-        textStyle: { color: colors.textPrimary, fontSize: 12 },
-        formatter: (params: { name: string; value: number }[]) => {
-          const p = params[0]
-          return `${p.name}<br/><b>${p.value}</b> assignment${p.value !== 1 ? 's' : ''}`
-        },
-      },
-      grid: { left: '3%', right: '3%', top: '18%', bottom: '12%', containLabel: true },
-      xAxis: {
-        type: 'category',
-        data: data.map((d) => formatMonthLabel(d.month)),
-        axisLabel: { color: colors.textSubtle, fontSize: 11 },
-        axisLine: { lineStyle: { color: colors.border } },
-        axisTick: { show: false },
-      },
-      yAxis: {
-        type: 'value',
-        minInterval: 1,
-        axisLabel: { color: colors.textSubtle, fontSize: 11 },
-        splitLine: { lineStyle: { color: colors.border, type: 'dashed' } },
-        axisLine: { show: false },
-      },
-      series: [
-        {
-          type: 'bar',
-          data: data.map((d) => d.count),
-          itemStyle: { color: colors.accent, borderRadius: [4, 4, 0, 0] },
-          barMaxWidth: 42,
-          emphasis: { itemStyle: { color: colors.accent, opacity: 0.8 } },
-          label: {
-            show: true,
-            position: 'top',
-            formatter: (p: { value: number }) => p.value > 0 ? String(p.value) : '',
-            color: colors.textMuted,
-            fontSize: 11,
-            fontWeight: 'bold',
-            distance: 4,
+    chartRef.current.setOption(
+      {
+        backgroundColor: 'transparent',
+        tooltip: {
+          trigger: 'axis',
+          backgroundColor: colors.surface,
+          borderColor: colors.border,
+          textStyle: { color: colors.textPrimary, fontSize: 12 },
+          formatter: (params: { name: string; value: number }[]) => {
+            const p = params[0]
+            return `${p.name}<br/><b>${p.value}</b> assignment${p.value !== 1 ? 's' : ''}`
           },
         },
-      ],
-    })
+        graphic: allZero
+          ? [{
+              type: 'text',
+              left: 'center',
+              top: 'middle',
+              style: {
+                text: 'No activity recorded in this period',
+                fill: colors.textSubtle,
+                fontSize: 13,
+              },
+            }]
+          : [],
+        grid: { left: '3%', right: '3%', top: '14%', bottom: '12%', containLabel: true },
+        xAxis: {
+          type: 'category',
+          data: months,
+          axisLabel: { color: colors.textSubtle, fontSize: 10, interval: 0 },
+          axisLine: { lineStyle: { color: colors.border } },
+          axisTick: { show: false },
+        },
+        yAxis: {
+          type: 'value',
+          min: 0,
+          max: allZero ? 5 : undefined,
+          minInterval: 1,
+          axisLabel: { color: colors.textSubtle, fontSize: 11 },
+          splitLine: { lineStyle: { color: colors.border, type: 'dashed' } },
+          axisLine: { show: false },
+        },
+        series: [
+          {
+            type: 'bar',
+            data: counts,
+            itemStyle: {
+              color: allZero ? colors.border : colors.accent,
+              borderRadius: [4, 4, 0, 0],
+            },
+            barMaxWidth: 42,
+            emphasis: {
+              itemStyle: { color: allZero ? colors.border : colors.accent, opacity: 0.8 },
+            },
+            label: {
+              show: !allZero,
+              position: 'top',
+              formatter: (p: { value: number }) => (p.value > 0 ? String(p.value) : ''),
+              color: colors.textMuted,
+              fontSize: 11,
+              fontWeight: 'bold',
+              distance: 4,
+            },
+            markLine: !allZero && maxVal > 0
+              ? {
+                  silent: true,
+                  symbol: 'none',
+                  lineStyle: { color: colors.accent, type: 'dashed', opacity: 0.35, width: 1 },
+                  data: [{ type: 'average', name: 'Avg' }],
+                  label: {
+                    position: 'end',
+                    formatter: (p: { value: number }) => `avg ${Math.round(p.value)}`,
+                    color: colors.textSubtle,
+                    fontSize: 10,
+                  },
+                }
+              : undefined,
+          },
+        ],
+      },
+      true, // notMerge — fully replace on every render so stale data never persists
+    )
   }, [data, loading, error])
 
   useEffect(() => {
@@ -99,9 +139,10 @@ export default function AssignmentActivityChart() {
     }
   }, [])
 
+  const totalInPeriod = data.reduce((s, d) => s + d.count, 0)
+
   const picker = (
     <div className="flex items-center gap-1.5">
-      {/* Month select */}
       <select
         value={selectedMonth}
         onChange={(e) => setSelectedMonth(Number(e.target.value))}
@@ -113,7 +154,6 @@ export default function AssignmentActivityChart() {
         ))}
       </select>
 
-      {/* Year select */}
       <select
         value={selectedYear}
         onChange={(e) => setSelectedYear(Number(e.target.value))}
@@ -127,14 +167,17 @@ export default function AssignmentActivityChart() {
     </div>
   )
 
+  const subtitle = !loading && !error && data.length > 0
+    ? `12 months from ${MONTH_FULL[selectedMonth - 1]} ${selectedYear} · ${totalInPeriod} total`
+    : `12 months from ${MONTH_FULL[selectedMonth - 1]} ${selectedYear}`
+
   return (
     <ChartCard
       title="Assignment Activity"
-      subtitle={`12 months from ${MONTH_FULL[selectedMonth - 1]} ${selectedYear}`}
+      subtitle={subtitle}
       loading={loading}
       error={error}
-      empty={!loading && !error && data.length === 0}
-      emptyMessage="No assignment activity found for this period."
+      empty={false}
       minHeight="280px"
       headerRight={picker}
     >

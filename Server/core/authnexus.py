@@ -41,9 +41,12 @@ def _get_jwks_client() -> PyJWKClient:
 
 
 def _normalize_role(raw: Any) -> Role:
-    role = str(raw or "employee").strip().lower()
+    role = str(raw or "").strip().lower()
     if role not in VALID_ROLES:
-        return "employee"
+        raise PermissionError(
+            f"Role '{role}' is not permitted on this platform. "
+            f"Allowed roles: {sorted(VALID_ROLES)}."
+        )
     return role  # type: ignore[return-value]
 
 
@@ -98,9 +101,13 @@ def _norm_upper(v: str | None) -> str:
 async def resolve_employee_for_sub(
     *,
     sub: str,
+    jwt_role: str | None = None,
 ) -> EmployeeContext:
     """
     Resolve the employee record for an authenticated user.
+
+    jwt_role: role extracted from nexus_projects[].roles[] in the decoded JWT.
+              When present, validated against VALID_ROLES before any DB access.
 
     1) Direct lookup — employees.auth_user_id == sub (always hits post-backfill)
     2) Auto-provision fallback — if user is authenticated in AN but not yet in local DB,
@@ -110,9 +117,25 @@ async def resolve_employee_for_sub(
     if not norm_sub:
         raise PermissionError("Missing subject identifier.")
 
+    # Validate role from JWT claims before touching the DB.
+    # jwt_role is None when the JWT carries no project role claim — skip check.
+    if jwt_role is not None and jwt_role not in VALID_ROLES:
+        raise PermissionError(
+            f"AuthNexus role '{jwt_role}' is not permitted on this platform. "
+            f"Allowed roles: {sorted(VALID_ROLES)}."
+        )
+
     # Step 1: Direct lookup
     emp = await EmployeeRepository.get_by_auth_user_id(norm_sub)
     if emp:
+        # Sync role: if JWT carries a different valid role, update local DB to match.
+        if jwt_role and jwt_role in VALID_ROLES and jwt_role != emp.role:
+            try:
+                await EmployeeRepository.update_role(employee_id=emp.id, role=jwt_role)
+                emp = emp.__class__(**{**emp.__dict__, "role": jwt_role})
+            except Exception as exc:
+                logger.warning(f"[resolve_employee] Role sync failed for {norm_sub}: {exc}")
+
         return EmployeeContext(
             id=emp.id,
             employee_id=emp.employee_id,
@@ -138,8 +161,18 @@ async def resolve_employee_for_sub(
     name = f"{first_name} {last_name}".strip() or username
 
     email = an_profile.get("email")
-    role_keys = an_profile.get("roleKeys") or ["employee"]
-    role = role_keys[0] if role_keys else "employee"
+    # Use jwt_role (already validated above) if available; fall back to AN profile roleKeys.
+    if jwt_role and jwt_role in VALID_ROLES:
+        role = jwt_role
+    else:
+        role_keys = an_profile.get("roleKeys") or []
+        raw_role = role_keys[0] if role_keys else ""
+        if raw_role.strip().lower() not in VALID_ROLES:
+            raise PermissionError(
+                f"AuthNexus role '{raw_role}' is not permitted on this platform. "
+                f"Allowed roles: {sorted(VALID_ROLES)}."
+            )
+        role = raw_role.strip().lower()
 
     logger.info(f"Auto-provisioning employee locally: username={username}, name={name}, email={email}")
     

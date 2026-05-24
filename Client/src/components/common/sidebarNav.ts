@@ -1,6 +1,6 @@
 import type { IconName } from './AnimatedNavIcon'
 
-export type SidebarNavVisibility = 'always' | 'authenticated' | 'manage' | 'it_ops'
+export type SidebarNavVisibility = 'always' | 'authenticated' | 'manage' | 'it_ops' | 'privileged'
 
 type SidebarNavCommon = {
   id: string
@@ -124,7 +124,7 @@ export const sidebarSections: SidebarNavSection[] = [
         label: 'Logs',
         to: '/logs',
         icon: 'bell',
-        visibility: 'it_ops',
+        visibility: 'privileged',
         matchPrefix: true,
       },
     ],

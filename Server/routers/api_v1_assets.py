@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 from repositories.db import pool, fetchrow_dict, fetch_dicts
 from fastapi import APIRouter, Depends, Query, Request, Response, status
@@ -987,12 +987,13 @@ _XLSX_EXPORT_COLUMNS = (
     "serial_number",
     "status",
     "location_name",
+    "asset_department_name",
     "purchase_date",
     "warranty_expiry",
     "current_employee_name",
     "current_employee_business_id",
     "current_employee_department",
-    "current_employee_is_active",
+    "assigned_at",
     "custom_fields",
 )
 
@@ -1020,13 +1021,64 @@ async def export_assets_json(
             f"SELECT {cols_sql} FROM v_asset_inventory ORDER BY asset_tag ASC",
         )
 
+    envelope = success_response(
+        message="Asset export retrieved successfully.",
+        data=rows,
+        status_code=200,
+    )
+    envelope["exported_at"] = datetime.now(timezone.utc).date().isoformat()
     return JSONResponse(
         status_code=status.HTTP_200_OK,
-        content=success_response(
-            message="Asset export retrieved successfully.",
-            data=rows,
-            status_code=200,
-        ),
+        content=envelope,
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@router.get("/export-history.json")
+async def export_assets_history_json(
+    employee: EmployeeContext = Depends(require_admin),
+) -> JSONResponse:
+    """
+    Purpose: Export full assignment history for all assets as JSON for client-side XLSX generation.
+    Method/Route: GET /api/v1/assets/export-history.json
+    Request: None.
+    Response: 200 envelope `{data: [{asset_tag, employee_name, ...}], exported_at}`.
+    Notes: Strict-admin only; guarded by ASSET_EXPORT_ENABLED.
+    """
+    if employee.role != "admin":
+        return _json_error(403, message="Only administrators can export assets.", code="FORBIDDEN")
+    if not settings.ASSET_EXPORT_ENABLED:
+        return _json_error(503, message="Asset export is disabled.", code="SERVICE_UNAVAILABLE")
+
+    async with pool().acquire() as conn:
+        rows = await fetch_dicts(
+            conn,
+            """
+            SELECT a.asset_tag,
+                   e.name        AS employee_name,
+                   e.employee_id AS employee_id,
+                   d.name        AS department,
+                   aa.assigned_at,
+                   aa.returned_at,
+                   aa.source,
+                   aa.notes
+              FROM asset_assignments aa
+              JOIN assets     a ON a.id  = aa.asset_id
+              JOIN employees  e ON e.id  = aa.employee_id
+              LEFT JOIN departments d ON d.id = e.department_id
+             ORDER BY a.asset_tag ASC, aa.assigned_at DESC
+            """,
+        )
+
+    envelope = success_response(
+        message="Asset history export retrieved successfully.",
+        data=rows,
+        status_code=200,
+    )
+    envelope["exported_at"] = datetime.now(timezone.utc).date().isoformat()
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content=envelope,
         headers={"Cache-Control": "no-store"},
     )
 

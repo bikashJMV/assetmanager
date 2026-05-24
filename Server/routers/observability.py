@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException, status
 from pydantic import BaseModel
 
 from core.settings import settings
-from core.authz import require_it_ops
+from core.authz import require_privileged
 
 router = APIRouter(prefix="/observability/logs", tags=["Observability"])
 
@@ -30,7 +30,7 @@ async def get_logs(
     service: str = Query("all", description="'ams-server', 'telemetry-server', or 'all'"),
     level: str = Query("", description="error, warn, info, debug"),
     cursor: str = Query("", description="For forward pagination"),
-    _=Depends(require_it_ops)
+    _=Depends(require_privileged)
 ):
     """
     Purpose: Query Loki and return recent logs for IT Ops troubleshooting.
@@ -111,22 +111,26 @@ async def get_logs(
     for stream in results:
         stream_labels = stream.get("stream", {})
         svc = stream_labels.get("service", "unknown")
-        
+        loki_level = stream_labels.get("level", "").upper()
+
         for val in stream.get("values", []):
             if len(val) != 2:
                 continue
             ts_ns = val[0]
             log_line = val[1]
-            
-            # Detect log level by scanning keywords
-            line_upper = log_line.upper()
-            detected_level = "INFO"
-            if "ERROR" in line_upper:
-                detected_level = "ERROR"
-            elif "WARN" in line_upper or "WARNING" in line_upper:
-                detected_level = "WARN"
-            elif "DEBUG" in line_upper:
-                detected_level = "DEBUG"
+
+            # Prefer Loki stream label (set by Alloy); fall back to keyword scan
+            if loki_level in ("ERROR", "WARN", "WARNING", "INFO", "DEBUG", "CRITICAL"):
+                detected_level = "WARN" if loki_level in ("WARNING",) else loki_level
+            else:
+                line_upper = log_line.upper()
+                detected_level = "INFO"
+                if "ERROR" in line_upper:
+                    detected_level = "ERROR"
+                elif "WARN" in line_upper or "WARNING" in line_upper:
+                    detected_level = "WARN"
+                elif "DEBUG" in line_upper:
+                    detected_level = "DEBUG"
                 
             # Convert nanoseconds to ISO 8601 string
             try:

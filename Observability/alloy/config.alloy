@@ -20,7 +20,7 @@ loki.process "add_ams_labels" {
     values = { service = "ams-server", env = "production" }
   }
   stage.regex {
-    expression = "^(?P<level>INFO|ERROR|WARNING|DEBUG|CRITICAL):"
+    expression = "^(?:\\d{4}-\\d{2}-\\d{2}\\s+\\d{2}:\\d{2}:\\d{2}[,.]\\d+\\s+)?(?P<level>INFO|ERROR|WARNING|DEBUG|CRITICAL)[:\\s]"
   }
   stage.labels {
     values = { level = "" }

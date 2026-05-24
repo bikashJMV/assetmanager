@@ -154,8 +154,28 @@ async def list_employees(
 
             local_info = local_data_map.get(auth_user_id)
             if not local_info or not local_info.get("id"):
-                continue
-            
+                # Auto-provision: AN user exists but has no local row yet
+                try:
+                    first = user.get("firstName") or ""
+                    last  = user.get("lastName") or ""
+                    uname = user.get("userName") or auth_user_id
+                    full_name = f"{first} {last}".strip() or uname
+                    role_keys_ap = user.get("roleKeys") or []
+                    raw_role_ap  = role_keys_ap[0].strip().lower() if role_keys_ap else ""
+                    ap_role = raw_role_ap if raw_role_ap in VALID_ROLES else "employee"
+                    new_emp = await EmployeeRepository.create(
+                        auth_user_id=auth_user_id,
+                        employee_id=uname,
+                        name=full_name,
+                        email=user.get("email"),
+                        role=ap_role,
+                        department_name=None,
+                    )
+                    local_info = {"id": new_emp.id, "department": None, "assigned_asset_count": 0}
+                except Exception as exc:
+                    logger.warning(f"[list_employees] Could not auto-provision {auth_user_id}: {exc}")
+                    continue
+
             # Identity from AN
             first_name = user.get("firstName") or ""
             last_name = user.get("lastName") or ""

@@ -217,7 +217,7 @@ function AppRoutes() {
                     <Route path="/qr-generate/batches" element={<QrBatches />} />
                   </Route>
 
-                  <Route element={<RequireItOps sessionEmployee={sessionEmployee} />}>
+                  <Route element={<RequirePrivileged sessionEmployee={sessionEmployee} />}>
                     <Route path="/logs" element={<LogsPage />} />
                   </Route>
                 </Route>
@@ -388,10 +388,6 @@ function RequirePrivileged({ sessionEmployee }: { sessionEmployee: SessionEmploy
   return isPrivileged ? <Outlet /> : <Navigate to="/assets" replace />
 }
 
-function RequireItOps({ sessionEmployee }: { sessionEmployee: SessionEmployee | null }) {
-  const isItOps = sessionEmployee && sessionEmployee.role === 'it_ops'
-  return isItOps ? <Outlet /> : <Navigate to="/assets" replace />
-}
 
 function AuthLoadingScreen() {
   return (

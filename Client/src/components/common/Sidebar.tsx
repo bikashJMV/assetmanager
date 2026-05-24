@@ -51,6 +51,7 @@ function hasVisibilityAccess(
   if (visibility === 'authenticated') return isAuthenticated
   if (visibility === 'manage') return canManage
   if (visibility === 'it_ops') return isItOps
+  if (visibility === 'privileged') return canManage || isItOps
   return true
 }
 

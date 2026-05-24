@@ -1,6 +1,6 @@
 import type { AssetDetailRecord, AssetInventoryRecord, PublicScanAsset } from '../types/api'
 import type { ListEnvelope } from '../api/apiClient'
-import type { AssetExportRow } from '../utils/assetXlsxExport'
+import type { AssetExportRow, AssetHistoryRow } from '../utils/assetXlsxExport'
 
 import { buildAssetsXlsx } from '../utils/assetXlsxExport'
 
@@ -177,20 +177,28 @@ export type ExportAssetsXlsxResult = {
   fileName: string
 }
 
-export async function exportAssetsXlsx(): Promise<ExportAssetsXlsxResult> {
-  const resp = await api.request<{ data: AssetExportRow[] }>({
-    method: 'GET',
-    url: '/api/v1/assets/export.json',
-  })
+export async function exportAssetsXlsx(exportedBy = 'Administrator'): Promise<ExportAssetsXlsxResult> {
+  const [inventoryResp, historyResp] = await Promise.all([
+    api.request<{ data: AssetExportRow[]; exported_at?: string }>({
+      method: 'GET',
+      url: '/api/v1/assets/export.json',
+    }),
+    api.request<{ data: AssetHistoryRow[]; exported_at?: string }>({
+      method: 'GET',
+      url: '/api/v1/assets/export-history.json',
+    }).catch(() => ({ data: { data: [] as AssetHistoryRow[], exported_at: undefined } })),
+  ])
 
-  const rows: AssetExportRow[] = resp.data?.data ?? []
+  const rows: AssetExportRow[] = inventoryResp.data?.data ?? []
   if (!Array.isArray(rows) || rows.length === 0) {
     throw new Error('Asset export returned no data.')
   }
 
-  const today = new Date().toISOString().split('T')[0]!
-  const fileName = `assets-${today}.xlsx`
-  const xlsxBlob = buildAssetsXlsx(rows)
+  const exportedAt =
+    inventoryResp.data?.exported_at ?? new Date().toISOString().split('T')[0]!
+  const historyRows: AssetHistoryRow[] = historyResp.data?.data ?? []
+  const fileName = `assets-${exportedAt}.xlsx`
+  const xlsxBlob = buildAssetsXlsx(rows, exportedAt, historyRows, exportedBy)
   return { xlsxBlob, fileName }
 }
 

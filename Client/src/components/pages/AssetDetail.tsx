@@ -655,17 +655,18 @@ export default function AssetDetail() {
                     <th className="px-3 py-2 text-left uppercase text-xs font-semibold tracking-wider text-subtle">S No.</th>
                     <th className="px-3 py-2 text-left uppercase text-xs font-semibold tracking-wider text-subtle">Employee</th>
                     <th className="px-3 py-2 text-left uppercase text-xs font-semibold tracking-wider text-subtle">Employee ID</th>
+                    <th className="px-3 py-2 text-left uppercase text-xs font-semibold tracking-wider text-subtle">Serial Number</th>
                     <th className="px-3 py-2 text-left uppercase text-xs font-semibold tracking-wider text-subtle">Assigned At</th>
                     <th className="px-3 py-2 text-left uppercase text-xs font-semibold tracking-wider text-subtle">Returned At</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[color:var(--border)]">
-                  {detail.assignments.map((entry) => (
-                    <AssignmentRow key={entry.id} entry={entry} />
+                  {detail.assignments.map((entry, idx) => (
+                    <AssignmentRow key={entry.id} entry={entry} index={idx + 1} serialNumber={asset.serial_number ?? null} />
                   ))}
                   {detail.assignments.length === 0 && (
                     <tr>
-                      <td colSpan={4} className="px-3 py-8 text-center text-subtle">No assignment history</td>
+                      <td colSpan={6} className="px-3 py-8 text-center text-subtle">No assignment history</td>
                     </tr>
                   )}
                 </tbody>
@@ -942,11 +943,13 @@ function formatEmployeeAssignSummary(employee: EmployeeRecord | null): string {
   return name || employeeId
 }
 
-function AssignmentRow({ entry }: { entry: AssetAssignmentRecord }) {
+function AssignmentRow({ entry, index, serialNumber }: { entry: AssetAssignmentRecord; index: number; serialNumber: string | null }) {
   return (
     <tr className="hover:bg-surface-2/60 transition-colors duration-100 even:bg-surface/50">
+      <td className="px-3 py-2 text-subtle">{index}</td>
       <td className="px-3 py-2 text-primary">{formatDisplay(entry.employee?.name)}</td>
       <td className="px-3 py-2 text-primary">{formatDisplay(entry.employee?.employee_id)}</td>
+      <td className="px-3 py-2 text-primary font-mono text-xs">{formatDisplay(serialNumber)}</td>
       <td className="px-3 py-2 text-primary">{formatDateTime(entry.assigned_at)}</td>
       <td className="px-3 py-2 text-primary">{entry.returned_at ? formatDateTime(entry.returned_at) : <span className="inline-flex items-center gap-1 text-amber-500 font-medium"><span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>With Employee</span>}</td>
     </tr>

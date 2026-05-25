@@ -576,6 +576,25 @@ CREATE OR REPLACE VIEW public.v_warranty_notifications AS
 """
 
 
+MIGRATION_011_RESYNC_LAST_USED_NUMBER = """
+-- Resync last_used_number for every alias to the highest tag number
+-- already present in assets. This is a no-op when the counter is already
+-- ahead; it only advances a stale counter to match reality.
+UPDATE asset_categories ac
+SET    last_used_number = sub.max_num
+FROM (
+    SELECT
+        UPPER(split_part(asset_tag, '-', 2)) AS alias,
+        MAX(CAST(split_part(asset_tag, '-', 3) AS INT)) AS max_num
+    FROM   assets
+    WHERE  asset_tag ~ '^JMV-[A-Z]+-[0-9]+$'
+    GROUP  BY UPPER(split_part(asset_tag, '-', 2))
+) sub
+WHERE  UPPER(ac.alias_code) = sub.alias
+  AND  sub.max_num > ac.last_used_number;
+"""
+
+
 async def run_database_migrations() -> None:
     logger.info("[MigrationRunner] Checking database migrations...")
     pool = get_pg_pool()
@@ -634,5 +653,10 @@ async def run_database_migrations() -> None:
         async with conn.transaction():
             await conn.execute(MIGRATION_010_REMOVE_ASSET_SOFT_DELETE)
         logger.info("[MigrationRunner] Migration 010 SUCCESS.")
+
+        logger.info("[MigrationRunner] Executing Migration 011: Resync last_used_number counters to actual asset tags...")
+        async with conn.transaction():
+            await conn.execute(MIGRATION_011_RESYNC_LAST_USED_NUMBER)
+        logger.info("[MigrationRunner] Migration 011 SUCCESS.")
 
     logger.info("[MigrationRunner] All database migrations verified successfully!")

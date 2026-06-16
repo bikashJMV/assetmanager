@@ -86,7 +86,7 @@ pyroaring==1.0.4
 python-dateutil==2.9.0.post0
 python-dotenv==1.2.2
 python-jose==3.5.0
-python-multipart==0.0.27
+python-multipart==0.0.31
 PyYAML==6.0.3
 Pillow==12.2.0
 qrcode==8.2

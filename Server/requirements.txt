@@ -67,7 +67,7 @@ opentelemetry-sdk==1.41.0
 opentelemetry-semantic-conventions==0.62b0
 opentelemetry-util-http==0.62b0
 packaging==26.1
-pillow==12.2.0
+pillow==12.3.0
 prometheus-fastapi-instrumentator==7.1.0
 prometheus_client==0.25.0
 propcache==0.4.1

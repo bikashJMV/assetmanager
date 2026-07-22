@@ -72,7 +72,7 @@ prometheus-fastapi-instrumentator==7.1.0
 prometheus_client==0.25.0
 propcache==0.4.1
 protobuf==6.33.6
-pyasn1==0.6.3
+pyasn1==0.6.4
 pycparser==3.0
 pydantic==2.13.3
 pydantic-extra-types==2.11.1

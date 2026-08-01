@@ -1,14 +1,13 @@
 from __future__ import annotations
 
+import re
 from typing import Any, Optional
 
 from core.asset_db_types import AssetDateCoercionError, normalize_asset_date_fields_inplace
 from core.authnexus import EmployeeContext
 from repositories.asset_write_repository import AssetWriteRepository
-from repositories.errors import NotFoundError, ValidationError
-from repositories.recycle_bin_repository import RecycleBinRepository
+from repositories.errors import ValidationError
 from services.audit_service import AssetEventType, audit_service
-from services.hooks import HookContext, service_hooks
 
 
 class AssetService:
@@ -16,86 +15,9 @@ class AssetService:
     Business logic for assets (mutations).
 
     Confirmed responsibilities:
-    - Soft delete / restore / hard delete orchestration (hard delete later).
     - Audit trail written here (asset_logs, asset_events).
     - Hook-ready (email/webhook triggers later without router changes).
     """
-
-    @staticmethod
-    async def soft_delete_asset(
-        *,
-        asset_id: str,
-        actor: EmployeeContext,
-        reason: str | None = None,
-        request_id: str | None = None,
-        ip_address: str | None = None,
-        user_agent: str | None = None,
-    ) -> dict[str, Any]:
-        updated = await AssetWriteRepository.mark_soft_deleted(
-            asset_id=asset_id,
-            deleted_by_employee_id=actor.id,
-        )
-
-        label = str(updated.get("asset_tag") or updated.get("serial_number") or asset_id)
-        recycle_id = await RecycleBinRepository.insert_entry(
-            entity_type="asset",
-            entity_id=asset_id,
-            label=label,
-            payload={"reason": (reason or "").strip() or None},
-            deleted_by_employee_id=actor.id,
-        )
-
-        await audit_service.write_asset_event(
-            asset_id=asset_id,
-            event_type=AssetEventType.ASSET_DELETED,
-            actor=actor,
-            payload={"recycle_bin_id": recycle_id, "reason": (reason or "").strip() or None},
-            ip_address=ip_address,
-            user_agent=user_agent,
-        )
-        await audit_service.write_asset_log(
-            asset_id=asset_id,
-            actor=actor,
-            note=f"Asset soft-deleted. {('Reason: ' + reason.strip()) if reason and reason.strip() else ''}".strip(),
-            metadata={"op": "asset.soft_delete"},
-        )
-
-        await service_hooks.on_asset_deleted(
-            ctx=HookContext(request_id=request_id, actor_sub=actor.sub, actor_employee_id=actor.employee_id),
-            payload={"asset_id": asset_id, "recycle_bin_id": recycle_id},
-        )
-
-        return {"asset_id": asset_id, "recycle_bin_id": recycle_id}
-
-    @staticmethod
-    async def restore_asset(
-        *,
-        asset_id: str,
-        recycle_bin_id: str,
-        actor: EmployeeContext,
-        request_id: Optional[str] = None,
-        ip_address: Optional[str] = None,
-        user_agent: Optional[str] = None,
-    ) -> dict[str, Any]:
-        await AssetWriteRepository.mark_restored(asset_id=asset_id, restored_by_employee_id=actor.id)
-        await RecycleBinRepository.mark_restored(recycle_bin_id=recycle_bin_id, restored_by_employee_id=actor.id)
-
-        await audit_service.write_asset_event(
-            asset_id=asset_id,
-            event_type=AssetEventType.ASSET_RESTORED,
-            actor=actor,
-            payload={"recycle_bin_id": recycle_bin_id},
-            ip_address=ip_address,
-            user_agent=user_agent,
-        )
-        await audit_service.write_asset_log(
-            asset_id=asset_id,
-            actor=actor,
-            note="Asset restored from recycle bin.",
-            metadata={"op": "asset.restore"},
-        )
-
-        return {"asset_id": asset_id, "recycle_bin_id": recycle_bin_id}
 
     @staticmethod
     async def create_asset(
@@ -157,7 +79,7 @@ class AssetService:
                         location_id=location_id,
                         model=payload.get("model"),
                         serial_number=payload["serial_number"],
-                        status=payload.get("status"),
+                        status=payload.get("status") or "in_stock",
                         purchase_date=payload.get("purchase_date"),
                         warranty_expiry=payload.get("warranty_expiry"),
                         custom_fields=payload.get("custom_fields"),
@@ -224,7 +146,10 @@ class AssetService:
         # ─────────────────────────────────────────────────────────────
         # PATH B — Direct form submit (EXISTING FLOW, BYTE-IDENTICAL)
         # ─────────────────────────────────────────────────────────────
-        asset_tag = (payload.get("asset_tag") or "").strip() or await _AR.get_next_asset_tag()
+        manual_tag = (payload.get("asset_tag") or "").strip()
+        if manual_tag and re.search(r"-0{4,}$", manual_tag):
+            raise ValidationError("Asset tag sequence cannot be all zeros.")
+        asset_tag = manual_tag or await _AR.get_next_asset_tag(category_id)
 
         asset = await AssetWriteRepository.create_asset(
             asset_tag=asset_tag,
@@ -233,7 +158,7 @@ class AssetService:
             location_id=location_id,
             model=payload.get("model"),
             serial_number=payload["serial_number"],
-            status=payload.get("status"),
+            status=payload.get("status") or "in_stock",
             purchase_date=payload.get("purchase_date"),
             warranty_expiry=payload.get("warranty_expiry"),
             custom_fields=payload.get("custom_fields"),

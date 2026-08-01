@@ -7,7 +7,7 @@ import { userManager } from './utils/authService'
 const VITE_PUBLIC_APP_ORIGIN = import.meta.env.VITE_PUBLIC_APP_ORIGIN || 'http://localhost:11000';
 
 if (!import.meta.env.VITE_PUBLIC_APP_ORIGIN) {
-  console.warn("⚠️ VITE_PUBLIC_APP_ORIGIN not set. Using fallback.");
+  console.warn("âš ï¸ VITE_PUBLIC_APP_ORIGIN not set. Using fallback.");
 }
 
 /**
@@ -109,17 +109,6 @@ export type EmployeeAssetPortfolio = {
   assets: EmployeeAssignedAssetRecord[]
 }
 
-export type RecycleBinEntry = {
-  entry_id: string
-  entity_type: 'asset' | 'employee'
-  entity_id: string
-  label: string
-  payload: Record<string, unknown>
-  deleted_at: string
-  deleted_by_employee_id: string
-  deleted_by_employee_id_code: string | null
-  deleted_by_employee_name: string | null
-}
 
 export type EmployeeListFilters = {
   search?: string
@@ -648,7 +637,7 @@ export async function bulkInsertEmployees(rows: unknown[]): Promise<{ inserted: 
 
 
 
-/** Active employee IDs among the given list — bulk import must reject the file if any match. */
+/** Active employee IDs among the given list â€” bulk import must reject the file if any match. */
 export async function getActiveEmployeeIdsInUse(ids: string[]): Promise<Set<string>> {
   const normalized = [...new Set(ids.map((c) => c.trim()).filter(Boolean))]
   if (normalized.length === 0) return new Set()
@@ -661,7 +650,7 @@ export async function getActiveEmployeeIdsInUse(ids: string[]): Promise<Set<stri
   return new Set(data)
 }
 
-/** Emails that already exist on an employee row — bulk import should list every conflicting row in the file. */
+/** Emails that already exist on an employee row â€” bulk import should list every conflicting row in the file. */
 export async function getEmailsAlreadyInUse(emails: string[]): Promise<Set<string>> {
   const normalized = [...new Set(emails.map((e) => e.trim().toLowerCase()).filter(Boolean))]
   if (normalized.length === 0) return new Set()
@@ -1061,32 +1050,7 @@ export async function softDeleteEmployeeById(employeeId: string, note?: string):
   })
 }
 
-/**
- * Hard delete: removes dependent audit/assignment rows, then the employee row.
- * Only valid after soft-delete (open bin row). Migrations 27 + 46; call from Recycle Bin UI only.
- */
-export async function deleteRecycleBinEntryPermanently(entryId: string) {
-  return await requestBackend({
-    url: `/api/v1/recycle-bin/${entryId}`,
-    method: 'DELETE'
-  })
-}
 
-export async function listRecycleBinEntries(): Promise<RecycleBinEntry[]> {
-  const rows = await requestBackend<Record<string, unknown>[]>({
-    url: '/api/v1/recycle-bin',
-    method: 'GET'
-  })
-  // Backend returns `id` as the primary key; normalise to `entry_id` for the frontend type.
-  return rows.map((r) => ({ ...r, entry_id: r.entry_id ?? r.id } as unknown as RecycleBinEntry))
-}
-
-export async function restoreRecycleBinEntry(entryId: string): Promise<{ asset_id: string; recycle_bin_id: string }> {
-  return await requestBackend<{ asset_id: string; recycle_bin_id: string }>({
-    url: `/api/v1/recycle-bin/${entryId}/restore`,
-    method: 'POST'
-  })
-}
 
 export async function createLog(assetTag: string, note: string) {
   return await requestBackend({
@@ -1121,7 +1085,7 @@ export async function scanAsset(assetTag: string) {
   const [asset, sessionEmp] = await Promise.all([getAsset(assetTag), getSessionEmployee()])
   const isPrivileged = Boolean(sessionEmp?.is_active && sessionEmp?.role !== 'employee')
   // is_own_asset: true for admin/IT Ops, or if the asset is assigned to the signed-in employee.
-  // false means employee is viewing an asset not assigned to them — caller shows limited view via ScanPage.
+  // false means employee is viewing an asset not assigned to them â€” caller shows limited view via ScanPage.
   const isOwnAsset =
     isPrivileged ||
     Boolean(sessionEmp?.id && asset.current_employee_id === sessionEmp.id)

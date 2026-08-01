@@ -7,11 +7,10 @@ import { useAdminAccessQuery } from '../../queries/authz'
 import { useAssetDetailQuery, useProtectedAssetScanQuery } from '../../queries/assets'
 import { assignAsset, returnAsset } from '../../services/assignmentService'
 import { exportAssetAuditTrailPdf, exportAssetHistoryPdf } from '../../services/assetService'
-import { softDeleteAsset } from '../../services/assetService'
 import { buildAssetQrDataUri } from '../../utils/qr'
 import AssetForm from '../form/AssetForm'
 import Error from '../common/Error'
-import Loader from '../common/Loader'
+import { AppLoader } from '../ui'
 import ConfirmDialog from '../common/ConfirmDialog'
 import { getErrorDebugDetail, getUserFacingMessage, logDevError } from '../../utils/errors'
 import { formatDateTime, formatDisplay, formatEnumLabel } from '../../utils/formatDisplay'
@@ -20,7 +19,7 @@ import InventoryStatusBadge from '../common/InventoryStatusBadge'
 import AnimatedNavIcon, { type IconName } from '../common/AnimatedNavIcon'
 import { useToast } from '../../hooks/useToast'
 import EmployeeAssignLookup from '../common/EmployeeAssignLookup'
-import { FEATURES } from '../../utils/featureFlags'
+import { LOADING } from '../../constants/loading'
 
 
 const ASSIGNABLE_STATUSES = new Set(['in_stock', 'assigned'])
@@ -62,7 +61,6 @@ export default function AssetDetail() {
   const [actionLoading, setActionLoading] = useState(false)
   const [assignDialogOpen, setAssignDialogOpen] = useState(false)
   const [returnDialogOpen, setReturnDialogOpen] = useState(false)
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [qrDataUri, setQrDataUri] = useState<string | null>(null)
   const [qrLoading, setQrLoading] = useState(false)
   const [qrError, setQrError] = useState<string | null>(null)
@@ -154,7 +152,7 @@ export default function AssetDetail() {
       return
     }
     if (!isAssignableStatus) {
-      setError(`Cannot assign — this asset is currently marked as "${formatEnumLabel(detail.asset.status)}". Please update its inventory status before assigning.`)
+      setError(`Cannot assign - this asset is currently marked as "${formatEnumLabel(detail.asset.status)}". Please update its inventory status before assigning.`)
       return
     }
     if (!selectedAssignee?.employee_id.trim()) {
@@ -261,6 +259,10 @@ export default function AssetDetail() {
 
   const handleExportHistoryPdf = async () => {
     if (!detail?.asset.asset_tag) return
+    if ((detail.assignments?.length ?? 0) === 0) {
+      showToast({ message: 'No assignment history to download.', variant: 'info' })
+      return
+    }
     setHistoryPdfExporting(true)
     try {
       const { pdfBlob, fileName } = await exportAssetHistoryPdf(detail.asset.asset_tag)
@@ -282,6 +284,10 @@ export default function AssetDetail() {
 
   const handleExportAuditTrailPdf = async () => {
     if (!detailRef) return
+    if ((detail?.lifecycle_events?.length ?? 0) === 0) {
+      showToast({ message: 'No lifecycle log to download.', variant: 'info' })
+      return
+    }
     setAuditTrailPdfExporting(true)
     try {
       const { pdfBlob, fileName } = await exportAssetAuditTrailPdf(detailRef, { limit: 100 })
@@ -298,26 +304,6 @@ export default function AssetDetail() {
       showToast({ message: getUserFacingMessage(err, 'Unable to export audit trail PDF.'), variant: 'error' })
     } finally {
       setAuditTrailPdfExporting(false)
-    }
-  }
-
-  const handleSoftDelete = async () => {
-    if (!detail?.asset.id || !canManage) return
-    setActionLoading(true)
-    setError('')
-    setErrorDebug(undefined)
-    try {
-      await softDeleteAsset(detail.asset.id)
-      setDeleteDialogOpen(false)
-      showToast({ message: 'Asset moved to Recycle Bin.', variant: 'success' })
-      navigate('/recycle-bin')
-    } catch (err) {
-      logDevError('assetDetail.soft_delete', err)
-      setDeleteDialogOpen(false)
-      showToast({ message: getUserFacingMessage(err, 'Unable to delete this asset right now.'), variant: 'error' })
-      setErrorDebug(getErrorDebugDetail(err))
-    } finally {
-      setActionLoading(false)
     }
   }
 
@@ -338,7 +324,7 @@ export default function AssetDetail() {
   }
 
   if (loading && !detail) {
-    return <Loader />
+    return <AppLoader variant="page" />
   }
 
   if (!detail) {
@@ -374,14 +360,6 @@ export default function AssetDetail() {
                 icon="edit"
                 label="Edit Asset"
                 onClick={() => setShowEdit(true)}
-                disabled={actionLoading}
-              />
-            ) : null}
-            {canManage && FEATURES.RECYCLE_BIN ? (
-              <HeaderActionButton
-                icon="trash"
-                label="Delete Asset"
-                onClick={() => setDeleteDialogOpen(true)}
                 disabled={actionLoading}
               />
             ) : null}
@@ -524,9 +502,9 @@ export default function AssetDetail() {
         {canManage ? (
           <section className="bg-surface border border-base rounded-xl p-4 sm:p-5">
             <h2 className="text-sm font-semibold uppercase tracking-[0.14em] text-subtle mb-2">Assign or return</h2>
-            <p className="text-xs  mb-3 text-black font-bold  leading-relaxed">
+            <p className="text-xs  mb-3 text-primary font-bold  leading-relaxed">
               {canManage
-                ? 'Move custody by assigning to an employee code, or close the open assignment to return the asset to stock. Assignments are exclusive—one active holder at a time.'
+                ? 'Move custody by assigning to an employee code, or close the open assignment to return the asset to stock. Assignments are exclusive - one active holder at a time.'
                 : 'Read-only: you can view this asset but cannot change custody. Admin or IT Ops access is required to assign or return.'}
             </p>
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
@@ -552,7 +530,7 @@ export default function AssetDetail() {
                 <button
                   onClick={openAssignDialog}
                   disabled={actionLoading}
-                  className="flex-1 bg-accent text-white font-semibold px-3 py-2.5 rounded-lg text-sm disabled:opacity-60"
+                  className="flex-1 bg-accent text-on-accent font-semibold px-3 py-2.5 rounded-lg text-sm disabled:opacity-60"
                   type="button"
                 >
                   Assign
@@ -567,8 +545,8 @@ export default function AssetDetail() {
                 </button>
               </div>
             </div>
-            <p className="text-[11px]  text-black font-bold  mt-2">
-              Reassigning to a different code ends the previous holder’s assignment automatically and opens a new row in history.
+            <p className="text-[11px]  text-primary font-bold  mt-2">
+              Reassigning to a different code ends the previous holder's assignment automatically and opens a new row in history.
             </p>
             {error ? <p className="text-accent text-sm mt-2">{error}</p> : null}
           </section>
@@ -590,7 +568,7 @@ export default function AssetDetail() {
         {detail.components.length > 0 && (
           <Section
             title="Components"
-            description="Sub-items bundled with this asset—such as modules, docks, or accessories—each stored as its own line with type and serials where tracked."
+            description="Sub-items bundled with this asset - such as modules, docks, or accessories - each stored as its own line with type and serials where tracked."
           >
             <div className="overflow-x-auto rounded-lg border border-base">
               <table className="w-full min-w-[680px] text-sm">
@@ -640,7 +618,7 @@ export default function AssetDetail() {
                   <span className="flex h-4 w-4 items-center justify-center">
                     <AnimatedNavIcon name="download" />
                   </span>
-                  <span>{historyPdfExporting ? 'Exporting...' : 'Export PDF'}</span>
+                  <span>{historyPdfExporting ? LOADING.EXPORTING : 'Export PDF'}</span>
                 </button>
               ) : null
             }
@@ -690,7 +668,7 @@ export default function AssetDetail() {
                 <span className="flex h-4 w-4 items-center justify-center">
                   <AnimatedNavIcon name="download" />
                 </span>
-                <span>{auditTrailPdfExporting ? 'Downloading...' : 'Download PDF'}</span>
+                <span>{auditTrailPdfExporting ? LOADING.DOWNLOADING : 'Download PDF'}</span>
               </button>
             }
           >
@@ -746,17 +724,6 @@ export default function AssetDetail() {
           void handleReturn()
         }}
       />
-      {FEATURES.RECYCLE_BIN && (
-        <ConfirmDialog
-          open={deleteDialogOpen}
-          title="Move Asset to Recycle Bin"
-          message={`Move ${detail.asset.asset_tag || 'this asset'} to Recycle Bin?`}
-          confirmLabel="Delete"
-          loading={actionLoading}
-          onClose={() => setDeleteDialogOpen(false)}
-          onConfirm={() => { void handleSoftDelete() }}
-        />
-      )}
     </main>
   )
 }
@@ -853,8 +820,8 @@ function InfoRow({ label, value }: { label: string; value: string }) {
 }
 
 function formatAuthUserRef(id: string | null | undefined): string {
-  if (!id) return '—'
-  return id.length > 10 ? `${id.slice(0, 8)}…` : id
+  if (!id) return '-'
+  return id.length > 10 ? `${id.slice(0, 8)}...` : id
 }
 
 function formatAuditActorDisplay(
@@ -892,10 +859,10 @@ function formatAuditActorWithTimestamp(
 
   if (auditActorHasIdentity(actor)) {
     if (when === '-') return who
-    return `${who} · ${when}`
+    return `${who} - ${when}`
   }
 
-  // Only an auth user id (or no actor): show readable date/time only, not `621576a6…`.
+  // Only an auth user id (or no actor): show readable date/time only, not `621576a6...`.
   if (when !== '-') return when
   return '-'
 }

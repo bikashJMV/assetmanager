@@ -21,7 +21,6 @@ This deployment uses env-driven ports and keeps raw infrastructure services priv
 | `9090` | Prometheus |
 | `3200` | Tempo |
 | `4317` | OTLP gRPC |
-| `12345` | Alloy UI |
 
 ## Required Env Values
 
@@ -37,10 +36,11 @@ VITE_API_URL=http://your-org-host:11100
 VITE_PUBLIC_APP_ORIGIN=https://your-org-host:11000
 VITE_OTEL_EXPORTER_ENDPOINT=http://your-org-host:11400/v1/traces
 VITE_GRAFANA_DASHBOARD_URL_FOR_ITOPS=http://your-org-host:11200
-LOKI_BASE_URL=http://loki:3100
+LOKI_BASE_URL=http://observability:3100
+OTEL_EXPORTER_OTLP_ENDPOINT=http://observability:4317
 ```
 
-Observability settings are loaded from `Observability/.env` (copy from `Observability/.env.observability.example`). The root compose file references this file for Grafana (see `docker-compose.yml`).
+Observability runs as a single `grafana/otel-lgtm` container (the `observability` service in `docker-compose.yml`). It needs no separate env file; server-side OTLP vars live in the root `.env` (`OTEL_GRAFANA_ENABLED`, `LOKI_BASE_URL`, `OTEL_EXPORTER_OTLP_ENDPOINT`).
 
 ```env
 GRAFANA_PUBLISH_PORT=11200
@@ -51,16 +51,15 @@ AMS_SERVER_METRICS_TARGET=ams-server:8000
 
 ## Start order
 
-The stack is defined in a **single** file: `assetmanager/docker-compose.yml`. It includes Loki, Tempo, Prometheus, Grafana, Alloy, Postgres, the AMS server, the client, and pgAdmin. Docker creates the shared `ams-observability` network when you start services.
+The stack is defined in a **single** file: `assetmanager/docker-compose.yml`. It includes a single `grafana/otel-lgtm` observability container, Postgres, the AMS server, the client, and pgAdmin. Docker creates the shared `ams-observability` network when you start services.
 
 ```bash
 cd assetmanager
-cp Observability/.env.observability.example Observability/.env   # fill passwords / ports
 # ensure assetmanager/.env is configured (see Required Env Values above)
 docker compose up --build -d
 ```
 
-The server joins `ams-observability` so it can query Loki at `http://loki:3100` without exposing Loki on the public host.
+The server joins `ams-observability` so it can query Loki at `http://observability:3100` without exposing Loki on the public host.
 
 ## Client Image
 

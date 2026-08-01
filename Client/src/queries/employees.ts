@@ -2,12 +2,10 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import {
   changeEmployeeRole,
-  createEmployee,
   getEmployeeById,
   getEmployeePortfolio,
   getSessionEmployeeProfile,
   listEmployees,
-  softDeleteEmployee,
   updateEmployee,
   type ListEmployeesParams,
 } from '../services/employeeService'
@@ -51,16 +49,6 @@ export function useSessionEmployeeQuery() {
   })
 }
 
-export function useCreateEmployeeMutation() {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: (input: Omit<EmployeeUpsertInput, 'id'>) => createEmployee(input),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: employeeQueryKeys.all })
-    },
-  })
-}
-
 export function useUpdateEmployeeMutation(id: string) {
   const qc = useQueryClient()
   return useMutation({
@@ -75,16 +63,6 @@ export function useChangeEmployeeRoleMutation() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ id, role }: { id: string; role: EmployeeRole }) => changeEmployeeRole(id, role),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: employeeQueryKeys.all })
-    },
-  })
-}
-
-export function useSoftDeleteEmployeeMutation() {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: (id: string) => softDeleteEmployee(id),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: employeeQueryKeys.all })
     },

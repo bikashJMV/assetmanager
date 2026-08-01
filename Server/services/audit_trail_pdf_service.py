@@ -5,15 +5,16 @@ from datetime import datetime, timezone
 from io import BytesIO
 from typing import Any
 
-from reportlab.lib import colors
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.units import mm
-from reportlab.lib.utils import ImageReader
-from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-from reportlab.pdfgen import canvas
-from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+# reportlab ships no type stubs and types-reportlab is not a dependency here.
+from reportlab.lib import colors  # type: ignore[import-untyped]
+from reportlab.lib.pagesizes import A4  # type: ignore[import-untyped]
+from reportlab.lib.units import mm  # type: ignore[import-untyped]
+from reportlab.lib.utils import ImageReader  # type: ignore[import-untyped]
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet  # type: ignore[import-untyped]
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle  # type: ignore[import-untyped]
 
-from services.qr_service import qr_service
+from core.pdf_footer import FooterCanvas  # type: ignore[import-not-found]
+from services.qr_service import qr_service  # type: ignore[import-not-found]
 
 
 def _is_plain_object(value: Any) -> bool:
@@ -76,13 +77,10 @@ def _format_time_date(value: Any) -> str:
         raw = str(value).strip()
         if not raw:
             return "-"
-        dt = None
         # Most common API shapes: ISO-8601 with/without timezone, and `...Z`
         try:
             dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
         except Exception:
-            dt = None
-        if dt is None:
             return raw
 
     if dt.tzinfo is None:
@@ -268,7 +266,8 @@ class AuditTrailPDFService:
         if event_type != "asset_updated":
             return [AuditTrailPDFService._ChangeRow(field_label="—", before_value="—", after_value="—")]
 
-        payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+        raw_payload = event.get("payload")
+        payload: dict[str, Any] = raw_payload if isinstance(raw_payload, dict) else {}
         raw_changes = payload.get("changes")
         if not isinstance(raw_changes, list):
             return [AuditTrailPDFService._ChangeRow(field_label="—", before_value="—", after_value="—")]
@@ -292,7 +291,8 @@ class AuditTrailPDFService:
 
     @staticmethod
     def _event_summary(event: dict[str, Any]) -> str:
-        payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+        raw_payload = event.get("payload")
+        payload: dict[str, Any] = raw_payload if isinstance(raw_payload, dict) else {}
         asset_tag = str(payload.get("asset_tag") or "").strip()
         event_type = str(event.get("event_type") or "")
         if event_type == "asset_created":
@@ -328,42 +328,18 @@ class AuditTrailPDFService:
 audit_trail_pdf_service = AuditTrailPDFService()
 
 
-class _NumberedCanvas(canvas.Canvas):
-    """
-    Canvas that renders "Page X of Y" in the footer.
-    Uses a two-pass approach by storing page states, then writing totals on save.
-    """
+class _NumberedCanvas(FooterCanvas):  # type: ignore[misc]  # base resolves to Any under per-file mypy
+    """Standard AMS footer (see core.pdf_footer) plus the per-page asset QR."""
 
     QR_SIZE = 24 * mm
 
     def __init__(self, *args: Any, asset_tag: str = "", **kwargs: Any):
         super().__init__(*args, **kwargs)
-        self._saved_page_states: list[dict[str, Any]] = []
         self._asset_tag = str(asset_tag or "").strip()
 
-    def showPage(self) -> None:  # noqa: N802 - ReportLab API
-        self._saved_page_states.append(dict(self.__dict__))
-        self._startPage()
-
-    def save(self) -> None:  # noqa: A003 - ReportLab API
-        total_pages = len(self._saved_page_states)
-        for state in self._saved_page_states:
-            self.__dict__.update(state)
-            self._draw_page_number(total_pages)
-            canvas.Canvas.showPage(self)
-        canvas.Canvas.save(self)
-
-    def _draw_page_number(self, total_pages: int) -> None:
+    def draw_page_decorations(self, total_pages: int) -> None:
         self._draw_qr()
-
-        page_num = self.getPageNumber()
-        label = f"Page {page_num} of {total_pages}"
-        self.saveState()
-        self.setFont("Helvetica", 9)
-        self.setFillColor(colors.HexColor("#6B7280"))
-        width, _height = A4
-        self.drawRightString(width - 36, 18, label)
-        self.restoreState()
+        super().draw_page_decorations(total_pages)
 
     def _draw_qr(self) -> None:
         tag = self._asset_tag

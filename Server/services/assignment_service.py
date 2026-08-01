@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -68,6 +69,7 @@ class AssignmentService:
         ip_address: Optional[str] = None,
         user_agent: Optional[str] = None,
     ) -> dict[str, Any]:
+        t0 = time.perf_counter()
         at = _normalize_dt(assigned_at)
 
         hook_payload: dict[str, Any] = {
@@ -177,6 +179,11 @@ class AssignmentService:
                             "asset_tag": asset_row.get("asset_tag"),
                             "previous_employee_row_id": previous_employee_id,
                             "previous_employee_id": asset_row.get("current_employee_business_id"),
+                            # Asset department follows its holder — record the change for the audit trail.
+                            "department": {
+                                "before": asset_row.get("current_employee_department"),
+                                "after": employee_row.get("department"),
+                            },
                             "notes": notes,
                         },
                         ip_address=ip_address,
@@ -289,6 +296,10 @@ class AssignmentService:
                     exc,
                 )
 
+        logger.info(
+            "[timing] asset.assign asset_tag=%s employee=%s took %.1fms",
+            asset_tag, business_employee_id, (time.perf_counter() - t0) * 1000,
+        )
         return result
 
     @staticmethod
@@ -303,6 +314,7 @@ class AssignmentService:
         ip_address: Optional[str] = None,
         user_agent: Optional[str] = None,
     ) -> dict[str, Any]:
+        t0 = time.perf_counter()
         at = _normalize_dt(returned_at)
 
         async with pool().acquire() as conn:
@@ -341,7 +353,7 @@ class AssignmentService:
                     asset_id=asset_id,
                     actor=actor,
                     note=(
-                        f"Asset returned."
+                        "Asset returned."
                         + (f" Notes: {notes.strip()}" if notes and notes.strip() else "")
                     ).strip(),
                     metadata={"op": "assignment.return"},
@@ -390,6 +402,10 @@ class AssignmentService:
                 exc,
             )
 
+        logger.info(
+            "[timing] asset.return asset_tag=%s took %.1fms",
+            asset_tag, (time.perf_counter() - t0) * 1000,
+        )
         return {
             "ok": True,
             "assignment_id": assignment_id,

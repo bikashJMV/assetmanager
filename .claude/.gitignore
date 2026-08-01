@@ -1,0 +1,4 @@
+state/
+settings.local.json
+hooks/__pycache__/
+*.pyc

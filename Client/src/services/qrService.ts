@@ -50,6 +50,32 @@ export async function createQrBatch(count: number, idempotencyKey: string): Prom
   return resp.data.data
 }
 
+export async function countUnusedQr(): Promise<number> {
+  const resp = await api.request<{ data: { count: number } }>({
+    method: 'GET',
+    url: '/api/v1/qr/reservations/unused/count',
+  })
+  return resp.data.data.count
+}
+
+/** Single PDF of ALL unused QR codes (reserved, never linked) for reprint/reuse. */
+export async function downloadUnusedQrPdf(): Promise<{ pdfBlob: Blob; fileName: string }> {
+  const resp = await api.request<Blob>({
+    method: 'GET',
+    url: '/api/v1/qr/reservations/unused/pdf',
+    responseType: 'blob',
+  })
+
+  const blob = resp.data
+  if (!(blob instanceof Blob) || !blob.size) {
+    throw new Error('Unused QR export returned an empty file.')
+  }
+
+  const fileName = extractDownloadFileName(resp.headers['content-disposition'], 'Unused QRs.pdf')
+  const pdfBlob = new Blob([blob], { type: 'application/pdf' })
+  return { pdfBlob, fileName }
+}
+
 export async function downloadQrBatchPdf(batchId: string): Promise<{ pdfBlob: Blob; fileName: string }> {
   const resp = await api.request<Blob>({
     method: 'GET',

@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import datetime
 from typing import Any, Optional
 import uuid
-import asyncpg
 
-from repositories.db import pool, fetchrow_dict, fetch_dicts, Page, normalize_page_params
+from repositories.db import pool, fetchrow_dict, fetch_dicts, normalize_page_params
 from repositories.errors import NotFoundError, ValidationError
 
 
@@ -48,6 +46,56 @@ class QrRepository:
                 p.limit,
             )
             return rows, total
+
+    @staticmethod
+    async def list_unused_reservations(page: int, limit: int) -> tuple[list[dict[str, Any]], int]:
+        """Reservations generated but never linked to an asset (status='reserved'), FIFO oldest-first."""
+        p = normalize_page_params(page, limit)
+        where = "r.status = 'reserved' AND r.consumed_by_asset_id IS NULL"
+        async with pool().acquire() as conn:
+            total = await conn.fetchval(
+                f"SELECT COUNT(*) FROM qr_tag_reservations r WHERE {where}"
+            )
+            rows = await fetch_dicts(
+                conn,
+                f"""
+                SELECT r.id::text AS reservation_id,
+                       r.asset_tag,
+                       r.created_at AS reserved_at,
+                       b.batch_code,
+                       b.created_at AS batch_created_at
+                  FROM qr_tag_reservations r
+                  JOIN qr_batches b ON b.id = r.batch_id
+                 WHERE {where}
+                 ORDER BY r.created_at ASC, r.asset_tag ASC
+                 OFFSET $1 LIMIT $2
+                """,
+                p.offset,
+                p.limit,
+            )
+            return rows, int(total)
+
+    @staticmethod
+    async def list_all_unused_tags(cap: int = 2000) -> list[str]:
+        """All unused (reserved, never-linked) asset tags, FIFO. Capped for a sane PDF size."""
+        async with pool().acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT asset_tag FROM qr_tag_reservations "
+                "WHERE status = 'reserved' AND consumed_by_asset_id IS NULL "
+                "ORDER BY created_at ASC, asset_tag ASC LIMIT $1",
+                cap,
+            )
+        return [str(r["asset_tag"]) for r in rows]
+
+    @staticmethod
+    async def count_unused_reservations() -> int:
+        """Cheap count of unused (reserved, never-linked) QR reservations for the UI badge."""
+        async with pool().acquire() as conn:
+            total = await conn.fetchval(
+                "SELECT COUNT(*) FROM qr_tag_reservations "
+                "WHERE status = 'reserved' AND consumed_by_asset_id IS NULL"
+            )
+            return int(total)
 
     @staticmethod
     async def list_reservations_for_batch(batch_id: str) -> list[dict[str, Any]]:
@@ -128,11 +176,13 @@ class QrRepository:
                 from datetime import datetime
                 batch_code = f"QR-{datetime.utcnow().year}-{int(batch_seq):04d}"
 
-                # Reserve N tags atomically via sequence
+                # Reserve N tags atomically via sequence. QR batches are category-agnostic
+                # (category is chosen when the sticker is later logged), so reserved tags use the
+                # generic 'JMV-GEN-#####' pool; nextval starts at 1 so an all-zero tag is impossible.
                 tag_rows = await fetch_dicts(
                     conn,
                     """
-                    select 'AST-' || lpad(nextval('asset_tag_seq')::text, 5, '0') as tag
+                    select 'JMV-GEN-' || lpad(nextval('asset_tag_seq')::text, 5, '0') as tag
                       from generate_series(1, $1)
                     """,
                     count,

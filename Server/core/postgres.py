@@ -1,16 +1,16 @@
 from __future__ import annotations
 
-import asyncpg
+import asyncpg  # type: ignore[import-untyped]  # asyncpg ships no stubs / py.typed marker
 import json
 
-from core.settings import settings
+from core.settings import settings  # type: ignore[import-not-found]  # resolved at runtime; per-file mypy lacks the package root
 
 _pool: asyncpg.Pool | None = None
 
 
 def _build_dsn() -> str:
     if settings.DATABASE_URL.strip():
-        return settings.DATABASE_URL.strip()
+        return str(settings.DATABASE_URL.strip())
 
     user = settings.POSTGRES_USER.strip()
     password = settings.POSTGRES_PASSWORD

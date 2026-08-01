@@ -27,6 +27,7 @@ _EXEMPT_PREFIXES: tuple[str, ...] = (
 
 _EXEMPT_PATHS: set[str] = {
     "/api/auth/refresh",
+    "/api/auth/set-session",
 }
 
 

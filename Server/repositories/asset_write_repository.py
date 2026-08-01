@@ -15,35 +15,6 @@ def _now() -> datetime:
 
 class AssetWriteRepository:
     @staticmethod
-    async def mark_soft_deleted(
-        *,
-        asset_id: str,
-        deleted_by_employee_id: Optional[str],
-    ) -> dict[str, Any]:
-        if not (asset_id or "").strip():
-            raise ValidationError("asset_id is required")
-
-        async with pool().acquire() as conn:
-            row = await fetchrow_dict(
-                conn,
-                """
-                update assets
-                   set is_deleted=true,
-                       deleted_at=$2,
-                       deleted_by_employee_id=$3::uuid,
-                       updated_at=now()
-                 where id=$1::uuid and coalesce(is_deleted,false)=false
-                 returning id::text as id, asset_tag, serial_number
-                """,
-                asset_id,
-                _now(),
-                deleted_by_employee_id,
-            )
-            if not row:
-                raise NotFoundError("Asset not found or already deleted")
-            return row
-
-    @staticmethod
     async def mark_restored(*, asset_id: str, restored_by_employee_id: Optional[str]) -> dict[str, Any]:
         if not (asset_id or "").strip():
             raise ValidationError("asset_id is required")
@@ -181,7 +152,7 @@ class AssetWriteRepository:
                 str(asset_id or asset_tag)
             )
             if not old_row:
-                raise NotFoundError(f"Asset not found")
+                raise NotFoundError("Asset not found")
 
             # 1. Resolve meta if strings provided
             if "category_slug" in payload:

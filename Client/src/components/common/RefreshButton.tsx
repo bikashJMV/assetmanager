@@ -1,4 +1,5 @@
 import AnimatedNavIcon from './AnimatedNavIcon'
+import { LOADING } from '../../constants/loading'
 
 type Props = {
   onClick: () => void | Promise<void>
@@ -21,7 +22,7 @@ export default function RefreshButton({
   iconOnly = false,
   ariaLabel,
   title,
-  loadingAriaLabel = 'Refreshing data',
+  loadingAriaLabel = LOADING.REFRESHING,
 }: Props) {
   const resolvedLabel = label
   const resolvedAriaLabel = ariaLabel || (loading ? loadingAriaLabel : 'Refresh data')
@@ -41,7 +42,7 @@ export default function RefreshButton({
         <AnimatedNavIcon name="refresh-cw" />
       </span>
       {!iconOnly && <span>{resolvedLabel}</span>}
-      {loading ? <span className="sr-only">Refreshing</span> : null}
+      {loading ? <span className="sr-only">{LOADING.REFRESHING}</span> : null}
     </button>
   )
 }

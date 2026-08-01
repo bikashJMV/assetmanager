@@ -3,7 +3,7 @@
   --density-text-scale: 1;
   --user-text-scale: 1;
   --text-scale: calc(var(--density-text-scale) * var(--user-text-scale));
-  --app-font-family: 'Segoe UI Variable', 'Segoe UI', 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif;
+  --app-font-family: var(--font-sans);
   --app-letter-spacing: 0;
   --app-line-height: 1.5;
 }
@@ -25,7 +25,7 @@
 }
 
 :root[data-font='claude'] {
-  --app-font-family: 'Segoe UI Variable', 'Segoe UI', 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif;
+  --app-font-family: var(--font-sans);
   --app-letter-spacing: 0;
   --app-line-height: 1.5;
 }
@@ -158,7 +158,7 @@
 
   ::selection {
     background: var(--accent);
-    color: #000000;
+    color: var(--on-accent);
   }
 }
 
@@ -188,11 +188,14 @@
 .text-muted { color: var(--muted); }
 .text-subtle { color: var(--subtle); }
 .text-accent { color: var(--accent); }
-.text-white { color: var(--on-accent); }
+.text-on-accent { color: var(--on-accent); }
 .bg-accent { background-color: var(--accent); }
 .bg-accent-hover { background-color: var(--accent-hover); }
 .border-base { border-color: var(--border); }
 .border-accent-soft { border-color: var(--accent-soft); }
+
+.footer-link { color: var(--muted); }
+.footer-link:hover { color: var(--text); }
 .shadow-accent { box-shadow: 0 10px 30px var(--accent-shadow); }
 
 /* Sidebar animated icons (Lucide style, hover/focus driven). */
@@ -424,6 +427,100 @@
   transform-origin: bottom;
 }
 
+/* =========================================================
+   DARK SIDEBAR ANCHOR (Notes/UI.md §5) — Docker signature.
+   The sidebar is dark in BOTH themes. Nav items consume the bridged legacy
+   vars (text, muted, border, surface tiers, accent-soft), so re-scoping those
+   vars here reskins every nav item to the dark palette without touching the
+   nav-item classNames.
+   ========================================================= */
+.ams-sidebar {
+  background: hsl(var(--sidebar-bg));
+  --bg:        hsl(var(--sidebar-bg));
+  --surface:   hsl(var(--sidebar-fg-active) / 0.06);
+  --surface-2: hsl(var(--sidebar-fg-active) / 0.08);
+  --surface-3: hsl(var(--sidebar-item-hover));
+  --text:      hsl(var(--sidebar-fg-active));
+  --muted:     hsl(var(--sidebar-fg));
+  --subtle:    hsl(var(--sidebar-fg) / 0.65);
+  --border:    hsl(var(--sidebar-border));
+  --accent-soft: hsl(var(--primary) / 0.30);
+  /* Tailwind utilities (bg-surface, border-line, text-foreground, …) read the *-t /
+     *-foreground tokens, not the legacy vars above. Re-scope them to the dark-sidebar
+     palette (raw HSL triplets so /alpha opacity variants keep working) — otherwise
+     bg-surface/90 & friends fall through to the light root and break in light mode. */
+  --background:        var(--sidebar-bg);
+  --surface-t:         var(--sidebar-item-hover);
+  --surface-hover:     var(--sidebar-item-hover);
+  --surface-sunken:    var(--sidebar-bg);
+  --border-t:          var(--sidebar-border);
+  --border-strong:     var(--sidebar-border);
+  --foreground:        var(--sidebar-fg-active);
+  --muted-foreground:  var(--sidebar-fg);
+  --faint-foreground:  var(--sidebar-fg);
+  color: hsl(var(--sidebar-fg));
+}
+
+/* Active nav item: tinted brand bg + full-opacity label/icon (§5) */
+.ams-sidebar .nav-item-active {
+  background: hsl(var(--primary) / 0.18) !important;
+  color: hsl(var(--sidebar-fg-active)) !important;
+}
+
+.ams-sidebar .nav-item-active .ai-icon {
+  color: hsl(var(--sidebar-fg-active));
+}
+
+/* Skeleton shimmer (Notes/UI.md §7) — GPU-only translateX on a gradient overlay */
+.ams-skeleton {
+  position: relative;
+  overflow: hidden;
+  background: var(--surface-2);
+}
+
+.ams-skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, hsl(var(--foreground) / 0.06), transparent);
+  animation: ams-shimmer 1.4s var(--ease-inout) infinite;
+}
+
+@keyframes ams-shimmer {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(100%); }
+}
+
+/* Idle warning modal — slides bottom → center (Notes/UI.md §14), GPU-only */
+.ams-idle-in {
+  animation: ams-idle-in var(--dur-slow) var(--ease-out);
+}
+
+@keyframes ams-idle-in {
+  from { opacity: 0; transform: translateY(24px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* Toast entrance (Notes/UI.md §9) — opacity + translateY, GPU-only */
+.ams-toast-in {
+  animation: ams-toast-in var(--dur-base) var(--ease-out);
+}
+
+@keyframes ams-toast-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* List re-render entrance (filter/refresh applied) — opacity + 4px lift, GPU-only */
+.ams-list-in {
+  animation: ams-list-in var(--dur-base) var(--ease-out);
+}
+
+@keyframes ams-list-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
 .category-bar {
   width: 0;
 }
@@ -466,5 +563,37 @@
 
   .settings-pop {
     animation: none;
+  }
+
+  .ams-skeleton::after {
+    animation: none;
+  }
+
+  .ams-toast-in {
+    animation: none;
+  }
+
+  .ams-idle-in {
+    animation: none;
+  }
+
+  .ams-list-in {
+    animation: none;
+  }
+}
+
+/* Circular-reveal theme swap (View Transitions API). Stack the new snapshot over the
+   old and disable the default crossfade — the JS clip-path animation does the reveal. */
+@supports (view-transition-name: none) {
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation: none;
+    mix-blend-mode: normal;
+  }
+  ::view-transition-old(root) {
+    z-index: 1;
+  }
+  ::view-transition-new(root) {
+    z-index: 2;
   }
 }

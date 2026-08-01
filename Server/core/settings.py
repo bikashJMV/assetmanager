@@ -1,6 +1,7 @@
+import logging
 import os
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Tuple
 from dotenv import load_dotenv
 
 # Load .env file
@@ -25,7 +26,8 @@ class Settings:
     POSTGRES_USER: str = field(default_factory=lambda: os.getenv("POSTGRES_USER", ""))
     POSTGRES_PASSWORD: str = field(default_factory=lambda: os.getenv("POSTGRES_PASSWORD", ""))
     POSTGRES_MIN_POOL_SIZE: int = field(default_factory=lambda: int(os.getenv("POSTGRES_MIN_POOL_SIZE", "1")))
-    POSTGRES_MAX_POOL_SIZE: int = field(default_factory=lambda: int(os.getenv("POSTGRES_MAX_POOL_SIZE", "10")))
+    # Per-worker pool. 4 uvicorn workers x 15 = 60 connections, under postgres max_connections=100.
+    POSTGRES_MAX_POOL_SIZE: int = field(default_factory=lambda: int(os.getenv("POSTGRES_MAX_POOL_SIZE", "15")))
     POSTGRES_COMMAND_TIMEOUT_SECONDS: float = field(
         default_factory=lambda: float(os.getenv("POSTGRES_COMMAND_TIMEOUT_SECONDS", "10"))
     )
@@ -39,12 +41,10 @@ class Settings:
     AUTH_PROJECT_ID_CLAIM: str = field(default_factory=lambda: os.getenv("AUTH_PROJECT_ID_CLAIM", "project_id").strip())
     AUTH_CLOCK_SKEW_SECONDS: int = field(default_factory=lambda: int(os.getenv("AUTH_CLOCK_SKEW_SECONDS", "30")))
     # FRONTEND_URL: Used for QR code generation (public SPA origin). Default matches deployed client.
-    FRONTEND_URL: str = field(
-        default_factory=lambda: os.getenv(
-            "FRONTEND_URL",
-            os.getenv("FRONTEND_URL"),
-        )
-    )
+    # The old default was a no-op self-lookup (os.getenv("FRONTEND_URL", os.getenv("FRONTEND_URL"))),
+    # so an unset var yielded None despite the `str` annotation. Trimmed like its siblings: a
+    # trailing space survives .rstrip("/") in qr_service and would land inside the encoded scan URL.
+    FRONTEND_URL: str = field(default_factory=lambda: os.getenv("FRONTEND_URL", "").strip())
 
     # ALLOWED_ORIGINS: Comma-separated list of allowed origins for CORS.
     ALLOWED_ORIGINS: List[str] = field(
@@ -81,6 +81,10 @@ class Settings:
     LOKI_BASE_URL: str = field(
         default_factory=lambda: os.getenv("LOKI_BASE_URL", "http://localhost:3100").rstrip("/")
     )
+    # OTLP gRPC endpoint of the grafana/otel-lgtm collector (logs + traces + metrics).
+    OTEL_EXPORTER_OTLP_ENDPOINT: str = field(
+        default_factory=lambda: os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317").rstrip("/")
+    )
 
 
     # ── Notification / Email microservice ────────────────────────────────────
@@ -107,7 +111,11 @@ class Settings:
     AUTHNEXUS_ADMIN_PASSWORD: str = field(default_factory=lambda: os.getenv("AUTHNEXUS_ADMIN_PASSWORD", "").strip())
     AUTHNEXUS_ORG_ID: str = field(default_factory=lambda: os.getenv("AUTHNEXUS_ORG_ID", "").strip())
 
-    def __post_init__(self):
+    # Config warnings raised during __post_init__, held until logging is configured.
+    # (message, args) pairs so the logger does the %-formatting and keeps them structured.
+    startup_warnings: List[Tuple[str, Tuple[object, ...]]] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
         if not self.DATABASE_URL.strip():
                 missing: list[str] = []
                 if not self.POSTGRES_DB.strip():
@@ -131,22 +139,39 @@ class Settings:
             
             # Warn if admin credentials are missing (needed for role sync)
             if not self.AUTHNEXUS_ADMIN_USER or not self.AUTHNEXUS_ADMIN_PASSWORD or not self.AUTHNEXUS_ORG_ID:
-                print("WARNING: AUTHNEXUS_ADMIN credentials not fully set. AuthNexus sync features will be disabled.")
-
+                self._warn("AUTHNEXUS_ADMIN credentials not fully set. AuthNexus sync features will be disabled.")
 
         if not self.FRONTEND_URL.startswith("http"):
-            print(f"WARNING: FRONTEND_URL '{self.FRONTEND_URL}' might be invalid. It should start with http:// or https://")
+            self._warn(
+                "FRONTEND_URL '%s' might be invalid. It should start with http:// or https://",
+                self.FRONTEND_URL,
+            )
 
         if self.ENV.strip().lower() == "production" and not self.BACKEND_API_KEY.strip():
-            print("WARNING: BACKEND_API_KEY is empty in production. Public API access is not restricted.")
+            self._warn("BACKEND_API_KEY is empty in production. Public API access is not restricted.")
 
         legacy_email_api_key = os.getenv("EMAIL_SERVICE_API_KEY", "").strip()
         preferred_email_api_key = os.getenv("BACKEND_API_KEY_EMAIL_NOTIFICATION", "").strip()
         if legacy_email_api_key and not preferred_email_api_key:
-            print(
-                "WARNING: EMAIL_SERVICE_API_KEY is deprecated. "
-                "Use BACKEND_API_KEY_EMAIL_NOTIFICATION instead."
+            self._warn(
+                "EMAIL_SERVICE_API_KEY is deprecated. Use BACKEND_API_KEY_EMAIL_NOTIFICATION instead."
             )
+
+    def _warn(self, message: str, *args: object) -> None:
+        """Buffer a startup warning instead of emitting it now.
+
+        `Settings()` is constructed at import time — before `logging.basicConfig()` and before the
+        OTLP handler is attached — so logging here would bypass the aggregator entirely. Warnings
+        are held until `emit_startup_warnings()` is called from the app factory.
+        """
+        self.startup_warnings.append((message, args))
+
+    def emit_startup_warnings(self) -> None:
+        """Flush buffered config warnings through the configured logger. Safe to call twice."""
+        logger = logging.getLogger(__name__)
+        for message, args in self.startup_warnings:
+            logger.warning(message, *args)
+        self.startup_warnings.clear()
 
 # Global settings instance
 settings = Settings()

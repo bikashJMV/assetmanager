@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -430,87 +429,6 @@ class EmployeeRepository:
         return saved
 
     @staticmethod
-    async def soft_delete(*, employee_id: str) -> dict[str, Any]:
-        """
-        Soft-delete an employee: marks them deleted in recycle_bin_entries.
-        Raises ValidationError if they have open asset assignments.
-        Returns {employee_id, recycle_bin_id}.
-        """
-        emp_id = (employee_id or "").strip()
-        if not emp_id:
-            raise ValidationError("employee_id is required")
-
-        async with pool().acquire() as conn:
-            # Guard: no open assignments
-            open_count = await conn.fetchval(
-                """
-                select count(*)::int
-                  from asset_assignments aa
-                  join employees e on e.id = aa.employee_id
-                 where e.id=$1::uuid and aa.returned_at is null
-                """,
-                emp_id,
-            )
-            if open_count and int(open_count) > 0:
-                raise ValidationError(
-                    "Employee has open asset assignments. Return or reassign all assets before deleting."
-                )
-
-            # Fetch snapshot for recycle bin payload
-            emp_row = await fetchrow_dict(
-                conn,
-                """
-                select e.id::text as id, e.employee_id, e.name,
-                       e.email::text as email, e.auth_user_id,
-                       d.name as department,
-                       coalesce(e.role,'employee') as role,
-                       coalesce(e.is_active,true) as is_active
-                  from employees e
-                  left join departments d on d.id = e.department_id
-                 where e.id=$1::uuid
-                """,
-                emp_id,
-            )
-            if not emp_row:
-                raise NotFoundError("Employee not found")
-
-            # Idempotent: skip if already in recycle bin
-            existing = await fetchrow_dict(
-                conn,
-                """
-                select id::text as id from recycle_bin_entries
-                 where entity_type='employee' and entity_id=$1::uuid and restored_at is null
-                 limit 1
-                """,
-                emp_id,
-            )
-            if existing:
-                return {"employee_id": emp_id, "recycle_bin_id": existing["id"]}
-
-            # Mark the row as deleted in the employees table
-            await conn.execute(
-                "UPDATE employees SET is_deleted = true WHERE id = $1::uuid",
-                emp_id,
-            )
-
-            label = f"{emp_row['name']} ({emp_row['employee_id']})"
-            rb_row = await fetchrow_dict(
-                conn,
-                """
-                insert into recycle_bin_entries(entity_type, entity_id, label, payload, deleted_at)
-                values('employee', $1::uuid, $2, $3::jsonb, now())
-                returning id::text as id
-                """,
-                emp_id,
-                label,
-                json.dumps(emp_row),
-            )
-            if not rb_row:
-                raise RuntimeError("Failed to create recycle bin entry")
-
-            return {"employee_id": emp_id, "recycle_bin_id": rb_row["id"]}
-
-    @staticmethod
     async def get_portfolio(*, employee_id: str) -> dict[str, Any]:
         """
         Returns employee profile + currently assigned assets bundle.
@@ -598,21 +516,6 @@ class EmployeeRepository:
             "assets": assets_payload,
             "total_assigned_assets": len(assets_payload),
         }
-
-    @staticmethod
-    async def restore_from_payload(payload: dict[str, Any] | str) -> None:
-        """Restore a soft-deleted employee by flipping is_deleted back to false."""
-        if isinstance(payload, str):
-            payload = json.loads(payload)
-        emp_id = str(payload.get("id") or "").strip()
-        if not emp_id:
-            raise ValidationError("payload.id is required for restore")
-
-        async with pool().acquire() as conn:
-            await conn.execute(
-                "UPDATE employees SET is_deleted = false WHERE id = $1::uuid",
-                emp_id,
-            )
 
     @staticmethod
     async def get_admin_emails() -> list[str]:

@@ -1,20 +1,27 @@
 from io import BytesIO
-from reportlab.lib.pagesizes import A4
-from reportlab.lib import colors
-from reportlab.lib.units import mm
-from reportlab.lib.utils import ImageReader
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.pdfgen import canvas
+from typing import Any
+
+# reportlab ships no type stubs and types-reportlab is not a dependency here.
+from reportlab.lib.pagesizes import A4  # type: ignore[import-untyped]
+from reportlab.lib import colors  # type: ignore[import-untyped]
+from reportlab.lib.units import mm  # type: ignore[import-untyped]
+from reportlab.lib.utils import ImageReader  # type: ignore[import-untyped]
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle  # type: ignore[import-untyped]
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle  # type: ignore[import-untyped]
 from datetime import datetime
 
-from services.qr_service import qr_service
+from core.pdf_footer import FooterCanvas  # type: ignore[import-not-found]
+from services.qr_service import qr_service  # type: ignore[import-not-found]
 
 class AssetHistoryPDFService:
     """Builds print-ready PDF reports for asset assignment history."""
     
     @staticmethod
-    def build_pdf(asset: dict, assignments: list[dict], lifecycle_events: list[dict]) -> bytes:
+    def build_pdf(
+        asset: dict[str, Any],
+        assignments: list[dict[str, Any]],
+        lifecycle_events: list[dict[str, Any]],
+    ) -> bytes:
         buffer = BytesIO()
         # Margins are 0.5 inch (36 points)
         doc = SimpleDocTemplate(
@@ -109,39 +116,18 @@ class AssetHistoryPDFService:
 asset_history_pdf_service = AssetHistoryPDFService()
 
 
-class _NumberedCanvas(canvas.Canvas):
-    """Canvas that renders 'Page X of Y' in the footer (two-pass)."""
+class _NumberedCanvas(FooterCanvas):  # type: ignore[misc]  # base resolves to Any under per-file mypy
+    """Standard AMS footer (see core.pdf_footer) plus the per-page asset QR."""
 
     QR_SIZE = 24 * mm
 
-    def __init__(self, *args, asset_tag: str = "", **kwargs):
+    def __init__(self, *args: Any, asset_tag: str = "", **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        self._saved_page_states = []
         self._asset_tag = str(asset_tag or "").strip()
 
-    def showPage(self):  # noqa: N802 - ReportLab API
-        self._saved_page_states.append(dict(self.__dict__))
-        self._startPage()
-
-    def save(self):  # noqa: A003 - ReportLab API
-        total_pages = len(self._saved_page_states)
-        for state in self._saved_page_states:
-            self.__dict__.update(state)
-            self._draw_page_number(total_pages)
-            canvas.Canvas.showPage(self)
-        canvas.Canvas.save(self)
-
-    def _draw_page_number(self, total_pages: int) -> None:
+    def draw_page_decorations(self, total_pages: int) -> None:
         self._draw_qr()
-
-        page_num = self.getPageNumber()
-        label = f"Page {page_num} of {total_pages}"
-        self.saveState()
-        self.setFont("Helvetica", 9)
-        self.setFillColor(colors.HexColor("#6B7280"))
-        width, _height = A4
-        self.drawRightString(width - 36, 18, label)
-        self.restoreState()
+        super().draw_page_decorations(total_pages)
 
     def _draw_qr(self) -> None:
         tag = self._asset_tag

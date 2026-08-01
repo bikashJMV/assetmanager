@@ -22,41 +22,28 @@ import { ToastContext, type ToastInput, type ToastVariant } from '../../hooks/us
 const DEFAULT_DURATION_MS = 4200
 const PERSISTENT_TOAST_DURATION_MS = 0
 
-function toastTone(variant: ToastVariant) {
-  if (variant === 'success') {
-    return {
-      card: 'border-emerald-200 bg-white',
-      iconWrap: 'bg-emerald-50 text-emerald-600',
-      title: 'text-emerald-700',
-      message: 'text-slate-700',
-      close: 'text-slate-400 hover:bg-emerald-50 hover:text-emerald-700',
-    }
-  }
-  if (variant === 'error') {
-    return {
-      card: 'border-red-200 bg-red-50/40 shadow-[0_20px_52px_rgba(127,29,29,0.14)]',
-      iconWrap: 'bg-white text-red-600 ring-1 ring-red-100',
-      title: 'text-red-700',
-      message: 'text-slate-800',
-      close: 'text-red-400 hover:bg-white hover:text-red-700',
-    }
-  }
-  if (variant === 'warning') {
-    return {
-      card: 'border-amber-200 bg-amber-50/50 shadow-[0_20px_52px_rgba(146,64,14,0.12)]',
-      iconWrap: 'bg-white text-amber-600 ring-1 ring-amber-100',
-      title: 'text-amber-700',
-      message: 'text-slate-800',
-      close: 'text-amber-400 hover:bg-white hover:text-amber-700',
-    }
-  }
+/* Token-driven, theme-aware toast styling (Notes/UI.md §9): surface card, 3px
+   semantic left border, tinted icon chip. Works in light AND dark. */
+const TOAST_VAR: Record<ToastVariant, string> = {
+  success: '--success',
+  error: '--danger',
+  warning: '--warning',
+  info: '--info',
+}
+
+function toastStyle(variant: ToastVariant): React.CSSProperties {
+  const v = TOAST_VAR[variant]
   return {
-    card: 'border-sky-200 bg-white',
-    iconWrap: 'bg-sky-50 text-sky-600',
-    title: 'text-sky-700',
-    message: 'text-slate-700',
-    close: 'text-slate-400 hover:bg-sky-50 hover:text-sky-700',
+    backgroundColor: 'hsl(var(--surface-t))',
+    borderColor: 'hsl(var(--border-t))',
+    borderLeft: `3px solid hsl(var(${v}))`,
+    boxShadow: 'var(--shadow-lg)',
   }
+}
+
+function toastIconStyle(variant: ToastVariant): React.CSSProperties {
+  const v = TOAST_VAR[variant]
+  return { backgroundColor: `hsl(var(${v}) / 0.12)`, color: `hsl(var(${v}))` }
 }
 
 function defaultTitleForVariant(variant: ToastVariant): string {
@@ -164,30 +151,33 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       <div className="pointer-events-none fixed inset-x-0 bottom-4 z-[160] flex justify-center px-4 sm:inset-x-auto sm:bottom-5 sm:right-5 sm:justify-end">
         <div className="flex w-full max-w-[24rem] flex-col gap-3 sm:w-[24rem]">
           {toasts.map((toast) => {
-            const tone = toastTone(toast.variant)
             const title = toast.title?.trim() || defaultTitleForVariant(toast.variant)
 
             return (
               <section
                 key={toast.id}
-                className={`pointer-events-auto relative w-full rounded-2xl border px-4 py-3.5 ${tone.card}`}
+                className="ams-toast-in pointer-events-auto relative w-full rounded-lg border px-4 py-2"
+                style={toastStyle(toast.variant)}
                 role="alert"
                 aria-live={toast.variant === 'error' ? 'assertive' : 'polite'}
               >
                 <div className="flex items-start gap-3">
-                  <div className={`mt-0.5 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${tone.iconWrap}`}>
+                  <div
+                    className="mt-0.5 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg"
+                    style={toastIconStyle(toast.variant)}
+                  >
                     <ToastIcon variant={toast.variant} />
                   </div>
                   <div className="min-w-0 flex-1 pr-8">
-                    <p className={`text-sm font-semibold ${tone.title}`}>{title}</p>
-                    <p className={`mt-1 text-[13px] leading-5 break-words ${tone.message}`}>{toast.message}</p>
+                    <p className="text-sm font-semibold text-primary">{title}</p>
+                    <p className="mt-1 text-[13px] leading-5 break-words text-muted">{toast.message}</p>
                   </div>
                 </div>
                 <button
                   type="button"
                   aria-label="Close notification"
                   onClick={() => dismissToast(toast.id)}
-                  className={`absolute right-2 top-2 inline-flex h-9 w-9 items-center justify-center rounded-xl transition ${tone.close}`}
+                  className="absolute right-2 top-2 inline-flex h-9 w-9 items-center justify-center rounded-lg text-muted transition hover:bg-surface-3 hover:text-primary"
                 >
                   <svg viewBox="0 0 24 24" className="h-4.5 w-4.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
                     <path d="M18 6 6 18" />

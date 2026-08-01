@@ -1,4 +1,5 @@
 import { UserManager, WebStorageStateStore, Log } from 'oidc-client-ts';
+import { describeError, devLog, devWarn, errorLog } from './devLog'
 
 // Enable debugging for integration logs
 Log.setLogger(console);
@@ -55,7 +56,7 @@ const settings = {
     loadUserInfo: true, // Ensure roles are fetched from the gateway userinfo endpoint
     automaticSilentRenew: false,
  
-    monitorSession: true, // DISABLED: Prevents check_session_iframe from firing 'userSignedOut' when the BFF rotates the token
+    monitorSession: false, // Session managed by the BFF refresh flow; check_session_iframe would fire spurious 'userSignedOut' on every token rotation (auto-logout bug).
     accessTokenExpiringNotificationTimeInSeconds: 60,
     // Never store sensitive data in localStorage (except the access token itself).
     // OIDC user/session details stay in sessionStorage; access_token is mirrored into localStorage explicitly.
@@ -87,10 +88,10 @@ export function registerSilentRefreshCallback(cb: () => Promise<void>) {
 
 // Add these to the bottom of authService.ts
 userManager.events.addAccessTokenExpiring(async () => {
-    console.warn("[authNexus] Access token expiring soon... initiating proactive BFF refresh.");
+    devWarn("[authNexus] Access token expiring soon - initiating proactive BFF refresh.");
     if (_proactiveRefreshCallback) {
         try { await _proactiveRefreshCallback() }
-        catch (err) { console.error("[authNexus] Proactive refresh failed:", err) }
+        catch (err) { errorLog("[authNexus] Proactive refresh failed:", describeError(err)) }
     }
 });
 
@@ -100,13 +101,36 @@ userManager.events.addAccessTokenExpired(() => {
 
 
 userManager.events.addSilentRenewError((error) => {
-    console.error("[authNexus] Silent Renew Error (oidc):", error);
-    // Do NOT clear access token — it may still be valid
+    errorLog("[authNexus] Silent renew error (oidc):", describeError(error));
+    // Do NOT clear access token â€” it may still be valid
 });
 
-userManager.events.addUserLoaded((user) => {
-    // Allowed exception: persist only the access token in localStorage.
+userManager.events.addUserLoaded(async (user) => {
+    devLog('[authNexus][addUserLoaded] STEP 1 - user loaded.')
     setAuthNexusAccessToken(user?.access_token ?? null)
+
+    if (!user?.refresh_token) {
+        errorLog('[authNexus][addUserLoaded] FAILED STEP 2 - no refresh_token in OIDC user; cookie will NOT be set. Check the offline_access scope.')
+        return
+    }
+
+    devLog('[authNexus][addUserLoaded] STEP 2 - calling POST /api/auth/set-session...')
+    try {
+        const res = await fetch('/api/auth/set-session', {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ refresh_token: user.refresh_token }),
+        })
+        if (res.ok) {
+            devLog('[authNexus][addUserLoaded] STEP 2 OK - nexus_refresh_token cookie planted.')
+        } else {
+            // Body deliberately not read or logged - it can echo the submitted refresh token.
+            errorLog('[authNexus][addUserLoaded] FAILED STEP 2 - /api/auth/set-session returned', res.status)
+        }
+    } catch (err) {
+        errorLog('[authNexus][addUserLoaded] FAILED STEP 2 - network error calling /api/auth/set-session:', describeError(err))
+    }
 });
 
 userManager.events.addUserUnloaded(() => {

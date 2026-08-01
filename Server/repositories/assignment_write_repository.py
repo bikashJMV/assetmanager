@@ -56,8 +56,10 @@ class AssignmentWriteRepository:
                    e.name,
                    e.email::text as email,
                    coalesce(e.role, 'employee') as role,
-                   coalesce(e.is_active, true) as is_active
+                   coalesce(e.is_active, true) as is_active,
+                   d.name as department
               from employees e
+              left join departments d on d.id = e.department_id
              where upper(trim(e.employee_id)) = $1
                and coalesce(e.is_deleted, false) = false
              limit 1

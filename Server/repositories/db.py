@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from datetime import date, datetime, time
+from datetime import date, datetime
 from decimal import Decimal
+from typing import Any
 
-import asyncpg
+import asyncpg  # type: ignore[import-untyped]  # asyncpg ships no stubs / py.typed marker
 
 from core.postgres import get_pg_pool
 
@@ -26,17 +27,17 @@ class Page:
 
 
 def normalize_page_params(page: int | None, limit: int | None) -> Page:
-    p = DEFAULT_PAGE if page is None else int(page)
-    l = DEFAULT_LIMIT if limit is None else int(limit)
+    resolved_page = DEFAULT_PAGE if page is None else int(page)
+    resolved_limit = DEFAULT_LIMIT if limit is None else int(limit)
 
-    if p < 1:
-        p = DEFAULT_PAGE
-    if l < 1:
-        l = DEFAULT_LIMIT
-    if l > MAX_LIMIT:
-        l = MAX_LIMIT
+    if resolved_page < 1:
+        resolved_page = DEFAULT_PAGE
+    if resolved_limit < 1:
+        resolved_limit = DEFAULT_LIMIT
+    if resolved_limit > MAX_LIMIT:
+        resolved_limit = MAX_LIMIT
 
-    return Page(page=p, limit=l)
+    return Page(page=resolved_page, limit=resolved_limit)
 
 
 def _json_safe(value: object) -> object:
@@ -54,14 +55,14 @@ def _json_safe(value: object) -> object:
     return value
 
 
-async def fetchrow_dict(conn: asyncpg.Connection, query: str, *args):
+async def fetchrow_dict(conn: asyncpg.Connection, query: str, *args: Any) -> dict[str, Any] | None:
     row = await conn.fetchrow(query, *args)
     if row is None:
         return None
     return {k: _json_safe(v) for k, v in dict(row).items()}
 
 
-async def fetch_dicts(conn: asyncpg.Connection, query: str, *args) -> list[dict]:
+async def fetch_dicts(conn: asyncpg.Connection, query: str, *args: Any) -> list[dict[str, Any]]:
     rows = await conn.fetch(query, *args)
     return [{k: _json_safe(v) for k, v in dict(r).items()} for r in rows]
 

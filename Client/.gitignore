@@ -27,3 +27,6 @@ dist-ssr
 *.sw?
 .env
 plan.md
+test-results/
+playwright-report/
+shot-*.png

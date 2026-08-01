@@ -106,5 +106,17 @@ class QrService:
         """Paginated list of batches."""
         return await QrRepository.list_batches(page, limit)
 
+    async def list_unused_reservations(self, page: int, limit: int) -> tuple[list[dict[str, Any]], int]:
+        """QRs generated but never linked to an asset (status='reserved'), FIFO."""
+        return await QrRepository.list_unused_reservations(page, limit)
+
+    async def list_all_unused_tags(self) -> list[str]:
+        """All unused (reserved, never-linked) tags, for a single reprint PDF."""
+        return await QrRepository.list_all_unused_tags()
+
+    async def count_unused_reservations(self) -> int:
+        """Count of unused (reserved, never-linked) QRs for the UI badge."""
+        return await QrRepository.count_unused_reservations()
+
 
 qr_service = QrService()

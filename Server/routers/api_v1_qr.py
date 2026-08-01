@@ -1,12 +1,18 @@
+import logging
+import time
+
 from fastapi import APIRouter, Depends, Header, Query, status
 from fastapi.responses import JSONResponse, Response
+from starlette.concurrency import run_in_threadpool
 from core.authz import require_privileged
 from core.authnexus import EmployeeContext
 from services.qr_service import qr_service
 from schemas.qr import QrBatchCreateInput
 from services.qr_label_pdf_service import qr_label_pdf_service
 from core.api_response import success_response, error_response
-from repositories.errors import ValidationError, NotFoundError
+from repositories.errors import ValidationError
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/qr", tags=["QR (v1)"])
 
@@ -38,11 +44,16 @@ async def create_qr_batch(
     Response: 201 envelope with batch + reservations.
     Notes: Privileged only (Admin or IT Ops).
     """
+    t0 = time.perf_counter()
     try:
         batch = await qr_service.create_qr_batch(
             count=input_data.count,
             idempotency_key=idempotency_key,
             actor=employee,
+        )
+        logger.info(
+            "[timing] qr.batch.create count=%s batch=%s took %.1fms",
+            input_data.count, batch.get("batch_code"), (time.perf_counter() - t0) * 1000,
         )
         return JSONResponse(
             status_code=status.HTTP_201_CREATED,
@@ -89,6 +100,104 @@ async def list_qr_batches(
         )
     except Exception as exc:
         return _json_error(500, message="Failed to list QR batches.", code="INTERNAL_ERROR", details=str(exc))
+
+
+@router.get("/reservations/unused/count")
+async def count_unused_reservations(
+    employee: EmployeeContext = Depends(require_privileged),
+) -> JSONResponse:
+    """
+    Purpose: Count QRs generated but never linked to an asset (reserved, unused).
+    Method/Route: GET /api/v1/qr/reservations/unused/count
+    Response: 200 envelope `{data:{count}}`; Errors: 500 envelope. Notes: Privileged only.
+    """
+    try:
+        count = await qr_service.count_unused_reservations()
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content=success_response(
+                message="Unused QR count retrieved successfully.",
+                data={"count": count},
+                status_code=200,
+            ),
+        )
+    except Exception as exc:
+        return _json_error(500, message="Failed to count unused QRs.", code="INTERNAL_ERROR", details=str(exc))
+
+
+@router.get("/reservations/unused")
+async def list_unused_reservations(
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=200),
+    employee: EmployeeContext = Depends(require_privileged),
+) -> JSONResponse:
+    """
+    Purpose: List QRs generated but never linked to an asset (reusable), FIFO oldest-first.
+    Method/Route: GET /api/v1/qr/reservations/unused
+    Query: page, limit.
+    Response: 200 envelope `{data:{items,page,limit,count,total}}`; Errors: 500 envelope.
+    Notes: Privileged only. Items: {reservation_id, asset_tag, reserved_at, batch_code, batch_created_at}.
+    """
+    try:
+        rows, total = await qr_service.list_unused_reservations(page, limit)
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content=success_response(
+                message="Unused QRs retrieved successfully.",
+                data={
+                    "items": rows,
+                    "page": page,
+                    "limit": limit,
+                    "count": len(rows),
+                    "total": total,
+                },
+                status_code=200,
+            ),
+        )
+    except Exception as exc:
+        return _json_error(500, message="Failed to list unused QRs.", code="INTERNAL_ERROR", details=str(exc))
+
+
+@router.get("/reservations/unused/pdf")
+async def download_unused_qr_pdf(
+    employee: EmployeeContext = Depends(require_privileged),
+) -> Response:
+    """
+    Purpose: Download a single printable PDF of ALL unused QR codes (reserved, never linked),
+             so they can be reprinted and reused.
+    Method/Route: GET /api/v1/qr/reservations/unused/pdf
+    Response: 200 application/pdf (empty-notice PDF when none). Notes: Privileged only.
+    """
+    tags = await qr_service.list_all_unused_tags()
+    if not tags:
+        pdf_bytes = await run_in_threadpool(
+            qr_label_pdf_service.build_empty_notice_pdf,
+            "Unused QR Codes",
+            "There are no unused QR codes to print.",
+        )
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": 'inline; filename="Unused QRs.pdf"',
+                "Cache-Control": "no-store",
+                "X-Export-Empty": "1",
+                "X-Exported-Asset-Count": "0",
+            },
+        )
+
+    pdf_bytes = await run_in_threadpool(
+        qr_label_pdf_service.build_pdf, tags, title="Unused QR Codes / Ready to Use"
+    )
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": 'inline; filename="Unused QRs.pdf"',
+            "Cache-Control": "no-store",
+            "X-Exported-Asset-Count": str(len(tags)),
+        },
+    )
 
 
 @router.get("/batches/{batch_id}")
@@ -144,7 +253,8 @@ async def download_qr_batch_pdf(
     }
 
     if not tags:
-        pdf_bytes = qr_label_pdf_service.build_empty_notice_pdf(
+        pdf_bytes = await run_in_threadpool(
+            qr_label_pdf_service.build_empty_notice_pdf,
             "No tags to export",
             "This batch does not contain any valid QR tags.",
         )
@@ -153,7 +263,9 @@ async def download_qr_batch_pdf(
     batch_code = batch.get("batch_code", "Unknown")
     filename = f"Batch {batch_code} QRs.pdf"
 
-    pdf_bytes = qr_label_pdf_service.build_pdf(tags, title="Bulk QR Generated / Ready to Use")
+    pdf_bytes = await run_in_threadpool(
+        qr_label_pdf_service.build_pdf, tags, title="Bulk QR Generated / Ready to Use"
+    )
     headers = {
         "Content-Disposition": f'inline; filename="{filename}"',
         "Cache-Control": "no-store",

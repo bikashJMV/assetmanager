@@ -37,15 +37,9 @@ logs.txt
 # Smoke Tests
 *smoke*.py
 
-# Test files
-*test*.py
-tests/
-
 __pycache__/
 *.pyc
 .pytest_cache/
-tests/
-*test*.py
 DB/*.sql
 prod_schema.sql
 DB/prod_schema.sql

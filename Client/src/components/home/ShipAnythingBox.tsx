@@ -10,7 +10,6 @@ const featureChips: FeatureChip[] = [
   { label: 'Asset Tracking', icon: 'users' },
   { label: 'Category Breakdown', icon: 'chart-column' },
   { label: 'Realtime Sync', icon: 'refresh-cw', filled: true },
-  { label: 'Guide Page', icon: 'guide' },
   { label: 'Theme Preferences', icon: 'settings' },
 ] as const
 

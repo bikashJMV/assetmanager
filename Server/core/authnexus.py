@@ -70,12 +70,18 @@ def verify_bearer_token(token: str) -> dict[str, Any]:
 
     require_claims = ["sub", "exp", settings.AUTH_PROJECT_ID_CLAIM]
 
-    options = {"require": require_claims, "verify_aud": bool(settings.AUTH_AUDIENCE)}
+    # Headless/API tokens carry aud="default_client" instead of the web client_id
+    # (Notes/auth.implementation.md, gotcha #1) — accept both audiences.
+    valid_audiences = (
+        [settings.AUTH_AUDIENCE, "default_client"] if settings.AUTH_AUDIENCE else None
+    )
+
+    options = {"require": require_claims, "verify_aud": bool(valid_audiences)}
     payload = jwt.decode(
         token,
         signing_key.key,
         algorithms=[signing_key.algorithm_name],
-        audience=settings.AUTH_AUDIENCE or None,
+        audience=valid_audiences,
         issuer=settings.AUTH_ISSUER or None,
         options=options,
         leeway=settings.AUTH_CLOCK_SKEW_SECONDS,

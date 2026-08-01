@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from repositories.db import Page, fetch_dicts, fetchrow_dict, normalize_page_params, pool
-from repositories.errors import ValidationError
+from repositories.errors import NotFoundError, ValidationError
 
 
 class AssetRepository:
@@ -120,41 +120,50 @@ class AssetRepository:
             )
         return [str(r["asset_tag"]).strip() for r in rows if r and r["asset_tag"]]
     @staticmethod
-    async def list_recycle_bin_entries() -> list[dict[str, Any]]:
-        async with pool().acquire() as conn:
-            return await fetch_dicts(
-                conn,
-                "select * from recycle_bin_entries where restored_at is null order by deleted_at desc"
+    async def get_next_asset_tag_atomic(category_id: str, conn: Any | None = None) -> str:
+        """
+        Next per-category asset tag: 'JMV-{alias}-{n:05d}' (e.g. JMV-LAP-00001).
+
+        Atomically bumps the category's running counter (single UPDATE ... RETURNING,
+        row-locked → race-safe). The counter starts at 1, so an all-zero sequence
+        (JMV-LAP-00000) can never be produced. Pass an open `conn` to enrol in a TX.
+        """
+        async def _run(c: Any) -> str:
+            row = await c.fetchrow(
+                "update asset_categories set tag_seq = tag_seq + 1 "
+                "where id = $1::uuid returning alias, tag_seq",
+                category_id,
             )
-    @staticmethod
-    async def get_next_asset_tag_atomic(conn: Any | None = None) -> str:
-        """
-        Generate the next sequential asset tag atomically via Postgres sequence.
-        
-        Race-safe: handles unlimited concurrent callers without collision.
-        Optionally accepts an existing connection for inclusion in a transaction
-        (used by bulk QR generation to keep tag reservation in same TX).
-        
-        Returns: 'AST-{n:05d}' format (e.g. 'AST-00042')
-        """
-        query = "select 'AST-' || lpad(nextval('asset_tag_seq')::text, 5, '0') as tag"
-        
+            if row is None:
+                raise NotFoundError(f"Category {category_id} not found")
+            alias = row["alias"]
+            if not alias:
+                raise ValidationError("Category has no tag alias configured.")
+            return f"JMV-{alias}-{int(row['tag_seq']):05d}"
+
         if conn is not None:
-            return await conn.fetchval(query)
-        
+            return await _run(conn)
         async with pool().acquire() as c:
-            return await c.fetchval(query)
+            return await _run(c)
 
     @staticmethod
-    async def get_next_asset_tag() -> str:
-        """
-        Generate the next sequential asset tag (e.g. AST-00042).
-        
-        Backward-compatible wrapper around atomic sequence-based generation.
-        All existing call sites (asset_service.create_asset, /next-tag endpoint)
-        continue to work without modification.
-        """
-        return await AssetRepository.get_next_asset_tag_atomic()
+    async def get_next_asset_tag(category_id: str) -> str:
+        """Next per-category asset tag ('JMV-{alias}-{n:05d}')."""
+        return await AssetRepository.get_next_asset_tag_atomic(category_id)
+
+    @staticmethod
+    async def peek_next_asset_tag(category_slug: str) -> str:
+        """Preview the next tag for a category WITHOUT consuming the counter."""
+        async with pool().acquire() as c:
+            row = await c.fetchrow(
+                "select alias, tag_seq from asset_categories where slug = $1",
+                category_slug,
+            )
+            if row is None:
+                raise NotFoundError(f"Category '{category_slug}' not found")
+            if not row["alias"]:
+                raise ValidationError("Category has no tag alias configured.")
+            return f"JMV-{row['alias']}-{int(row['tag_seq']) + 1:05d}"
 
     @staticmethod
     async def get_public_scan(asset_tag: str) -> Optional[dict[str, Any]]:

@@ -1,177 +1,88 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
-const CHANNEL_NAME = 'ams-activity'
-const WARN_TIME = 480000 // 8 minutes 480000
-const IDLE_TIME = 600000 // 10 minutes 600000
-const WARNING_GRACE_TIME = IDLE_TIME - WARN_TIME
-const ACTIVITY_THROTTLE_MS = 1000
+const ACTIVITY_EVENTS: Array<keyof WindowEventMap> = ['mousemove', 'mousedown', 'keydown', 'scroll', 'touchstart', 'wheel']
+const RESET_THROTTLE_MS = 1000
 
-type IdleChannelMessage = 'activity' | 'warn' | 'stay' | 'logout'
+type IdleParams = {
+  enabled: boolean
+  idleMs: number
+  warningMs: number
+  onTimeout: () => void
+}
 
-export function useIdleTimeout({
-  onWarn,
-  onIdle,
-  isAuthenticated,
-}: {
-  onWarn: () => void
-  onIdle: () => void
-  isAuthenticated: boolean
-}) {
-  const [isWarning, setIsWarning] = useState(false)
-  const warnTimeoutRef = useRef<number | null>(null)
-  const idleTimeoutRef = useRef<number | null>(null)
-  const channelRef = useRef<BroadcastChannel | null>(null)
-  const lastActiveRef = useRef<number>(Date.now())
-  const isWarningRef = useRef(false)
-  const onWarnRef = useRef(onWarn)
-  const onIdleRef = useRef(onIdle)
+/**
+ * Inactivity detector. After `idleMs` of no user activity → shows a warning; if the user does
+ * not respond within `warningMs` → calls onTimeout (auto-logout).
+ *
+ * Performance: activity listeners are PASSIVE and throttled to at most one timer-reset per second
+ * (a timestamp compare, nothing else). Only ONE idle setTimeout runs at a time. The 1s countdown
+ * interval exists ONLY while the warning is visible (bounded by warningMs) — never during normal
+ * use — so idle detection adds effectively zero steady-state cost.
+ *
+ * onTimeout is held in a ref so its (typically unstable) identity does not re-run the wiring
+ * effect; the countdown re-render must NOT reset the logout timer.
+ */
+export function useIdleTimeout({ enabled, idleMs, warningMs, onTimeout }: IdleParams) {
+  const [warning, setWarning] = useState(false)
+  const [secondsLeft, setSecondsLeft] = useState(Math.ceil(warningMs / 1000))
+  const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const logoutTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const countdown = useRef<ReturnType<typeof setInterval> | null>(null)
+  const lastReset = useRef(0)
+  const warningRef = useRef(false)
+  const onTimeoutRef = useRef(onTimeout)
 
-  useEffect(() => {
-    onWarnRef.current = onWarn
-  }, [onWarn])
+  useEffect(() => { onTimeoutRef.current = onTimeout }, [onTimeout])
 
-  useEffect(() => {
-    onIdleRef.current = onIdle
-  }, [onIdle])
+  const clearAll = useCallback(() => {
+    if (idleTimer.current) clearTimeout(idleTimer.current)
+    if (logoutTimer.current) clearTimeout(logoutTimer.current)
+    if (countdown.current) clearInterval(countdown.current)
+  }, [])
 
-  const clearWarnTimeout = () => {
-    if (warnTimeoutRef.current) {
-      clearTimeout(warnTimeoutRef.current)
-      warnTimeoutRef.current = null
-    }
-  }
+  const startIdleTimer = useCallback(() => {
+    if (idleTimer.current) clearTimeout(idleTimer.current)
+    idleTimer.current = setTimeout(() => {
+      warningRef.current = true
+      setWarning(true)
+      setSecondsLeft(Math.ceil(warningMs / 1000))
+      countdown.current = setInterval(() => setSecondsLeft((s) => (s > 1 ? s - 1 : 0)), 1000)
+      logoutTimer.current = setTimeout(() => onTimeoutRef.current(), warningMs)
+    }, idleMs)
+  }, [idleMs, warningMs])
 
-  const clearIdleTimeout = () => {
-    if (idleTimeoutRef.current) {
-      clearTimeout(idleTimeoutRef.current)
-      idleTimeoutRef.current = null
-    }
-  }
-
-  const clearTimers = () => {
-    clearWarnTimeout()
-    clearIdleTimeout()
-  }
-
-  const setWarningState = (next: boolean) => {
-    if (isWarningRef.current === next) return
-    isWarningRef.current = next
-    setIsWarning(next)
-
-    if (next) {
-      onWarnRef.current()
-    }
-  }
-
-  const postMessage = (message: IdleChannelMessage) => {
-    channelRef.current?.postMessage(message)
-  }
-
-  const triggerIdle = (broadcast: boolean) => {
-    clearTimers()
-    setWarningState(false)
-    if (broadcast) {
-      postMessage('logout')
-    }
-    onIdleRef.current()
-  }
-
-  const scheduleIdleTimeout = (delay: number, broadcastOnIdle: boolean) => {
-    clearIdleTimeout()
-    idleTimeoutRef.current = window.setTimeout(() => {
-      triggerIdle(broadcastOnIdle)
-    }, delay)
-  }
-
-  const openWarning = (broadcast: boolean) => {
-    clearWarnTimeout()
-    setWarningState(true)
-    scheduleIdleTimeout(WARNING_GRACE_TIME, broadcast)
-
-    if (broadcast) {
-      postMessage('warn')
-    }
-  }
-
-  const startIdleCycle = (broadcastMessage?: IdleChannelMessage) => {
-    clearTimers()
-    setWarningState(false)
-
-    warnTimeoutRef.current = window.setTimeout(() => {
-      openWarning(true)
-    }, WARN_TIME)
-
-    scheduleIdleTimeout(IDLE_TIME, true)
-
-    if (broadcastMessage) {
-      postMessage(broadcastMessage)
-    }
-  }
-
-  const handleUserActivity = () => {
-    if (isWarningRef.current) return
-
-    const now = Date.now()
-    if (now - lastActiveRef.current <= ACTIVITY_THROTTLE_MS) return
-
-    lastActiveRef.current = now
-    startIdleCycle('activity')
-  }
-
-  const stayLoggedIn = () => {
-    lastActiveRef.current = Date.now()
-    startIdleCycle('stay')
-  }
-
-  const logoutNow = () => {
-    triggerIdle(true)
-  }
+  const stay = useCallback(() => {
+    warningRef.current = false
+    setWarning(false)
+    if (logoutTimer.current) clearTimeout(logoutTimer.current)
+    if (countdown.current) clearInterval(countdown.current)
+    startIdleTimer()
+  }, [startIdleTimer])
 
   useEffect(() => {
-    if (!isAuthenticated) {
-      clearTimers()
-      setWarningState(false)
-      channelRef.current?.close()
-      channelRef.current = null
+    if (!enabled) {
+      clearAll()
+      setWarning(false)
+      warningRef.current = false
       return
     }
 
-    const channel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel(CHANNEL_NAME) : null
-    channelRef.current = channel
-
-    if (channel) {
-      channel.onmessage = (e) => {
-        if (e.data === 'activity') {
-          if (isWarningRef.current) return
-          lastActiveRef.current = Date.now()
-          startIdleCycle()
-        } else if (e.data === 'warn') {
-          openWarning(false)
-        } else if (e.data === 'stay') {
-          lastActiveRef.current = Date.now()
-          startIdleCycle()
-        } else if (e.data === 'logout') {
-          triggerIdle(false)
-        }
-      }
+    const onActivity = () => {
+      if (warningRef.current) return // during the warning, only "Stay" resets
+      const now = Date.now()
+      if (now - lastReset.current < RESET_THROTTLE_MS) return
+      lastReset.current = now
+      startIdleTimer()
     }
 
-    lastActiveRef.current = Date.now()
-    startIdleCycle()
-
-    const events = ['mousemove', 'keydown', 'click', 'scroll', 'touchstart']
-    const listener = () => handleUserActivity()
-
-    events.forEach((evt) => window.addEventListener(evt, listener, { passive: true }))
+    for (const evt of ACTIVITY_EVENTS) window.addEventListener(evt, onActivity, { passive: true })
+    startIdleTimer()
 
     return () => {
-      events.forEach((evt) => window.removeEventListener(evt, listener))
-      clearTimers()
-      channel?.close()
-      channelRef.current = null
+      for (const evt of ACTIVITY_EVENTS) window.removeEventListener(evt, onActivity)
+      clearAll()
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAuthenticated])
+  }, [enabled, startIdleTimer, clearAll])
 
-  return { isWarning, stayLoggedIn, logoutNow, channelRef }
+  return { warning, secondsLeft, stay }
 }

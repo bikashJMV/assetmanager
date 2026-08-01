@@ -6,6 +6,7 @@ import { getUserFacingMessage, logDevError } from '../../utils/errors'
 import { getErrorStatusCode } from '../../utils/authNexus.api'
 import { formatDisplay } from '../../utils/formatDisplay'
 import InventoryStatusBadge from '../common/InventoryStatusBadge'
+import { LOADING } from '../../constants/loading'
 
 type BarcodeDetectorInstance = {
   detect: (image: HTMLVideoElement) => Promise<Array<{ rawValue?: string }>>
@@ -215,7 +216,7 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
                 onClick={() => {
                   void startScanner()
                 }}
-                className="w-full bg-accent text-white font-semibold px-4 py-2.5 rounded-lg hover:bg-accent-hover transition text-sm"
+                className="w-full bg-accent text-on-accent font-semibold px-4 py-2.5 rounded-lg hover:bg-accent-hover transition text-sm"
               >
                 Start Camera Scanner
               </button>
@@ -241,12 +242,12 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
             <input
               value={manualTag}
               onChange={(evt) => setManualTag(evt.target.value)}
-              placeholder="e.g. AST-00012"
+              placeholder="e.g. JMV-LAP-00012"
               className="flex-1 bg-surface border border-base text-primary rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[color:var(--accent)] transition"
             />
             <button
               type="submit"
-              className="bg-accent text-white font-semibold px-4 py-2.5 rounded-lg hover:bg-accent-hover transition text-sm"
+              className="bg-accent text-on-accent font-semibold px-4 py-2.5 rounded-lg hover:bg-accent-hover transition text-sm"
             >
               Lookup
             </button>
@@ -305,7 +306,7 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
   if (!asset) {
     return (
       <main className="min-h-screen bg-app flex items-center justify-center">
-        <p className="text-subtle">Loading asset...</p>
+        <p className="text-subtle">{LOADING.ASSET}</p>
       </main>
     )
   }
@@ -317,7 +318,7 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
   const publicAsset = asset as PublicScanAsset
   const heading = formatDisplay(publicAsset.category_name) || formatDisplay(publicAsset.asset_tag) || '-'
 
-  if ((activeScan.data as any)?.kind === 'reserved') {
+  if ((activeScan.data as { kind?: string } | undefined)?.kind === 'reserved') {
     return (
       <main className="min-h-screen bg-app text-primary px-4 py-8">
         <div className="text-center mb-8 mt-12">
@@ -344,7 +345,7 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
               const next = `/assets/scan/${publicAsset.asset_tag}`
               navigate(`/login?next=${encodeURIComponent(next)}`)
             }}
-            className="bg-accent text-white font-semibold px-6 py-3 rounded-xl hover:bg-accent-hover transition shadow-accent"
+            className="bg-accent text-on-accent font-semibold px-6 py-3 rounded-xl hover:bg-accent-hover transition shadow-accent"
           >
             Sign In to Log Asset
           </button>
@@ -391,7 +392,7 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
               const next = `/assets/${publicAsset.asset_tag}`
               navigate(`/login?next=${encodeURIComponent(next)}`)
             }}
-            className="bg-accent text-white font-semibold px-6 py-2.5 rounded-lg hover:bg-accent-hover transition text-sm shadow-accent"
+            className="bg-accent text-on-accent font-semibold px-6 py-2.5 rounded-lg hover:bg-accent-hover transition text-sm shadow-accent"
           >
            Login / See More
           </button>

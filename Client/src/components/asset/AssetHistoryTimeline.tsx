@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { AssetLifecycleEvent } from '../../api'
-import { formatDateTime } from '../../utils/formatDisplay'
+import { formatDateTime, formatEnumLabel } from '../../utils/formatDisplay'
 import {
   formatChangeValue,
   formatHistoryActor,
@@ -116,16 +116,18 @@ function getEventLabel(eventType: string): string {
   if (normalized === 'assigned') return 'Assigned'
   if (normalized === 'unassigned') return 'Returned'
   if (normalized === 'qr_scanned') return 'QR Scanned'
-  return eventType.replace(/_/g, ' ')
+  return formatEnumLabel(eventType)
 }
 
-function getEventAccentClass(eventType: string): string {
+/** Token-driven accent color for a lifecycle event dot/label — replaces hardcoded
+ * emerald/amber/sky/rose classes (dark-mode unsafe); mirrors AssetChangeHistory's legend. */
+function getEventAccentColor(eventType: string): string {
   const normalized = eventType.trim().toLowerCase()
-  if (normalized === 'asset_created' || normalized === 'asset_restored') return 'text-emerald-600'
-  if (normalized === 'asset_updated') return 'text-amber-600'
-  if (normalized === 'assigned' || normalized === 'unassigned') return 'text-sky-600'
-  if (normalized === 'asset_deleted') return 'text-rose-600'
-  return 'text-accent'
+  if (normalized === 'asset_created' || normalized === 'asset_restored') return 'hsl(var(--success))'
+  if (normalized === 'asset_updated') return 'hsl(var(--warning))'
+  if (normalized === 'assigned' || normalized === 'unassigned') return 'hsl(var(--info))'
+  if (normalized === 'asset_deleted') return 'hsl(var(--danger))'
+  return 'var(--accent)' // legacy bridge var already resolves to a full hsl(...) value
 }
 
 function buildYearGroups(events: AssetLifecycleEvent[]): YearGroup[] {
@@ -275,7 +277,7 @@ export default function AssetHistoryTimeline({ events }: Props) {
               className={`flex w-full items-center justify-between gap-3 px-1 py-3 text-left ${yearIndex > 0 ? 'border-t border-base' : ''}`}
             >
               <div className="flex items-center gap-3">
-                <span className="inline-flex min-w-[3.75rem] items-center justify-center rounded-full bg-accent px-3 py-1 text-xs font-semibold text-white">
+                <span className="inline-flex min-w-[3.75rem] items-center justify-center rounded-full bg-accent px-3 py-1 text-xs font-semibold text-on-accent">
                   {yearGroup.year}
                 </span>
                 <span className="inline-flex items-center rounded-full border border-base bg-app px-2.5 py-1 text-[11px] font-medium text-muted">
@@ -364,7 +366,7 @@ export default function AssetHistoryTimeline({ events }: Props) {
                                       const actor = formatHistoryActor(event)
                                       const changes = normalizeFieldChanges(event)
                                       const eventLabel = getEventLabel(event.event_type)
-                                      const accentClassName = getEventAccentClass(event.event_type)
+                                      const accentColor = getEventAccentColor(event.event_type)
 
                                       return (
                                         <article
@@ -372,13 +374,14 @@ export default function AssetHistoryTimeline({ events }: Props) {
                                           className={`relative py-3 ${eventIndex > 0 ? 'border-t border-base/70' : ''}`}
                                         >
                                           <span
-                                            className={`absolute left-[-1.18rem] top-[1.35rem] h-2.5 w-2.5 rounded-full bg-current ${accentClassName}`}
+                                            className="absolute left-[-1.18rem] top-[1.35rem] h-2.5 w-2.5 rounded-full"
+                                            style={{ backgroundColor: accentColor }}
                                             aria-hidden="true"
                                           />
 
                                           <div className="space-y-1">
                                             <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                                              <span className={`inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-[0.14em] ${accentClassName}`}>
+                                              <span className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-[0.14em]" style={{ color: accentColor }}>
                                                 <EventIcon eventType={event.event_type} />
                                                 {eventLabel}
                                               </span>

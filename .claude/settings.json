@@ -1,0 +1,151 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git status)",
+      "Bash(git log*)",
+      "Bash(git diff*)",
+      "Bash(git show*)",
+      "Bash(git add*)",
+      "Bash(git commit*)",
+      "Bash(git branch*)",
+      "Bash(git checkout*)",
+      "Bash(git push*)",
+      "Bash(git stash*)",
+      "Bash(git worktree*)",
+      "Bash(gh pr*)",
+      "Bash(gh run*)",
+      "Bash(npm run*)",
+      "Bash(npm test*)",
+      "Bash(npm ci*)",
+      "Bash(npm install*)",
+      "Bash(pnpm*)",
+      "Bash(yarn*)",
+      "Bash(bun*)",
+      "Bash(npx*)",
+      "Bash(pytest*)",
+      "Bash(ruff*)",
+      "Bash(mypy*)",
+      "Bash(python -m pytest*)",
+      "Bash(pip install*)",
+      "Bash(docker compose ps*)",
+      "Bash(docker compose logs*)",
+      "Bash(ls*)",
+      "Bash(find . *)",
+      "Bash(wc -l*)",
+      "Bash(grep*)",
+      "Bash(./.claude/hooks/*)",
+      "Bash(.claude/hooks/*)",
+      "PowerShell($p = \"$env:ProgramFiles\\\\Docker\\\\Docker\\\\Docker Desktop.exe\"; if \\(Test-Path $p\\) { Start-Process $p; \"launching\" } else { \"not found: $p\" })",
+      "Bash(docker rm *)",
+      "Bash(curl -s -o /dev/null -w \"client:%{http_code} \" http://localhost:11000/)",
+      "Bash(curl -s -o /dev/null -w \"server:%{http_code}\\\\n\" http://localhost:11100/api/health)"
+    ],
+    "deny": [
+      "Bash(git push --force*)",
+      "Bash(git push -f*)",
+      "Bash(git reset --hard*)",
+      "Bash(git rebase*)",
+      "Bash(git commit --no-verify*)",
+      "Bash(git commit -n*)",
+      "Write(.env)",
+      "Write(.env.local*)",
+      "Write(.env.production*)",
+      "Write(.env.staging*)",
+      "Write(.env.test*)",
+      "Write(.env.development*)",
+      "Write(**/.env)",
+      "Write(**/.env.local*)",
+      "Write(**/.env.production*)",
+      "Write(.git/**)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/commit-gate.sh"
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/destructive-guard.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/edit-gate.sh"
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/protected-paths.sh"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/lint-changed.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/migration-reminder.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/ship-cleanup.sh"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/verify-stop.sh"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/session-start.sh"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/approval-gate.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,9 @@
+.env
+postgres/
+# Ignore PostgreSQL data directory
+.env.production
+.database_dump.sql  
+ams_backup.sql
+init.sql
+prod_schema.sql
+init.sql

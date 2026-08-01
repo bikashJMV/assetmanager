@@ -2,34 +2,34 @@
 
 Run with: python -m pytest tests/test_qr_labels_export.py -v
 """
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 
-from core.auth import require_manage_platform_access
-from core.deps import get_db
+from core.authnexus import EmployeeContext
+from core.authz import require_privileged
 from main import app
-
-
-def _mock_get_db_no_rows():
-    mock_db = MagicMock()
-    mock_response = MagicMock()
-    mock_response.data = []
-    mock_db.table().select().eq().in_().execute.return_value = mock_response
-    return mock_db
 
 
 @pytest.fixture
 def export_client():
-    app.dependency_overrides[get_db] = _mock_get_db_no_rows
-    app.dependency_overrides[require_manage_platform_access] = lambda: None
+    admin = EmployeeContext(
+        id="00000000-0000-0000-0000-000000000001",
+        employee_id="TEST-ADMIN",
+        name="Test Admin",
+        department=None,
+        role="admin",
+        sub="test-sub",
+        is_active=True,
+    )
+    app.dependency_overrides[require_privileged] = lambda: admin
     yield TestClient(app)
     app.dependency_overrides.clear()
 
 
 def test_empty_asset_tags_returns_notice_pdf(export_client: TestClient):
-    response = export_client.post("/assets/qr-labels/export", json={"asset_tags": []})
+    response = export_client.post("/api/v1/assets/qr-labels/export", json={"asset_tags": []})
     assert response.status_code == 200
     assert "application/pdf" in (response.headers.get("content-type") or "")
     assert response.headers.get("X-Export-Empty") == "1"
@@ -38,8 +38,16 @@ def test_empty_asset_tags_returns_notice_pdf(export_client: TestClient):
     assert response.content[:4] == b"%PDF"
 
 
-def test_only_missing_tags_returns_notice_pdf(export_client: TestClient):
-    response = export_client.post("/assets/qr-labels/export", json={"asset_tags": ["NO-SUCH-TAG-XYZ"]})
+@patch(
+    "routers.api_v1_assets.AssetRepository.list_existing_asset_tags_in_order",
+    new_callable=AsyncMock,
+    return_value=[],
+)
+def test_only_missing_tags_returns_notice_pdf(_mock_list: AsyncMock, export_client: TestClient):
+    response = export_client.post(
+        "/api/v1/assets/qr-labels/export",
+        json={"asset_tags": ["NO-SUCH-TAG-XYZ"]},
+    )
     assert response.status_code == 200
     assert "application/pdf" in (response.headers.get("content-type") or "")
     assert response.headers.get("X-Export-Empty") == "1"

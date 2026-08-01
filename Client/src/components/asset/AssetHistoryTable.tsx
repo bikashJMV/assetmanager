@@ -1,6 +1,6 @@
 import { Fragment } from 'react'
 import type { AssetLifecycleEvent } from '../../api'
-import { formatDateTime, formatDisplay } from '../../utils/formatDisplay'
+import { formatDateTime, formatEnumLabel } from '../../utils/formatDisplay'
 import {
   formatChangeValue,
   formatHistoryActor,
@@ -53,7 +53,7 @@ function EventIcon({ eventType }: { eventType: string }) {
     )
   }
 
-  if (normalized === 'assigned') {
+  if (normalized === 'asset_assigned') {
     return (
       <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
         <path d="M16 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2" />
@@ -64,7 +64,7 @@ function EventIcon({ eventType }: { eventType: string }) {
     )
   }
 
-  if (normalized === 'unassigned') {
+  if (normalized === 'asset_returned') {
     return (
       <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
         <path d="M16 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2" />
@@ -101,19 +101,20 @@ function getEventLabel(eventType: string): string {
   if (normalized === 'asset_updated') return 'Updated'
   if (normalized === 'asset_deleted') return 'Deleted'
   if (normalized === 'asset_restored') return 'Restored'
-  if (normalized === 'assigned') return 'Assigned'
-  if (normalized === 'unassigned') return 'Returned'
+  if (normalized === 'asset_assigned') return 'Assigned'
+  if (normalized === 'asset_returned') return 'Returned'
   if (normalized === 'qr_scanned') return 'QR Scanned'
-  return formatDisplay(eventType)
+  return formatEnumLabel(eventType)
 }
 
-function getEventAccentClass(eventType: string): string {
+/** Token-driven accent color for a lifecycle event (mirrors AssetHistoryTimeline). */
+function getEventAccentColor(eventType: string): string {
   const normalized = eventType.trim().toLowerCase()
-  if (normalized === 'asset_created' || normalized === 'asset_restored') return 'text-emerald-600'
-  if (normalized === 'asset_updated') return 'text-amber-600'
-  if (normalized === 'assigned' || normalized === 'unassigned') return 'text-sky-600'
-  if (normalized === 'asset_deleted') return 'text-rose-600'
-  return 'text-accent'
+  if (normalized === 'asset_created' || normalized === 'asset_restored') return 'hsl(var(--success))'
+  if (normalized === 'asset_updated') return 'hsl(var(--warning))'
+  if (normalized === 'asset_assigned' || normalized === 'asset_returned') return 'hsl(var(--info))'
+  if (normalized === 'asset_deleted') return 'hsl(var(--danger))'
+  return 'var(--accent)'
 }
 
 export default function AssetHistoryTable({ events }: Props) {
@@ -124,7 +125,7 @@ export default function AssetHistoryTable({ events }: Props) {
       <table className="w-full min-w-[920px] text-sm">
         <thead className="bg-surface-2 text-muted uppercase text-xs">
           <tr>
-            <th className="px-3 py-2 text-left">When</th>
+            <th className="px-3 py-2 text-left">Time/Date</th>
             <th className="px-3 py-2 text-left">Action</th>
             <th className="px-3 py-2 text-left">By</th>
             <th className="px-3 py-2 text-left">Field</th>
@@ -150,13 +151,13 @@ export default function AssetHistoryTable({ events }: Props) {
             const actor = formatHistoryActor(event)
             const changes = normalizeFieldChanges(event)
             const actionLabel = getEventLabel(event.event_type)
-            const actionAccentClassName = getEventAccentClass(event.event_type)
+            const actionAccentColor = getEventAccentColor(event.event_type)
             if (changes.length === 0) {
               return (
                 <tr key={event.id} className="border-t border-base">
                   <td className="px-3 py-2 text-primary whitespace-nowrap">{formatDateTime(event.created_at)}</td>
                   <td className="px-3 py-2 text-primary font-medium">
-                    <span className={`inline-flex items-center gap-1.5 ${actionAccentClassName}`}>
+                    <span className="inline-flex items-center gap-1.5" style={{ color: actionAccentColor }}>
                       <EventIcon eventType={event.event_type} />
                       {actionLabel}
                     </span>
@@ -178,7 +179,7 @@ export default function AssetHistoryTable({ events }: Props) {
                 <td className="px-3 py-2 text-primary whitespace-nowrap">{idx === 0 ? formatDateTime(event.created_at) : ''}</td>
                 <td className="px-3 py-2 text-primary font-medium">
                   {idx === 0 ? (
-                    <span className={`inline-flex items-center gap-1.5 ${actionAccentClassName}`}>
+                    <span className="inline-flex items-center gap-1.5" style={{ color: actionAccentColor }}>
                       <EventIcon eventType={event.event_type} />
                       {actionLabel}
                     </span>

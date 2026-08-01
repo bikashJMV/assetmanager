@@ -1,7 +1,5 @@
 import {
-  createContext,
   useCallback,
-  useContext,
   useEffect,
   useMemo,
   useRef,
@@ -9,64 +7,43 @@ import {
   type ReactNode,
 } from 'react'
 
-type ToastVariant = 'success' | 'error' | 'warning' | 'info'
-
-type ToastInput = {
-  title?: string
+type ToastRecord = {
+  id: number
   message: string
-  variant?: ToastVariant
+  title?: string
+  variant: ToastVariant
   durationMs?: number
 }
 
-type ToastRecord = ToastInput & {
-  id: number
-  variant: ToastVariant
-}
 
-type ToastContextValue = {
-  showToast: (input: ToastInput) => number
-  dismissToast: (id: number) => void
-}
+import { ToastContext, type ToastInput, type ToastVariant } from '../../hooks/useToast'
 
-const ToastContext = createContext<ToastContextValue | null>(null)
 
 const DEFAULT_DURATION_MS = 4200
+const PERSISTENT_TOAST_DURATION_MS = 0
 
-function toastTone(variant: ToastVariant) {
-  if (variant === 'success') {
-    return {
-      card: 'border-emerald-200 bg-white',
-      iconWrap: 'bg-emerald-50 text-emerald-600',
-      title: 'text-emerald-700',
-      message: 'text-slate-700',
-      close: 'text-slate-400 hover:bg-emerald-50 hover:text-emerald-700',
-    }
-  }
-  if (variant === 'error') {
-    return {
-      card: 'border-red-200 bg-white',
-      iconWrap: 'bg-red-50 text-red-600',
-      title: 'text-red-700',
-      message: 'text-slate-700',
-      close: 'text-slate-400 hover:bg-red-50 hover:text-red-700',
-    }
-  }
-  if (variant === 'warning') {
-    return {
-      card: 'border-amber-200 bg-white',
-      iconWrap: 'bg-amber-50 text-amber-600',
-      title: 'text-amber-700',
-      message: 'text-slate-700',
-      close: 'text-slate-400 hover:bg-amber-50 hover:text-amber-700',
-    }
-  }
+/* Token-driven, theme-aware toast styling (Notes/UI.md §9): surface card, 3px
+   semantic left border, tinted icon chip. Works in light AND dark. */
+const TOAST_VAR: Record<ToastVariant, string> = {
+  success: '--success',
+  error: '--danger',
+  warning: '--warning',
+  info: '--info',
+}
+
+function toastStyle(variant: ToastVariant): React.CSSProperties {
+  const v = TOAST_VAR[variant]
   return {
-    card: 'border-sky-200 bg-white',
-    iconWrap: 'bg-sky-50 text-sky-600',
-    title: 'text-sky-700',
-    message: 'text-slate-700',
-    close: 'text-slate-400 hover:bg-sky-50 hover:text-sky-700',
+    backgroundColor: 'hsl(var(--surface-t))',
+    borderColor: 'hsl(var(--border-t))',
+    borderLeft: `3px solid hsl(var(${v}))`,
+    boxShadow: 'var(--shadow-lg)',
   }
+}
+
+function toastIconStyle(variant: ToastVariant): React.CSSProperties {
+  const v = TOAST_VAR[variant]
+  return { backgroundColor: `hsl(var(${v}) / 0.12)`, color: `hsl(var(${v}))` }
 }
 
 function defaultTitleForVariant(variant: ToastVariant): string {
@@ -140,7 +117,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       typeof input.durationMs === 'number'
         ? input.durationMs
         : variant === 'error' || variant === 'warning'
-          ? 6500
+          ? PERSISTENT_TOAST_DURATION_MS
           : DEFAULT_DURATION_MS
 
     if (durationMs > 0) {
@@ -154,11 +131,12 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   }, [dismissToast])
 
   useEffect(() => {
+    const currentTimers = timersRef.current
     return () => {
-      for (const timer of timersRef.current.values()) {
+      for (const timer of currentTimers.values()) {
         clearTimeout(timer)
       }
-      timersRef.current.clear()
+      currentTimers.clear()
     }
   }, [])
 
@@ -171,32 +149,35 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     <ToastContext.Provider value={contextValue}>
       {children}
       <div className="pointer-events-none fixed inset-x-0 bottom-4 z-[160] flex justify-center px-4 sm:inset-x-auto sm:bottom-5 sm:right-5 sm:justify-end">
-        <div className="flex w-full max-w-[22rem] flex-col gap-3 sm:w-[22rem]">
+        <div className="flex w-full max-w-[24rem] flex-col gap-3 sm:w-[24rem]">
           {toasts.map((toast) => {
-            const tone = toastTone(toast.variant)
             const title = toast.title?.trim() || defaultTitleForVariant(toast.variant)
 
             return (
               <section
                 key={toast.id}
-                className={`pointer-events-auto relative w-full rounded-2xl border px-4 py-3 shadow-[0_18px_48px_rgba(15,23,42,0.16)] ${tone.card}`}
-                role="status"
+                className="ams-toast-in pointer-events-auto relative w-full rounded-lg border px-4 py-2"
+                style={toastStyle(toast.variant)}
+                role="alert"
                 aria-live={toast.variant === 'error' ? 'assertive' : 'polite'}
               >
                 <div className="flex items-start gap-3">
-                  <div className={`mt-0.5 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${tone.iconWrap}`}>
+                  <div
+                    className="mt-0.5 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg"
+                    style={toastIconStyle(toast.variant)}
+                  >
                     <ToastIcon variant={toast.variant} />
                   </div>
                   <div className="min-w-0 flex-1 pr-8">
-                    <p className={`text-sm font-semibold ${tone.title}`}>{title}</p>
-                    <p className={`mt-1 text-sm leading-6 ${tone.message}`}>{toast.message}</p>
+                    <p className="text-sm font-semibold text-primary">{title}</p>
+                    <p className="mt-1 text-[13px] leading-5 break-words text-muted">{toast.message}</p>
                   </div>
                 </div>
                 <button
                   type="button"
                   aria-label="Close notification"
                   onClick={() => dismissToast(toast.id)}
-                  className={`absolute right-2 top-2 inline-flex h-9 w-9 items-center justify-center rounded-xl transition ${tone.close}`}
+                  className="absolute right-2 top-2 inline-flex h-9 w-9 items-center justify-center rounded-lg text-muted transition hover:bg-surface-3 hover:text-primary"
                 >
                   <svg viewBox="0 0 24 24" className="h-4.5 w-4.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
                     <path d="M18 6 6 18" />
@@ -212,10 +193,4 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   )
 }
 
-export function useToast() {
-  const context = useContext(ToastContext)
-  if (!context) {
-    throw new Error('useToast must be used within ToastProvider')
-  }
-  return context
-}
+

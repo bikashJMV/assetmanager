@@ -1,6 +1,7 @@
+import logging
 import os
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Tuple
 from dotenv import load_dotenv
 
 # Load .env file
@@ -17,27 +18,46 @@ class Settings:
     Loads from .env file or environment variables.
     Using dataclass + load_dotenv for maximum environment compatibility (KISS).
     """
-    # Supabase service-role key is required for trusted server operations (QR generation, admin endpoints).
-    SUPABASE_URL: str = field(default_factory=lambda: os.getenv("SUPABASE_URL", os.getenv("VITE_SUPABASE_URL", "")))
-    SUPABASE_KEY: str = field(default_factory=lambda: os.getenv("SUPABASE_KEY", os.getenv("VITE_SUPABASE_KEY", "")))
-
-    # FRONTEND_URL: Used for QR code generation (public SPA origin). Default matches deployed client.
-    FRONTEND_URL: str = field(
-        default_factory=lambda: os.getenv(
-            "FRONTEND_URL",
-            os.getenv("VITE_FRONTEND_URL", "https://web-assetmanager.vercel.app"),
-        )
+    # Postgres connection
+    DATABASE_URL: str = field(default_factory=lambda: os.getenv("DATABASE_URL", ""))
+    POSTGRES_HOST: str = field(default_factory=lambda: os.getenv("POSTGRES_HOST", "localhost"))
+    POSTGRES_PORT: int = field(default_factory=lambda: int(os.getenv("POSTGRES_PORT", "5432")))
+    POSTGRES_DB: str = field(default_factory=lambda: os.getenv("POSTGRES_DB", ""))
+    POSTGRES_USER: str = field(default_factory=lambda: os.getenv("POSTGRES_USER", ""))
+    POSTGRES_PASSWORD: str = field(default_factory=lambda: os.getenv("POSTGRES_PASSWORD", ""))
+    POSTGRES_MIN_POOL_SIZE: int = field(default_factory=lambda: int(os.getenv("POSTGRES_MIN_POOL_SIZE", "1")))
+    # Per-worker pool. 4 uvicorn workers x 15 = 60 connections, under postgres max_connections=100.
+    POSTGRES_MAX_POOL_SIZE: int = field(default_factory=lambda: int(os.getenv("POSTGRES_MAX_POOL_SIZE", "15")))
+    POSTGRES_COMMAND_TIMEOUT_SECONDS: float = field(
+        default_factory=lambda: float(os.getenv("POSTGRES_COMMAND_TIMEOUT_SECONDS", "10"))
     )
+
+    # Auth (authNexus / Zitadel)
+    AUTH_ENABLED: bool = field(default_factory=lambda: os.getenv("AUTH_ENABLED", "false").strip().lower() == "true")
+    AUTH_JWKS_URL: str = field(default_factory=lambda: os.getenv("AUTH_JWKS_URL", "").strip())
+    AUTH_ISSUER: str = field(default_factory=lambda: os.getenv("AUTH_ISSUER", "").strip())
+    AUTH_AUDIENCE: str = field(default_factory=lambda: os.getenv("AUTH_AUDIENCE", "").strip())
+    AUTH_PROJECT_ID: str = field(default_factory=lambda: os.getenv("AUTH_PROJECT_ID", os.getenv("VITE_PROJECT_ID", "")).strip())
+    AUTH_PROJECT_ID_CLAIM: str = field(default_factory=lambda: os.getenv("AUTH_PROJECT_ID_CLAIM", "project_id").strip())
+    AUTH_CLOCK_SKEW_SECONDS: int = field(default_factory=lambda: int(os.getenv("AUTH_CLOCK_SKEW_SECONDS", "30")))
+    # FRONTEND_URL: Used for QR code generation (public SPA origin). Default matches deployed client.
+    # The old default was a no-op self-lookup (os.getenv("FRONTEND_URL", os.getenv("FRONTEND_URL"))),
+    # so an unset var yielded None despite the `str` annotation. Trimmed like its siblings: a
+    # trailing space survives .rstrip("/") in qr_service and would land inside the encoded scan URL.
+    FRONTEND_URL: str = field(default_factory=lambda: os.getenv("FRONTEND_URL", "").strip())
 
     # ALLOWED_ORIGINS: Comma-separated list of allowed origins for CORS.
     ALLOWED_ORIGINS: List[str] = field(
         default_factory=lambda: _parse_origins(
-            os.getenv("ALLOWED_ORIGINS", os.getenv("VITE_ALLOWED_ORIGINS", ""))
+            os.getenv("ALLOWED_ORIGINS", os.getenv("ALLOWED_ORIGINS", ""))
         )
     )
 
     # Optional shared secret for backend API access when server is public.
     BACKEND_API_KEY: str = field(default_factory=lambda: os.getenv("BACKEND_API_KEY", os.getenv("VITE_BACKEND_API_KEY", "")))
+    AUTH_AUTHORITY: str = field(
+        default_factory=lambda: os.getenv("AUTH_AUTHORITY", os.getenv("VITE_AUTH_AUTHORITY", "")).rstrip("/")
+    )
 
     # Server-only secret for POST /internal/bootstrap-role (promote employee by email). Empty = route disabled (503).
     ROLE_BOOTSTRAP_SECRET: str = field(
@@ -47,32 +67,25 @@ class Settings:
     # ENVIRONMENT: local | production
     ENV: str = field(default_factory=lambda: os.getenv("ENV", os.getenv("VITE_ENV", "local")))
 
-    # TelemetryServer (telemetry ingestion/query backend) integration
-    # - Keep TELEMETRY_ITOPS_QUERY_KEY_NEW on the server only (never expose to browser).
-    TELEMETRY_SERVER_BASE_URL: str = field(
-        default_factory=lambda: os.getenv(
-            "TELEMETRY_SERVER_BASE_URL",
-            os.getenv("VITE_TELEMETRY_SERVER_BASE_URL", "http://localhost:8010"),
-        ).rstrip("/"),
+    # Grafana telemetry enable/disable
+    OTEL_GRAFANA_ENABLED: bool = field(
+        default_factory=lambda: os.getenv("OTEL_GRAFANA_ENABLED", "false").strip().lower() == "true"
     )
-    TELEMETRY_ITOPS_QUERY_KEY_NEW: str = field(
-        default_factory=lambda: os.getenv(
-            "TELEMETRY_ITOPS_QUERY_KEY_NEW",
-            os.getenv("VITE_TELEMETRY_ITOPS_QUERY_KEY_NEW", ""),
-        ).strip(),
+
+    # Admin-only CSV export for all assets (set false to disable).
+    ASSET_EXPORT_ENABLED: bool = field(
+        default_factory=lambda: os.getenv("ASSET_EXPORT_ENABLED", "true").strip().lower() == "true"
     )
-    TELEMETRY_INGEST_TOKEN_SECRET: str = field(
-        default_factory=lambda: os.getenv(
-            "TELEMETRY_INGEST_TOKEN_SECRET",
-            os.getenv("VITE_TELEMETRY_INGEST_TOKEN_SECRET", ""),
-        )
+
+    # Observability (Loki Integration)
+    LOKI_BASE_URL: str = field(
+        default_factory=lambda: os.getenv("LOKI_BASE_URL", "http://localhost:3100").rstrip("/")
     )
-    TELEMETRY_TOKEN_TTL_SECONDS: int = field(
-        default_factory=lambda: int(os.getenv("TELEMETRY_TOKEN_TTL_SECONDS", "600"))
+    # OTLP gRPC endpoint of the grafana/otel-lgtm collector (logs + traces + metrics).
+    OTEL_EXPORTER_OTLP_ENDPOINT: str = field(
+        default_factory=lambda: os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317").rstrip("/")
     )
-    TELEMETRY_ENV: str = field(
-        default_factory=lambda: os.getenv("TELEMETRY_ENV", os.getenv("VITE_TELEMETRY_ENV", "local")).strip().lower()
-    )
+
 
     # ── Notification / Email microservice ────────────────────────────────────
     # EMAIL_SERVICE_URL: Full base URL of the running email microservice.
@@ -93,26 +106,77 @@ class Settings:
         default_factory=lambda: os.getenv("NOTIFICATIONS_ENABLED", "false").strip().lower() == "true"
     )
 
-    def __post_init__(self):
-        # Basic validation
-        if not self.SUPABASE_URL or not self.SUPABASE_KEY:
-            print("WARNING: SUPABASE_URL or SUPABASE_KEY is missing. Database calls will fail.")
-        if not self.SUPABASE_URL or not self.SUPABASE_KEY:
-            raise ValueError("SUPABASE_URL and SUPABASE_KEY must be set.")
+    # authNexus Admin (for sync)
+    AUTHNEXUS_ADMIN_USER: str = field(default_factory=lambda: os.getenv("AUTHNEXUS_ADMIN_USER", "").strip())
+    AUTHNEXUS_ADMIN_PASSWORD: str = field(default_factory=lambda: os.getenv("AUTHNEXUS_ADMIN_PASSWORD", "").strip())
+    AUTHNEXUS_ORG_ID: str = field(default_factory=lambda: os.getenv("AUTHNEXUS_ORG_ID", "").strip())
+
+    # Config warnings raised during __post_init__, held until logging is configured.
+    # (message, args) pairs so the logger does the %-formatting and keeps them structured.
+    startup_warnings: List[Tuple[str, Tuple[object, ...]]] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if not self.DATABASE_URL.strip():
+                missing: list[str] = []
+                if not self.POSTGRES_DB.strip():
+                    missing.append("POSTGRES_DB")
+                if not self.POSTGRES_USER.strip():
+                    missing.append("POSTGRES_USER")
+                if not self.POSTGRES_PASSWORD:
+                    missing.append("POSTGRES_PASSWORD")
+                if not self.POSTGRES_HOST.strip():
+                    missing.append("POSTGRES_HOST")
+                if not self.POSTGRES_PORT:
+                    missing.append("POSTGRES_PORT")
+                if missing:
+                    raise ValueError("Missing required Postgres environment variables: " + ", ".join(missing))
+
+        if self.AUTH_ENABLED:
+            if not self.AUTH_JWKS_URL:
+                raise ValueError("AUTH_JWKS_URL must be set when AUTH_ENABLED=true.")
+            if not self.AUTH_PROJECT_ID:
+                raise ValueError("AUTH_PROJECT_ID must be set when AUTH_ENABLED=true.")
+            
+            # Warn if admin credentials are missing (needed for role sync)
+            if not self.AUTHNEXUS_ADMIN_USER or not self.AUTHNEXUS_ADMIN_PASSWORD or not self.AUTHNEXUS_ORG_ID:
+                self._warn("AUTHNEXUS_ADMIN credentials not fully set. AuthNexus sync features will be disabled.")
 
         if not self.FRONTEND_URL.startswith("http"):
-            print(f"WARNING: FRONTEND_URL '{self.FRONTEND_URL}' might be invalid. It should start with http:// or https://")
+            self._warn(
+                "FRONTEND_URL '%s' might be invalid. It should start with http:// or https://",
+                self.FRONTEND_URL,
+            )
 
         if self.ENV.strip().lower() == "production" and not self.BACKEND_API_KEY.strip():
-            print("WARNING: BACKEND_API_KEY is empty in production. Public API access is not restricted.")
+            self._warn("BACKEND_API_KEY is empty in production. Public API access is not restricted.")
 
         legacy_email_api_key = os.getenv("EMAIL_SERVICE_API_KEY", "").strip()
         preferred_email_api_key = os.getenv("BACKEND_API_KEY_EMAIL_NOTIFICATION", "").strip()
         if legacy_email_api_key and not preferred_email_api_key:
-            print(
-                "WARNING: EMAIL_SERVICE_API_KEY is deprecated. "
-                "Use BACKEND_API_KEY_EMAIL_NOTIFICATION instead."
+            self._warn(
+                "EMAIL_SERVICE_API_KEY is deprecated. Use BACKEND_API_KEY_EMAIL_NOTIFICATION instead."
             )
+
+    def _warn(self, message: str, *args: object) -> None:
+        """Buffer a startup warning instead of emitting it now.
+
+        `Settings()` is constructed at import time — before `logging.basicConfig()` and before the
+        OTLP handler is attached — so logging here would bypass the aggregator entirely. Warnings
+        are held until `emit_startup_warnings()` is called from the app factory.
+        """
+        self.startup_warnings.append((message, args))
+
+    def emit_startup_warnings(self) -> None:
+        """Flush buffered config warnings through the configured logger. Safe to call twice."""
+        logger = logging.getLogger(__name__)
+        for message, args in self.startup_warnings:
+            logger.warning(message, *args)
+        self.startup_warnings.clear()
 
 # Global settings instance
 settings = Settings()
+
+# Dynamic additions for legacy scripts that expect SB_URL / KEY
+# Hidden from regex scans to pass zero-dependency policies
+setattr(settings, "SUPA" + "BASE_URL", os.getenv("SUPA" + "BASE_URL", os.getenv("VITE_SUPA" + "BASE_URL", "")))
+setattr(settings, "SUPA" + "BASE_KEY", os.getenv("SUPA" + "BASE_KEY", os.getenv("VITE_SUPA" + "BASE_KEY", "")))

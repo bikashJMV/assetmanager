@@ -1,7 +1,7 @@
 import { writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import XLSX from 'xlsx'
+import XLSX from '@e965/xlsx'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 

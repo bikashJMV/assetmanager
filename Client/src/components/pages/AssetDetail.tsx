@@ -1,51 +1,26 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useSetBreadcrumbOverride } from '../../hooks/useBreadcrumbOverride'
-import {
-  assignAsset,
-  getAssetDetail,
-  getQrDataUriForAssetTag,
-  hasActiveAdminAccess,
-  returnAsset,
-  softDeleteAssetById,
-  getSessionEmployee,
-  type AssetAssignmentRecord,
-  type AssetDetailRecord,
-  type EmployeeRecord,
-} from '../../api'
+import type { AssetAssignmentRecord, AssetDetailRecord, EmployeeRecord } from '../../types/api'
+
+import { useAdminAccessQuery } from '../../queries/authz'
+import { useAssetDetailQuery, useProtectedAssetScanQuery } from '../../queries/assets'
+import { assignAsset, returnAsset } from '../../services/assignmentService'
+import { exportAssetAuditTrailPdf, exportAssetHistoryPdf } from '../../services/assetService'
+import { buildAssetQrDataUri } from '../../utils/qr'
 import AssetForm from '../form/AssetForm'
 import Error from '../common/Error'
-import Loader from '../common/Loader'
+import { AppLoader } from '../ui'
 import ConfirmDialog from '../common/ConfirmDialog'
 import { getErrorDebugDetail, getUserFacingMessage, logDevError } from '../../utils/errors'
 import { formatDateTime, formatDisplay, formatEnumLabel } from '../../utils/formatDisplay'
 import AssetChangeHistory from '../asset/AssetChangeHistory'
 import InventoryStatusBadge from '../common/InventoryStatusBadge'
 import AnimatedNavIcon, { type IconName } from '../common/AnimatedNavIcon'
-import { useToast } from '../common/ToastProvider'
+import { useToast } from '../../hooks/useToast'
 import EmployeeAssignLookup from '../common/EmployeeAssignLookup'
+import { LOADING } from '../../constants/loading'
 
-// function formatInventryStatus=(status:string)=>{
-//   if(status.toLowerCase()==='in_stock'){
-//     return 'In Stock'
-//   } else if(status.toLowerCase()==='assigned'){
-//     return 'Assigned'
-//   }
-//   else if(status.toLowerCase()==='lost'){
-//     return 'Lost/Can\'t Locate'
-//   }
-
-//   else if(status.toLowerCase()==='retired'){
-//     return 'Retired/Decommissioned'
-//   }
-//   else if(status.toLowerCase()==='lost'){
-//     return 'Lost/Can\'t Locate'
-//   }
-//   else if(status.toLowerCase()==='disposed'){
-//     return 'Disposed'
-//   }
-
-// }
 
 const ASSIGNABLE_STATUSES = new Set(['in_stock', 'assigned'])
 
@@ -53,20 +28,39 @@ export default function AssetDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
   const setBreadcrumb = useSetBreadcrumbOverride()
+  const ref = (id || '').trim()
 
-  const [detail, setDetail] = useState<AssetDetailRecord | null>(null)
+  const adminAccessQuery = useAdminAccessQuery()
+  const canManage = Boolean(adminAccessQuery.data?.allowed)
+
+  const protectedScan = useProtectedAssetScanQuery(ref)
+  const redirect = (() => {
+    const data = protectedScan.data
+    if (!data || typeof data !== 'object') return null
+    if (!('redirect' in data)) return null
+    const resolved = data as { redirect?: unknown; asset_tag?: unknown; view_only?: unknown }
+    if (resolved.redirect !== true) return null
+    return {
+      asset_tag: typeof resolved.asset_tag === 'string' ? resolved.asset_tag : ref,
+      view_only: resolved.view_only === true,
+    }
+  })()
+
+  const detailRef = redirect?.asset_tag?.trim() || ref
+  const detailQuery = useAssetDetailQuery(detailRef, Boolean(ref && redirect))
+
+  const detail: AssetDetailRecord | null = detailQuery.data ?? null
   const [error, setError] = useState('')
   const [errorDebug, setErrorDebug] = useState<string | undefined>(undefined)
-  const [loading, setLoading] = useState(true)
   const [showEdit, setShowEdit] = useState(false)
+  const [historyPdfExporting, setHistoryPdfExporting] = useState(false)
+  const [auditTrailPdfExporting, setAuditTrailPdfExporting] = useState(false)
   const [assignQuery, setAssignQuery] = useState('')
   const [selectedAssignee, setSelectedAssignee] = useState<EmployeeRecord | null>(null)
   const [assignNotes, setAssignNotes] = useState('')
   const [actionLoading, setActionLoading] = useState(false)
-  const [canManage, setCanManage] = useState(false)
   const [assignDialogOpen, setAssignDialogOpen] = useState(false)
   const [returnDialogOpen, setReturnDialogOpen] = useState(false)
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [qrDataUri, setQrDataUri] = useState<string | null>(null)
   const [qrLoading, setQrLoading] = useState(false)
   const [qrError, setQrError] = useState<string | null>(null)
@@ -80,45 +74,12 @@ export default function AssetDetail() {
     setBreadcrumb(asset_tag ? `${name} (${asset_tag} / ${statusLabel})` : name ?? '')
   }, [detail, setBreadcrumb])
 
-  const refresh = useCallback(async () => {
-    if (!id) return
-    setLoading(true)
-    setError('')
-    setErrorDebug(undefined)
-    try {
-      const [data, allowed, sessionEmployee] = await Promise.all([
-        getAssetDetail(id),
-        hasActiveAdminAccess().catch((err) => {
-          logDevError('assetDetail.access', err)
-          return false
-        }),
-        getSessionEmployee().catch(() => null),
-      ])
-
-      if (!allowed) {
-        const isOwnAsset = Boolean(
-          sessionEmployee?.id && data.asset.current_employee_id === sessionEmployee.id
-        )
-        if (!isOwnAsset && data.asset.asset_tag) {
-          navigate(`/assets/scan/${encodeURIComponent(data.asset.asset_tag)}`, { replace: true })
-          return
-        }
-      }
-
-      setDetail(data)
-      setCanManage(allowed)
-    } catch (err) {
-      logDevError('assetDetail.fetch', err)
-      setError(getUserFacingMessage(err, 'Unable to load asset details right now.'))
-      setErrorDebug(getErrorDebugDetail(err))
-    } finally {
-      setLoading(false)
-    }
-  }, [id, navigate])
-
   useEffect(() => {
-    void refresh()
-  }, [refresh])
+    if (!ref) return
+    if (!protectedScan.isFetched) return
+    if (redirect) return
+    void navigate(`/assets/scan/${encodeURIComponent(ref)}`, { replace: true })
+  }, [navigate, protectedScan.isFetched, redirect, ref])
 
   useEffect(() => {
     const assetTag = detail?.asset.asset_tag?.trim()
@@ -134,7 +95,7 @@ export default function AssetDetail() {
     setQrError(null)
     setQrLoading(true)
 
-    void getQrDataUriForAssetTag(assetTag)
+    void buildAssetQrDataUri(assetTag)
       .then((uri) => {
         if (!cancelled) setQrDataUri(uri)
       })
@@ -157,6 +118,7 @@ export default function AssetDetail() {
   const currentHolderCode = openAssignment?.employee?.employee_id.trim().toUpperCase() ?? ''
   const selectedAssigneeCode = selectedAssignee?.employee_id.trim().toUpperCase() ?? ''
   const isAssignableStatus = ASSIGNABLE_STATUSES.has(detail?.asset.status ?? '')
+  const hasAssignmentHistory = (detail?.assignments.length ?? 0) > 0
   const visibleLifecycleEvents = useMemo(
     () =>
       detail?.lifecycle_events.filter(
@@ -165,6 +127,24 @@ export default function AssetDetail() {
     [detail?.lifecycle_events],
   )
 
+  const loading = protectedScan.isLoading || protectedScan.isFetching || detailQuery.isLoading || detailQuery.isFetching
+  const fetchError = detailQuery.isError
+    ? getUserFacingMessage(detailQuery.error, 'Unable to load asset details right now.')
+    : ''
+  const fetchErrorDebug = detailQuery.isError ? getErrorDebugDetail(detailQuery.error) : undefined
+
+  const refresh = useCallback(async () => {
+    setError('')
+    setErrorDebug(undefined)
+    try {
+      await Promise.all([protectedScan.refetch(), detailQuery.refetch(), adminAccessQuery.refetch()])
+    } catch (err) {
+      logDevError('assetDetail.refresh', err)
+      setError(getUserFacingMessage(err, 'Unable to refresh asset details right now.'))
+      setErrorDebug(getErrorDebugDetail(err))
+    }
+  }, [adminAccessQuery, detailQuery, protectedScan])
+
   const openAssignDialog = () => {
     if (!detail?.asset.asset_tag) return
     if (!canManage) {
@@ -172,7 +152,7 @@ export default function AssetDetail() {
       return
     }
     if (!isAssignableStatus) {
-      setError(`Cannot assign — this asset is currently marked as "${formatEnumLabel(detail.asset.status)}". Please update its inventory status before assigning.`)
+      setError(`Cannot assign - this asset is currently marked as "${formatEnumLabel(detail.asset.status)}". Please update its inventory status before assigning.`)
       return
     }
     if (!selectedAssignee?.employee_id.trim()) {
@@ -277,41 +257,74 @@ export default function AssetDetail() {
     }
   }
 
-  const handleSoftDelete = async () => {
-    if (!detail?.asset.id || !canManage) return
-    setActionLoading(true)
-    setError('')
-    setErrorDebug(undefined)
+  const handleExportHistoryPdf = async () => {
+    if (!detail?.asset.asset_tag) return
+    if ((detail.assignments?.length ?? 0) === 0) {
+      showToast({ message: 'No assignment history to download.', variant: 'info' })
+      return
+    }
+    setHistoryPdfExporting(true)
     try {
-      await softDeleteAssetById(detail.asset.id)
-      setDeleteDialogOpen(false)
-      showToast({ message: 'Asset moved to Recycle Bin.', variant: 'success' })
-      navigate('/recycle-bin')
+      const { pdfBlob, fileName } = await exportAssetHistoryPdf(detail.asset.asset_tag)
+      const url = URL.createObjectURL(pdfBlob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = fileName
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      URL.revokeObjectURL(url)
     } catch (err) {
-      logDevError('assetDetail.soft_delete', err)
-      setDeleteDialogOpen(false)
-      showToast({ message: getUserFacingMessage(err, 'Unable to delete this asset right now.'), variant: 'error' })
-      setErrorDebug(getErrorDebugDetail(err))
+      logDevError('assetDetail.exportHistoryPdf', err)
+      showToast({ message: getUserFacingMessage(err, 'Unable to export history PDF.'), variant: 'error' })
     } finally {
-      setActionLoading(false)
+      setHistoryPdfExporting(false)
     }
   }
 
-  if (error && !detail) {
+  const handleExportAuditTrailPdf = async () => {
+    if (!detailRef) return
+    if ((detail?.lifecycle_events?.length ?? 0) === 0) {
+      showToast({ message: 'No lifecycle log to download.', variant: 'info' })
+      return
+    }
+    setAuditTrailPdfExporting(true)
+    try {
+      const { pdfBlob, fileName } = await exportAssetAuditTrailPdf(detailRef, { limit: 100 })
+      const url = URL.createObjectURL(pdfBlob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = fileName
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      logDevError('assetDetail.exportAuditTrailPdf', err)
+      showToast({ message: getUserFacingMessage(err, 'Unable to export audit trail PDF.'), variant: 'error' })
+    } finally {
+      setAuditTrailPdfExporting(false)
+    }
+  }
+
+  const pageLoadError = error || fetchError
+  const pageLoadDebug = error ? errorDebug : fetchErrorDebug
+
+  if (pageLoadError && !detail) {
     return (
       <Error
         title="Could not load asset"
-        message={error}
+        message={pageLoadError}
         onRetry={() => {
           void refresh()
         }}
-        debugDetail={errorDebug}
+        debugDetail={pageLoadDebug}
       />
     )
   }
 
   if (loading && !detail) {
-    return <Loader />
+    return <AppLoader variant="page" />
   }
 
   if (!detail) {
@@ -341,19 +354,12 @@ export default function AssetDetail() {
         <div className="flex flex-wrap items-center gap-2">
           <h1 className="sr-only">{formatDisplay(asset.asset_tag)}</h1>
           <div className="flex items-center gap-2 ml-auto">
+            Actions:
             {canManage ? (
               <HeaderActionButton
                 icon="edit"
                 label="Edit Asset"
                 onClick={() => setShowEdit(true)}
-                disabled={actionLoading}
-              />
-            ) : null}
-            {canManage ? (
-              <HeaderActionButton
-                icon="trash"
-                label="Delete Asset"
-                onClick={() => setDeleteDialogOpen(true)}
                 disabled={actionLoading}
               />
             ) : null}
@@ -363,12 +369,36 @@ export default function AssetDetail() {
               onClick={() => void refresh()}
               disabled={actionLoading}
             />
-            <HeaderActionButton
+            <HeaderActionLabelButton
               icon="download"
-              label="Download QR"
+              label="QRs"
               onClick={handleDownloadQr}
               disabled={actionLoading || !qrDataUri}
             />
+            {canManage ? (
+              <>
+                <HeaderActionLabelButton
+                  icon="download"
+                  label="Audit trail"
+                  onClick={() => void handleExportAuditTrailPdf()}
+                  disabled={actionLoading || auditTrailPdfExporting}
+                />
+                {/* <HeaderActionLabelButton
+                  icon="download"
+                  label="Asset history"
+                  onClick={() => void handleExportHistoryPdf()}
+                  disabled={actionLoading || historyPdfExporting}
+                /> */}
+                {hasAssignmentHistory ? (
+                  <HeaderActionLabelButton
+                    icon="download"
+    label="Asset history"
+    onClick={() => void handleExportHistoryPdf()}
+    disabled={actionLoading || historyPdfExporting}
+  />
+) : null}
+              </>
+            ) : null}
           </div>
         </div>
       </div>
@@ -408,7 +438,7 @@ export default function AssetDetail() {
                       if (!detail?.asset.asset_tag) return
                       setQrError(null)
                       setQrLoading(true)
-                      void getQrDataUriForAssetTag(detail.asset.asset_tag)
+                      void buildAssetQrDataUri(detail.asset.asset_tag)
                         .then((uri) => setQrDataUri(uri))
                         .catch((err) => setQrError(getUserFacingMessage(err, 'Unable to load QR')))
                         .finally(() => setQrLoading(false))
@@ -429,37 +459,52 @@ export default function AssetDetail() {
           </section>
         </div>
 
-        <Section
-          title="Inventory Details"
-          description="Identity, classification, location, warranty, and audit hints."
-        >
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            <Info label="Asset Tag" value={formatDisplay(asset.asset_tag)} />
-            <Info label="Category" value={formatDisplay(asset.category_name)} />
-            <Info label="Manufacturer" value={formatDisplay(asset.manufacturer_name)} />
-            <Info label="Model" value={formatDisplay(asset.model)} />
-            <Info label="Serial Number" value={formatDisplay(asset.serial_number)} />
-            <Info label="Location" value={formatDisplay(asset.location_name)} />
-            <Info label="Inventory Status" value={formatEnumLabel(asset.status)} />
-            <Info label="Purchase Date" value={formatDisplay(asset.purchase_date)} />
-            <Info label="Warranty Expiry" value={formatDisplay(asset.warranty_expiry)} />
-            <Info
-              label="Created by"
-              value={formatAuditActorWithTimestamp(detail.audit_actors.created_by, asset.created_at)}
-            />
-            <Info
-              label="Last updated by"
-              value={formatAuditActorWithTimestamp(detail.audit_actors.updated_by, asset.updated_at)}
-            />
-          </div>
-        </Section>
+        <div className={`grid grid-cols-1 gap-3 ${Object.keys(asset.custom_fields || {}).length > 0 ? 'md:grid-cols-2' : ''}`}>
+          <Section
+            title="Inventory Details"
+            description="Identity, classification, location, warranty, and audit hints."
+          >
+            <dl className="divide-y divide-[color:var(--border)]">
+              <InfoRow label="Asset Tag" value={formatDisplay(asset.asset_tag)} />
+              <InfoRow label="Category" value={formatDisplay(asset.category_name)} />
+              <InfoRow label="Manufacturer" value={formatDisplay(asset.manufacturer_name)} />
+              <InfoRow label="Model" value={formatDisplay(asset.model)} />
+              <InfoRow label="Serial Number" value={formatDisplay(asset.serial_number)} />
+              <InfoRow label="Location" value={formatDisplay(asset.location_name)} />
+              <InfoRow label="Inventory Status" value={formatEnumLabel(asset.status)} />
+              <InfoRow label="Purchase Date" value={formatDisplay(asset.purchase_date)} />
+              <InfoRow label="Warranty Expiry" value={formatDisplay(asset.warranty_expiry)} />
+              <InfoRow
+                label="Created by"
+                value={formatAuditActorWithTimestamp(detail.audit_actors.created_by, asset.created_at)}
+              />
+              <InfoRow
+                label="Last updated by"
+                value={formatAuditActorWithTimestamp(detail.audit_actors.updated_by, asset.updated_at)}
+              />
+            </dl>
+          </Section>
+
+          {Object.keys(asset.custom_fields || {}).length > 0 && (
+            <Section
+              title="Custom Fields"
+              description="These fields capturing additional data beyond inventory."
+            >
+              <dl className="divide-y divide-[color:var(--border)]">
+                {Object.entries(asset.custom_fields || {}).map(([key, value]) => (
+                  <InfoRow key={key} label={key} value={formatDisplay(value)} />
+                ))}
+              </dl>
+            </Section>
+          )}
+        </div>
 
         {canManage ? (
           <section className="bg-surface border border-base rounded-xl p-4 sm:p-5">
             <h2 className="text-sm font-semibold uppercase tracking-[0.14em] text-subtle mb-2">Assign or return</h2>
-            <p className="text-xs  mb-3 text-black font-bold  leading-relaxed">
+            <p className="text-xs  mb-3 text-primary font-bold  leading-relaxed">
               {canManage
-                ? 'Move custody by assigning to an employee code, or close the open assignment to return the asset to stock. Assignments are exclusive—one active holder at a time.'
+                ? 'Move custody by assigning to an employee code, or close the open assignment to return the asset to stock. Assignments are exclusive - one active holder at a time.'
                 : 'Read-only: you can view this asset but cannot change custody. Admin or IT Ops access is required to assign or return.'}
             </p>
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
@@ -485,7 +530,7 @@ export default function AssetDetail() {
                 <button
                   onClick={openAssignDialog}
                   disabled={actionLoading}
-                  className="flex-1 bg-accent text-white font-semibold px-3 py-2.5 rounded-lg text-sm disabled:opacity-60"
+                  className="flex-1 bg-accent text-on-accent font-semibold px-3 py-2.5 rounded-lg text-sm disabled:opacity-60"
                   type="button"
                 >
                   Assign
@@ -500,43 +545,30 @@ export default function AssetDetail() {
                 </button>
               </div>
             </div>
-            <p className="text-[11px]  text-black font-bold  mt-2">
-              Reassigning to a different code ends the previous holder’s assignment automatically and opens a new row in history.
+            <p className="text-[11px]  text-primary font-bold  mt-2">
+              Reassigning to a different code ends the previous holder's assignment automatically and opens a new row in history.
             </p>
             {error ? <p className="text-accent text-sm mt-2">{error}</p> : null}
           </section>
         ) : null}
 
-        <Section
-          title="Assignment Summary"
-          description="Current holder, employee ID, and when the assignment started."
-        >
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 sm:gap-4">
-            <Info label="Current Holder" value={formatDisplay(asset.current_employee_name)} />
-            <Info label="Current Holder ID" value={formatDisplay(asset.current_employee_code)} />
-            <Info label="Assigned At" value={formatDateTime(asset.assigned_at)} />
-          </div>
-        </Section>
-
-        <Section
-          title="Custom Fields"
-          description="Extra attributes defined for this category (beyond standard columns). They travel with the asset and appear wherever the full record is shown."
-        >
-          {Object.keys(asset.custom_fields || {}).length === 0 ? (
-            <p className="text-sm text-subtle">No custom field data.</p>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-              {Object.entries(asset.custom_fields || {}).map(([key, value]) => (
-                <Info key={key} label={key} value={formatDisplay(value)} />
-              ))}
-            </div>
-          )}
-        </Section>
+        {/* {asset.current_employee_id ? (
+          <Section
+            title="Assignment Summary"
+            description="Current holder, employee ID, and when the assignment started."
+          >
+            <dl className="flex flex-wrap items-center divide-x divide-[color:var(--border)]">
+              <AssignmentSummaryField label="Current Holder" value={formatDisplay(asset.current_employee_name)} />
+              <AssignmentSummaryField label="Current Holder ID" value={formatDisplay(asset.current_employee_business_id)} />
+              <AssignmentSummaryField label="Assigned At" value={formatDateTime(asset.assigned_at)} />
+            </dl>
+          </Section>
+        ) : null} */}
 
         {detail.components.length > 0 && (
           <Section
             title="Components"
-            description="Sub-items bundled with this asset—such as modules, docks, or accessories—each stored as its own line with type and serials where tracked."
+            description="Sub-items bundled with this asset - such as modules, docks, or accessories - each stored as its own line with type and serials where tracked."
           >
             <div className="overflow-x-auto rounded-lg border border-base">
               <table className="w-full min-w-[680px] text-sm">
@@ -573,6 +605,23 @@ export default function AssetDetail() {
           <Section
             title="Assignment History"
             description="All assigns/returns in order with holder ERP status."
+            action={
+              hasAssignmentHistory ? (
+                <button
+                  type="button"
+                  onClick={handleExportHistoryPdf}
+                  disabled={actionLoading || historyPdfExporting}
+                  className="inline-flex items-center gap-2 rounded-lg border border-base bg-surface px-3 py-1.5 text-xs font-medium text-primary transition hover:border-accent-soft hover:bg-[color:var(--accent-soft)]/15 hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+                  aria-label="Export History PDF"
+                  title="Export History PDF"
+                >
+                  <span className="flex h-4 w-4 items-center justify-center">
+                    <AnimatedNavIcon name="download" />
+                  </span>
+                  <span>{historyPdfExporting ? LOADING.EXPORTING : 'Export PDF'}</span>
+                </button>
+              ) : null
+            }
           >
             <div className="overflow-x-auto rounded-lg border border-base">
               <table className="w-full min-w-[720px] text-sm">
@@ -607,6 +656,21 @@ export default function AssetDetail() {
                 Append-only timeline of changes, assignments, and returns.
               </>
             }
+            action={
+              <button
+                type="button"
+                onClick={() => void handleExportAuditTrailPdf()}
+                disabled={actionLoading || auditTrailPdfExporting}
+                className="inline-flex items-center gap-2 rounded-lg border border-base bg-surface px-3 py-1.5 text-xs font-medium text-primary transition hover:border-accent-soft hover:bg-[color:var(--accent-soft)]/15 hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+                aria-label="Download audit trail PDF"
+                title="Download audit trail PDF"
+              >
+                <span className="flex h-4 w-4 items-center justify-center">
+                  <AnimatedNavIcon name="download" />
+                </span>
+                <span>{auditTrailPdfExporting ? LOADING.DOWNLOADING : 'Download PDF'}</span>
+              </button>
+            }
           >
             <AssetChangeHistory events={visibleLifecycleEvents} isCapped={detail.lifecycle_is_capped} />
           </Section>
@@ -615,6 +679,7 @@ export default function AssetDetail() {
 
       {canManage && showEdit && (
         <AssetForm
+          isStatusDisabled={asset.status === 'assigned'}
           prefill={{
             asset_tag: asset.asset_tag || undefined,
             category_slug: asset.category_slug,
@@ -626,6 +691,7 @@ export default function AssetDetail() {
             warranty_expiry: asset.warranty_expiry || undefined,
             status: asset.status,
             custom_fields: asset.custom_fields,
+            metadata: (asset as Record<string, unknown>).metadata as Record<string, unknown> ?? undefined,
           }}
           onClose={() => setShowEdit(false)}
           onSuccess={() => {
@@ -658,25 +724,17 @@ export default function AssetDetail() {
           void handleReturn()
         }}
       />
-      <ConfirmDialog
-        open={deleteDialogOpen}
-        title="Move Asset to Recycle Bin"
-        message={`Move ${detail.asset.asset_tag || 'this asset'} to Recycle Bin?`}
-        confirmLabel="Delete"
-        loading={actionLoading}
-        onClose={() => setDeleteDialogOpen(false)}
-        onConfirm={() => {
-          void handleSoftDelete()
-        }}
-      />
     </main>
   )
 }
 
-function Section({ title, description, children }: { title: string; description?: ReactNode; children: ReactNode }) {
+function Section({ title, description, action, children }: { title: string; description?: ReactNode; action?: ReactNode; children: ReactNode }) {
   return (
     <section className="bg-surface border border-base rounded-xl p-4 sm:p-5">
-      <h2 className={`text-sm font-semibold uppercase tracking-[0.14em] text-muted ${description ? 'mb-2' : 'mb-3'}`}>{title}</h2>
+      <div className="flex items-center justify-between mb-2">
+        <h2 className="text-sm font-semibold uppercase tracking-[0.14em] text-muted">{title}</h2>
+        {action}
+      </div>
       {description ? (
         <div className="text-xs text-subtle mb-3 leading-relaxed">
           {description}
@@ -714,18 +772,56 @@ function HeaderActionButton({
   )
 }
 
-function Info({ label, value }: { label: string; value: string }) {
+function HeaderActionLabelButton({
+  icon,
+  label,
+  onClick,
+  disabled = false,
+}: {
+  icon: IconName
+  label: string
+  onClick: () => void
+  disabled?: boolean
+}) {
   return (
-    <div className="rounded-lg border border-base bg-surface-2 px-3 py-2.5">
-      <p className="text-[11px] uppercase tracking-[0.12em] text-subtle">{label}</p>
-      <p className="text-sm text-primary mt-1 break-words">{value}</p>
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={label}
+      title={label}
+      className="inline-flex h-9 items-center gap-2 rounded-xl border border-base bg-surface px-3 text-sm font-semibold text-primary transition hover:border-accent-soft hover:bg-[color:var(--accent-soft)]/15 hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+    >
+      <span className="flex h-5 w-5 items-center justify-center">
+        <AnimatedNavIcon name={icon} />
+      </span>
+      <span className="whitespace-nowrap">{label}</span>
+    </button>
+  )
+}
+
+
+// function AssignmentSummaryField({ label, value }: { label: string; value: string }) {
+//   return (
+//     <div className="flex items-baseline gap-1.5 px-4 first:pl-0 last:pr-0">
+//       <dt className="text-[11px] uppercase tracking-[0.12em] text-subtle shrink-0">{label}:</dt>
+//       <dd className="text-sm text-primary">{value}</dd>
+//     </div>
+//   )
+// }
+
+function InfoRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-baseline gap-2 sm:gap-4 sm:py-2.5">
+      <dt className="text-[11px] uppercase tracking-[0.12em] text-subtle shrink-0 w-28 sm:w-40">{label}</dt>
+      <dd className="text-sm text-primary break-words min-w-0">{value}</dd>
     </div>
   )
 }
 
 function formatAuthUserRef(id: string | null | undefined): string {
-  if (!id) return '—'
-  return id.length > 10 ? `${id.slice(0, 8)}…` : id
+  if (!id) return '-'
+  return id.length > 10 ? `${id.slice(0, 8)}...` : id
 }
 
 function formatAuditActorDisplay(
@@ -763,10 +859,10 @@ function formatAuditActorWithTimestamp(
 
   if (auditActorHasIdentity(actor)) {
     if (when === '-') return who
-    return `${who} · ${when}`
+    return `${who} - ${when}`
   }
 
-  // Only an auth user id (or no actor): show readable date/time only, not `621576a6…`.
+  // Only an auth user id (or no actor): show readable date/time only, not `621576a6...`.
   if (when !== '-') return when
   return '-'
 }
@@ -790,7 +886,7 @@ function AssignmentRow({ entry }: { entry: AssetAssignmentRecord }) {
       <td className="px-3 py-2 text-primary">{formatDisplay(entry.employee?.name)}</td>
       <td className="px-3 py-2 text-primary">{formatDisplay(entry.employee?.employee_id)}</td>
       <td className="px-3 py-2 text-primary">{formatDateTime(entry.assigned_at)}</td>
-      <td className="px-3 py-2 text-primary">{entry.returned_at ? formatDateTime(entry.returned_at) : <span className="text-amber-500 font-medium">Not yet returned</span>}</td>
+      <td className="px-3 py-2 text-primary">{entry.returned_at ? formatDateTime(entry.returned_at) : <span className="text-amber-500 font-medium">With Employee</span>}</td>
     </tr>
   )
 }

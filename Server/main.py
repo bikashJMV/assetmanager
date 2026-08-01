@@ -1,17 +1,29 @@
-import base64
-import hashlib
-import hmac
-import json
-import time
+import logging
 
-from fastapi import FastAPI, HTTPException, Depends, Header
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from core.auth import require_backend_api_key, _resolve_request_role
+from core.auth_middleware import AuthMiddleware
 from core.middleware import EnvelopeMiddleware, RequestIdMiddleware
 from core.settings import settings
 from core.errors import custom_http_exception_handler, generic_exception_handler
-from core.deps import get_db
-from routers import assets, logs, health, assignments, employees, analysis, bootstrap
+from routers.api_v1_assets import router as api_v1_assets_router
+from routers.api_v1_employees import router as api_v1_employees_router
+from routers.api_v1_assignments import router as api_v1_assignments_router
+from routers.api_v1_meta import router as api_v1_meta_router
+from routers.api_v1_authz import router as api_v1_authz_router
+from routers.api_auth import router as api_auth_router
+from routers.api_v1_qr import router as api_v1_qr_router
+from routers import health
+from prometheus_fastapi_instrumentator import Instrumentator
+from core.postgres import init_pg_pool, close_pg_pool
+
+# Configure application-level logging. Without this, the root logger defaults to
+# WARNING and all logger.info / logger.warning calls in app code are suppressed.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)-8s %(name)s — %(message)s",
+)
+
 
 def create_app() -> FastAPI:
     app = FastAPI(
@@ -21,16 +33,35 @@ def create_app() -> FastAPI:
     )
 
     # Middleware stack (last added = outermost = runs first)
-    # Execution order: CORS → Envelope → RequestId → route handler
+    # Execution order: CORS → Envelope → Auth → RequestId → route handler
     app.add_middleware(RequestIdMiddleware)
+    app.add_middleware(AuthMiddleware)
     app.add_middleware(EnvelopeMiddleware)
+    _cors_origins = list(settings.ALLOWED_ORIGINS)
+    if "http://localhost:11000" not in _cors_origins:
+        _cors_origins.append("http://localhost:11000")
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.ALLOWED_ORIGINS,
+        allow_origins=_cors_origins,
         allow_credentials=False,
-        allow_methods=["*"],
-        allow_headers=["*"],
-        expose_headers=["Content-Disposition", "X-Exported-Asset-Count"],
+        allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
+        allow_headers=[
+            "Authorization",
+            "Content-Type",
+            "Accept",
+            "Accept-Language",
+            "X-API-Key",
+            "X-Request-ID",
+            "X-Request-Id",
+            "X-Response-Envelope",
+            "DNT",
+            "If-None-Match",
+            "Range",
+            "If-Modified-Since",
+            "Cache-Control",
+            "Pragma",
+        ],
+        expose_headers=["Content-Disposition", "X-Export-Empty", "X-Exported-Asset-Count"],
     )
 
     # Exception Handlers
@@ -38,82 +69,51 @@ def create_app() -> FastAPI:
     app.add_exception_handler(Exception, generic_exception_handler)
 
     # Register Routers
-    app.include_router(health.router)
-    protected_dependencies = [Depends(require_backend_api_key)]
-    app.include_router(assets.router, dependencies=protected_dependencies)
-    app.include_router(assets.browser_router)
-    app.include_router(logs.router, dependencies=protected_dependencies)
-    # Assignments / employees: authenticated via Supabase JWT (require_manage_platform_access
-    # on routes). Requiring BACKEND_API_KEY here breaks browser flows — the client sends
-    # Bearer <session JWT>, not the backend API key.
-    app.include_router(assignments.router)
-    app.include_router(employees.router)
-    # Role-based auth inside the router; do not require BACKEND_API_KEY for browser usage.
-    app.include_router(analysis.router)
-    # Break-glass role promotion: X-Bootstrap-Secret + ROLE_BOOTSTRAP_SECRET only (no BACKEND_API_KEY).
-    app.include_router(bootstrap.router)
 
-    # Root-level scan endpoint kept for direct QR navigation compatibility.
-    @app.get("/scan/{asset_ref}", tags=["Assets"], response_model=assets.AssetOut)
-    def scan_asset_root(
-        asset_ref: str,
-        db=Depends(get_db),
-        _=Depends(require_backend_api_key),
-    ):
-        """Top-level scan shortcut for QR routes."""
-        return assets.get_asset(asset_ref, db)
+    app.include_router(health.api_router)
+    app.include_router(api_v1_assets_router)
+    app.include_router(api_v1_employees_router)
+    app.include_router(api_v1_assignments_router)
+    app.include_router(api_v1_meta_router)
+    app.include_router(api_v1_authz_router)
+    app.include_router(api_auth_router)
+    app.include_router(api_v1_qr_router)
+
+    # ── Observability ──
+    from routers import observability
+    app.include_router(observability.router)
 
     @app.get("/", tags=["System"])
     def root():
+        """
+        Purpose: Root liveness endpoint.
+        Method/Route: GET /
+        Request: None
+        Response: 200 JSON `{message, env}`.
+        Notes: Public; does not hit the database.
+        """
         return {"message": "AMS API is running", "env": settings.ENV}
 
-    @app.post("/telemetry/ingest-token", tags=["Telemetry"])
-    def issue_telemetry_ingest_token(
-        role: str = Depends(_resolve_request_role),
-        authorization: str | None = Header(default=None),
-        db=Depends(get_db),
-    ):
-        if not settings.TELEMETRY_INGEST_TOKEN_SECRET.strip():
-            raise HTTPException(status_code=503, detail="Telemetry ingest token secret is not configured.")
-        if not authorization or not authorization.strip().lower().startswith("bearer "):
-            raise HTTPException(status_code=401, detail="Missing bearer token.")
 
-        jwt_token = authorization.strip()[7:].strip()
-        if not jwt_token:
-            raise HTTPException(status_code=401, detail="Missing bearer token.")
+    # Prometheus metrics endpoint (non-invasive; does not affect existing routes)
+    if settings.OTEL_GRAFANA_ENABLED:
+        Instrumentator().instrument(app).expose(app, endpoint="/metrics")
+        # OTLP logs + traces → grafana/otel-lgtm collector (feeds the in-app Logs page).
+        from core.observability import init_observability
 
-        try:
-            user_response = db.auth.get_user(jwt_token)
-        except Exception as exc:
-            raise HTTPException(status_code=401, detail="Invalid bearer token.") from exc
+        init_observability(app)
 
-        auth_user = getattr(user_response, "user", None)
-        auth_user_id = getattr(auth_user, "id", None)
-        if not auth_user_id:
-            raise HTTPException(status_code=401, detail="Unable to resolve authenticated user.")
+    # Config warnings are buffered by Settings (constructed at import time, before logging was
+    # configured). Flush them here so they reach the formatter and the OTLP handler above.
+    settings.emit_startup_warnings()
 
-        allowed_sources = ["client_engagement", "client_data"]
-        if role == "it_ops":
-            allowed_sources.append("telemetry_internal")
+    @app.on_event("startup")
+    async def _startup():
+        await init_pg_pool()
 
-        now = int(time.time())
-        payload = {
-            "aud": "telemetry_ingest",
-            "sub": str(auth_user_id),
-            "environment": settings.TELEMETRY_ENV,
-            "allowed_sources": allowed_sources,
-            "iat": now,
-            "exp": now + max(settings.TELEMETRY_TOKEN_TTL_SECONDS, 60),
-        }
-        payload_json = json.dumps(payload, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
-        payload_b64 = base64.urlsafe_b64encode(payload_json).decode("utf-8").rstrip("=")
-        signature = hmac.new(
-            settings.TELEMETRY_INGEST_TOKEN_SECRET.encode("utf-8"),
-            payload_b64.encode("utf-8"),
-            hashlib.sha256,
-        ).hexdigest()
-        token = f"{payload_b64}.{signature}"
-        return {"token": token, "expires_in": max(settings.TELEMETRY_TOKEN_TTL_SECONDS, 60)}
+    @app.on_event("shutdown")
+    async def _shutdown():
+        await close_pg_pool()
 
     return app
 

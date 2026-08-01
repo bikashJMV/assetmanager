@@ -1,12 +1,35 @@
 import hmac
-from typing import Literal
+import httpx
+from typing import List, Literal, Optional
 
+from jose import jwt, JWTError
 from fastapi import Depends, Header, HTTPException, status
-from supabase import Client
 
 from core.settings import settings
-from core.deps import get_db
 
+# authNexus configuration from settings
+AUTHORITY = settings.AUTH_AUTHORITY.rstrip("/")
+JWKS_URL = f"{AUTHORITY}/api/v1/auth/jwks"
+ALGORITHM = "RS256"
+EXPECTED_PROJECT_ID = settings.AUTH_PROJECT_ID
+
+_jwks_cache = None
+
+async def get_jwks():
+    """Fetches and caches the JWKS from the authNexus gateway."""
+    global _jwks_cache
+    if _jwks_cache is None:
+        try:
+            async with httpx.AsyncClient() as client:
+                r = await client.get(JWKS_URL, timeout=10.0)
+                r.raise_for_status()
+                _jwks_cache = r.json()
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"Auth gateway keys unavailable: {str(e)}"
+            )
+    return _jwks_cache
 
 def require_backend_api_key(
     x_api_key: str | None = Header(default=None),
@@ -32,7 +55,6 @@ def require_backend_api_key(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Unauthorized.",
     )
-
 
 def require_role_bootstrap_secret(
     x_bootstrap_secret: str | None = Header(default=None, alias="X-Bootstrap-Secret"),
@@ -70,93 +92,80 @@ def require_role_bootstrap_secret(
             detail="Unauthorized.",
         )
 
-
-def get_auth_user_id_from_bearer(
-    authorization: str | None = Header(default=None),
-    db: Client = Depends(get_db),
-) -> str:
+async def verify_session(authorization: str = Header(None)) -> dict:
     """
-    Supabase JWT sub (auth.users id) from Authorization: Bearer.
-    Used by BFF routes that call SECURITY DEFINER RPCs with the service-role client
-    (where auth.uid() is null unless we pass the actor explicitly).
+    Validates the authNexus RS256 JWT from the Authorization header.
+    Returns a user context dictionary if valid.
     """
-    if not authorization or not authorization.strip().lower().startswith('bearer '):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Missing bearer token.')
-
-    jwt_token = authorization.strip()[7:].strip()
-    if not jwt_token:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Missing bearer token.')
-
-    try:
-        user_response = db.auth.get_user(jwt_token)
-    except Exception as exc:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Invalid bearer token.') from exc
-
-    auth_user = getattr(user_response, 'user', None)
-    auth_user_id = getattr(auth_user, 'id', None)
-    if not auth_user_id:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Unable to resolve authenticated user.')
-
-    return str(auth_user_id)
-
-
-def _resolve_request_role(
-    auth_user_id: str = Depends(get_auth_user_id_from_bearer),
-    db: Client = Depends(get_db),
-) -> Literal['employee', 'admin', 'it_ops']:
-    try:
-        res = (
-            db.table('employees')
-            .select('role,is_active')
-            .eq('auth_user_id', auth_user_id)
-            .limit(1)
-            .maybe_single()
-            .execute()
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing Authorization header"
         )
-    except Exception as exc:
+    
+    token = authorization.split(" ")[1]
+    jwks = await get_jwks()
+    
+    try:
+        # RS256 verification using the gateway's JWKS
+        payload = jwt.decode(
+            token, 
+            jwks,
+            algorithms=[ALGORITHM],
+            options={"verify_aud": False, "leeway": settings.AUTH_CLOCK_SKEW_SECONDS}
+        )
+        
+        # Security constraint: project_id must match our environment
+        if payload.get("project_id") != EXPECTED_PROJECT_ID:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Project scope mismatch"
+            )
+            
+        return {
+            "user_id":    payload.get("sub"),
+            "username":   payload.get("email"),
+            "org_id":     payload.get("org_id"),
+            "roles":      payload.get("roles", []),
+            "project_id": payload.get("project_id"),
+        }
+    except JWTError as e:
+        global _jwks_cache
+        _jwks_cache = None  # Clear cache on potential key rotation/error
         raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail='Unable to verify employee profile.',
-        ) from exc
-
-    if res is None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail='Active employee profile required.',
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Session invalid: {str(e)}"
         )
 
-    raw = getattr(res, 'data', None)
-    if raw is None:
-        data: dict = {}
-    elif isinstance(raw, dict):
-        data = raw
-    elif isinstance(raw, list) and raw and isinstance(raw[0], dict):
-        data = raw[0]
-    else:
-        data = {}
+def require_role(*allowed_roles: str):
+    """Dependency factory to enforce role-based access control."""
+    async def guard(user: dict = Depends(verify_session)):
+        user_roles = user.get("roles", [])
+        if not any(role in user_roles for role in allowed_roles):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Insufficient role permissions"
+            )
+        return user
+    return guard
 
-    if not data or not data.get('is_active'):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='Active employee profile required.')
+# Legacy aliases for compatibility with existing routers during transition
+def get_auth_user_id_from_bearer(user: dict = Depends(verify_session)) -> str:
+    return str(user["user_id"])
 
-    role = str(data.get('role') or 'employee').strip().lower()
-    if role not in {'employee', 'admin', 'it_ops'}:
-        role = 'employee'
-    return role  # type: ignore[return-value]
+def _resolve_request_role(user: dict = Depends(verify_session)) -> Literal['employee', 'admin', 'it_ops']:
+    roles = user.get("roles", [])
+    if "admin" in roles:
+        return "admin"
+    if "it_ops" in roles:
+        return "it_ops"
+    return "employee"
 
+def require_manage_platform_access(user: dict = Depends(require_role("admin", "it_ops"))):
+    return user
 
-def require_manage_platform_access(role: Literal['employee', 'admin', 'it_ops'] = Depends(_resolve_request_role)):
-    if role not in {'admin', 'it_ops'}:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='Admin or IT Ops role required.')
+def require_admin_or_it_ops_access(user: dict = Depends(require_role("admin", "it_ops"))):
+    return user
 
-
-def require_admin_or_it_ops_access(
-    role: Literal['employee', 'admin', 'it_ops'] = Depends(_resolve_request_role)
-):
-    if role not in {'admin', 'it_ops'}:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='Admin or IT Ops role required.')
-
-
-def require_it_ops_access(role: Literal['employee', 'admin', 'it_ops'] = Depends(_resolve_request_role)):
-    if role != 'it_ops':
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='IT Ops role required.')
-
+def require_it_ops_access(user: dict = Depends(require_role("it_ops"))):
+    return user

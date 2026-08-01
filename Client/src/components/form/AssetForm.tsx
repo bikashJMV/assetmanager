@@ -1,68 +1,27 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import type { AssetWriteInput } from '../../api'
+import { LOADING } from '../../constants/loading'
+import { getCategoryLabelFromSlug } from './assetForm.categoryMeta'
+import { CoreSection } from './AssetForm.core'
+import { DynamicField } from './AssetForm.dynamic'
+import { Section } from './AssetForm.parts'
 import {
-  createAsset,
-  getCustomFieldDefinitions,
-  listCategories,
-  setAssetLifecycleStatus,
-  type AssetWriteInput,
-  type CategoryRecord,
-  type CustomFieldDefinition,
-  updateAsset,
-} from '../../api'
-import { getUserFacingMessage, logDevError } from '../../utils/errors'
-import { formatEnumLabel } from '../../utils/formatDisplay'
-import { getCatalogLocationLabels } from '../../utils/locationAddressCatalog'
-import FilterSelect, { type FilterSelectOption } from '../common/FilterSelect'
-import { useToast } from '../common/ToastProvider'
+  AdditionalSection,
+  LocationSection,
+  WarrantySection,
+} from './AssetForm.sections'
+import { useAssetForm } from './useAssetForm'
 
 type Props = {
   prefill?: Partial<AssetWriteInput>
   onClose: () => void
   onSuccess: (result: unknown) => void
   variant?: 'modal' | 'panel'
-  /** When true (create flow only), category is fixed — no dropdown. */
   categoryLocked?: boolean
-  /** Shown when categoryLocked; falls back to title from slug. */
   lockedCategoryLabel?: string
-}
-
-type FormState = {
-  asset_tag: string
-  category_slug: string
-  manufacturer_name: string
-  model: string
-  serial_number: string
-  location_name: string
-  purchase_date: string
-  warranty_expiry: string
-  status: string
-  notes: string
-}
-
-type ExtraPair = { id: string; key: string; value: string }
-
-const inventoryStatuses = ['in_stock', 'assigned', 'in_repair', 'retired', 'lost', 'disposed']
-const lifecycleEditStatuses = ['in_stock', 'in_repair', 'retired', 'lost', 'disposed']
-
-function getCategoryLabelFromSlug(slug: string): string {
-  return slug
-    .split('-')
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ')
-}
-
-const defaultForm: FormState = {
-  asset_tag: '',
-  category_slug: 'laptop',
-  manufacturer_name: '',
-  model: '',
-  serial_number: '',
-  location_name: '',
-  purchase_date: '',
-  warranty_expiry: '',
-  status: 'in_stock',
-  notes: '',
+  qr_reservation_id?: string
+  isStatusDisabled?: boolean
+  /** Notified whenever the effective category changes, so a host page can mirror the selection. */
+  onCategoryChange?: (slug: string) => void
 }
 
 export default function AssetForm({
@@ -72,496 +31,99 @@ export default function AssetForm({
   variant = 'modal',
   categoryLocked = false,
   lockedCategoryLabel,
+  qr_reservation_id,
+  isStatusDisabled = false,
+  onCategoryChange,
 }: Props) {
-  const isEditing = !!prefill.asset_tag
-  const originalStatus = prefill.status || 'in_stock'
   const isPanel = variant === 'panel'
-  const lockCategory = Boolean(categoryLocked && !isEditing)
+  const f = useAssetForm({ prefill, onSuccess, categoryLocked, qr_reservation_id, onCategoryChange })
 
-  const [form, setForm] = useState<FormState>({
-    ...defaultForm,
-    asset_tag: prefill.asset_tag || '',
-    category_slug: prefill.category_slug || 'laptop',
-    manufacturer_name: prefill.manufacturer_name || '',
-    model: prefill.model || '',
-    serial_number: prefill.serial_number || '',
-    location_name: prefill.location_name || '',
-    purchase_date: prefill.purchase_date || '',
-    warranty_expiry: prefill.warranty_expiry || '',
-    status: prefill.status || 'in_stock',
-    notes: typeof prefill.metadata?.notes === 'string' ? prefill.metadata.notes : '',
-  })
-
-  const [customDefs, setCustomDefs] = useState<CustomFieldDefinition[]>([])
-  const [customValues, setCustomValues] = useState<Record<string, string>>({})
-  const [extraPairs, setExtraPairs] = useState<ExtraPair[]>([])
-  const [categories, setCategories] = useState<CategoryRecord[]>([])
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
-  const { showToast } = useToast()
-
-  // Tracks the last loaded category so we know whether this is initial load or a user-driven change.
-  const prevCategoryRef = useRef<string | null>(null)
-
-  // Load categories once
-  useEffect(() => {
-    if (lockCategory) return
-    let mounted = true
-    void (async () => {
-      try {
-        const rows = await listCategories()
-        if (!mounted) return
-        setCategories(rows)
-      } catch (err) {
-        if (!mounted) return
-        logDevError('assetForm.categories', err)
-        setError(getUserFacingMessage(err, 'Unable to load categories right now.'))
-      }
-    })()
-    return () => {
-      mounted = false
-    }
-  }, [lockCategory])
-
-  // Load custom field definitions whenever category changes.
-  // On the very first load (prevCategoryRef === null) we seed template values from prefill.custom_fields
-  // and split out any unknown keys into extraPairs.
-  // On a user-driven category switch we reset template values to empty but keep extraPairs.
-  useEffect(() => {
-    if (!form.category_slug) return
-    let mounted = true
-    void (async () => {
-      try {
-        const defs = await getCustomFieldDefinitions(form.category_slug)
-        if (!mounted) return
-        setCustomDefs(defs)
-
-        const templateKeys = new Set(defs.map((d) => d.field_key))
-        const isFirstLoad = prevCategoryRef.current === null
-        prevCategoryRef.current = form.category_slug
-
-        if (isFirstLoad) {
-          // Seed from prefill — split into template values + extra pairs
-          const existing = (prefill.custom_fields ?? {}) as Record<string, unknown>
-          const templateInit: Record<string, string> = {}
-          const extraInit: ExtraPair[] = []
-          for (const d of defs) {
-            const v = existing[d.field_key]
-            templateInit[d.field_key] = v == null ? '' : String(v)
-          }
-          for (const [k, v] of Object.entries(existing)) {
-            if (!templateKeys.has(k)) {
-              extraInit.push({ id: crypto.randomUUID(), key: k, value: v == null ? '' : String(v) })
-            }
-          }
-          setCustomValues(templateInit)
-          setExtraPairs(extraInit)
-        } else {
-          // User switched category — reset template fields to empty, keep extra pairs unchanged
-          const templateInit: Record<string, string> = {}
-          for (const d of defs) {
-            templateInit[d.field_key] = ''
-          }
-          setCustomValues(templateInit)
-        }
-      } catch (err) {
-        if (!mounted) return
-        logDevError('assetForm.customFields', err)
-        setError(getUserFacingMessage(err, 'Unable to load custom fields right now.'))
-      }
-    })()
-    return () => {
-      mounted = false
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [form.category_slug])
-
-  const locationSuggestions = useMemo(() => getCatalogLocationLabels(), [])
-
-  const categoryOptions = useMemo<FilterSelectOption[]>(() => {
-    const options = categories.map((c) => ({ value: c.slug, label: c.name }))
-    if (!form.category_slug.trim()) return options
-    if (options.some((o) => o.value === form.category_slug)) return options
-    return [
-      { value: form.category_slug, label: getCategoryLabelFromSlug(form.category_slug) || form.category_slug },
-      ...options,
-    ]
-  }, [categories, form.category_slug])
-
-  const inventoryStatusOptions = useMemo<FilterSelectOption[]>(() => {
-    const statuses = isEditing
-      ? Array.from(new Set([originalStatus, ...lifecycleEditStatuses]))
-      : inventoryStatuses
-    return statuses.map((s) => ({ value: s, label: formatEnumLabel(s) }))
-  }, [isEditing, originalStatus])
-
-  const addExtraPair = () =>
-    setExtraPairs((prev) => [...prev, { id: crypto.randomUUID(), key: '', value: '' }])
-
-  const updateExtraPair = (id: string, patch: Partial<ExtraPair>) =>
-    setExtraPairs((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)))
-
-  const removeExtraPair = (id: string) =>
-    setExtraPairs((prev) => prev.filter((p) => p.id !== id))
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setError('')
-
-    if (!form.category_slug.trim()) {
-      setError('Category is required.')
-      return
-    }
-    if (!form.serial_number.trim()) {
-      setError('Serial number is required.')
-      return
-    }
-
-    // Validate extra pairs: no empty keys with values, no duplicates, no collision with template keys
-    const templateKeySet = new Set(customDefs.map((d) => d.field_key))
-    const seenExtra = new Set<string>()
-    for (const p of extraPairs) {
-      const k = p.key.trim()
-      const v = p.value.trim()
-      if (!k && !v) continue
-      if (!k) {
-        setError('Each "Additional Details" entry needs a label. Remove empty rows or fill in the label.')
-        return
-      }
-      if (templateKeySet.has(k)) {
-        setError(`"${k}" is already a template field. Use a different label for the additional detail.`)
-        return
-      }
-      if (seenExtra.has(k)) {
-        setError(`Duplicate label "${k}" in Additional Details. Each label must be unique.`)
-        return
-      }
-      seenExtra.add(k)
-    }
-
-    setLoading(true)
-    try {
-      const typeByKey = new Map(customDefs.map((d) => [d.field_key, d.data_type] as const))
-      const preparedTemplateFields = Object.fromEntries(
-        Object.entries(customValues)
-          .map(([key, raw]) => [key, coerceValue(raw, typeByKey.get(key) || 'text')] as const)
-          .filter(([, v]) => v !== null && v !== ''),
-      )
-      const preparedExtraFields = Object.fromEntries(
-        extraPairs
-          .filter((p) => p.key.trim() && p.value.trim())
-          .map((p) => [p.key.trim(), p.value.trim()]),
-      )
-      const custom_fields: Record<string, unknown> = { ...preparedTemplateFields, ...preparedExtraFields }
-
-      const payload: AssetWriteInput = {
-        asset_tag: isEditing ? form.asset_tag.trim() || undefined : undefined,
-        category_slug: form.category_slug,
-        manufacturer_name: form.manufacturer_name.trim() || undefined,
-        model: form.model.trim() || undefined,
-        serial_number: form.serial_number.trim(),
-        location_name: form.location_name.trim() || undefined,
-        purchase_date: form.purchase_date || undefined,
-        warranty_expiry: form.warranty_expiry || undefined,
-        status: form.status || undefined,
-        custom_fields,
-        metadata: form.notes.trim() ? { notes: form.notes.trim() } : undefined,
-      }
-
-      let result: unknown
-      if (isEditing && prefill.asset_tag) {
-        result = await updateAsset(prefill.asset_tag, {
-          asset_tag: payload.asset_tag,
-          category_slug: payload.category_slug,
-          manufacturer_name: payload.manufacturer_name,
-          model: payload.model,
-          serial_number: payload.serial_number,
-          location_name: payload.location_name,
-          purchase_date: payload.purchase_date,
-          warranty_expiry: payload.warranty_expiry,
-          custom_fields: payload.custom_fields,
-          metadata: payload.metadata,
-        })
-
-        if (form.status !== originalStatus) {
-          try {
-            await setAssetLifecycleStatus(prefill.asset_tag, form.status, undefined, 'asset_edit')
-          } catch (statusErr) {
-            throw new Error(
-              `Asset details were saved, but inventory status was not updated. ${getUserFacingMessage(
-                statusErr,
-                'Please retry the inventory status change.',
-              )}`,
-            )
-          }
-        }
-      } else {
-        result = await createAsset(payload)
-      }
-
-      showToast({
-        message: isEditing
-          ? form.status !== originalStatus
-            ? 'Asset details and inventory status updated successfully.'
-            : 'Asset updated successfully.'
-          : 'Asset created successfully.',
-        variant: 'success',
-      })
-      onSuccess(result)
-
-      if (!isEditing) {
-        setForm(defaultForm)
-        setCustomValues({})
-        setExtraPairs([])
-      }
-    } catch (err) {
-      logDevError('assetForm.submit', err)
-      setError(getUserFacingMessage(err, 'Unable to save asset right now.'))
-    } finally {
-      setLoading(false)
-    }
-  }
+  const templateLabel = f.isOther
+    ? f.customCategoryName.trim() || 'Custom'
+    : getCategoryLabelFromSlug(f.form.category_slug)
 
   const content = (
-    <div className={`bg-app border border-base w-full ${isPanel ? '' : 'max-w-7xl'}`}>
-      <div className="flex items-center justify-between px-3 sm:px-4 py-2.5 border-b border-base bg-surface rounded-t-2xl">
-        <h2 className="font-semibold text-primary text-sm sm:text-base">
-          {isEditing
-            ? `Edit Asset ${prefill.asset_tag}`
-            : lockCategory && lockedCategoryLabel
-              ? `Add new asset — ${lockedCategoryLabel}`
-              : 'Add New Asset'}
-        </h2>
-        <button type="button" onClick={onClose} className="text-muted hover:text-primary text-xl leading-none">
+    <div className="mx-auto w-full max-w-[1080px] rounded-2xl border border-base bg-app shadow-sm">
+      <div className="flex items-center justify-between gap-3 border-b border-base px-5 py-4">
+        <div className="min-w-0">
+          <h2 className="truncate text-base font-semibold text-primary sm:text-lg">
+            {f.isEditing ? `Edit asset ${prefill.asset_tag}` : 'Create asset'}
+          </h2>
+          {!f.isEditing ? (
+            <p className="mt-0.5 text-xs text-muted">
+              Fields marked <span className="text-red-500">*</span> are required.
+            </p>
+          ) : null}
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close"
+          className="shrink-0 text-xl leading-none text-muted hover:text-primary"
+        >
           ×
         </button>
       </div>
 
-      <form onSubmit={handleSubmit} className="px-3 sm:px-4 py-3 sm:py-4 space-y-3">
-        <section className="p-2.5 sm:p-3 space-y-4">
-          {/* ── Core Details ── */}
-          <div>
-            <p className="text-xs uppercase tracking-[0.14em] text-muted mb-2">Core Details</p>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <Field
-                label="Asset Tag"
-                value={isEditing ? form.asset_tag : ''}
-                placeholder={isEditing ? 'AST-00001' : 'Auto-generated on save'}
-                onChange={(v) => setForm((c) => ({ ...c, asset_tag: v }))}
-                disabled
-              />
+      <form onSubmit={f.handleSubmit} className="space-y-6 px-4 py-5 sm:px-6 sm:py-6">
+        <CoreSection
+          form={f.form}
+          setForm={f.setForm}
+          statusOptions={f.inventoryStatusOptions}
+          isStatusDisabled={isStatusDisabled}
+          showAssetTag={f.isEditing || !qr_reservation_id}
+          isEditing={f.isEditing}
+          categories={f.selectableCategories}
+          isOther={f.isOther}
+          lockCategory={f.lockCategory}
+          lockedCategoryLabel={lockedCategoryLabel}
+          customCategoryName={f.customCategoryName}
+          setCustomCategoryName={f.setCustomCategoryName}
+          onPickCategory={f.pickCategory}
+        />
 
-              <div>
-                <label htmlFor="asset-form-category" className="block text-muted text-xs mb-0.5">
-                  Category{' '}
-                  <span className="text-accent" aria-hidden="true">*</span>
-                </label>
-                {lockCategory ? (
-                  <div
-                    id="asset-form-category"
-                    className="w-full bg-surface-2 border border-base rounded-lg px-3 py-2 text-primary text-sm"
-                  >
-                    {lockedCategoryLabel || getCategoryLabelFromSlug(form.category_slug) || form.category_slug}
-                  </div>
-                ) : (
-                  <FilterSelect
-                    label="Category"
-                    ariaLabel="Select asset category"
-                    value={form.category_slug}
-                    options={categoryOptions}
-                    onChange={(v) => setForm((c) => ({ ...c, category_slug: v }))}
-                    hideLabel
-                    dense
-                    triggerId="asset-form-category"
-                  />
-                )}
-              </div>
-
-              <Field
-                label="Serial Number"
-                requiredMark
-                value={form.serial_number}
-                placeholder="e.g. SN-ABC12345678"
-                onChange={(v) => setForm((c) => ({ ...c, serial_number: v }))}
-              />
-
-              <Field
-                label="Manufacturer"
-                value={form.manufacturer_name}
-                placeholder="e.g. Dell, Lenovo, Apple"
-                onChange={(v) => setForm((c) => ({ ...c, manufacturer_name: v }))}
-              />
-
-              <Field
-                label="Model"
-                value={form.model}
-                placeholder="e.g. Latitude 5540"
-                onChange={(v) => setForm((c) => ({ ...c, model: v }))}
-              />
-
-              <div className="md:col-span-2">
-                <label htmlFor="asset-form-location-name" className="block text-muted text-xs mb-0.5">
-                  Location name
-                </label>
-                <input
-                  id="asset-form-location-name"
-                  list="asset-location-suggestions"
-                  value={form.location_name}
-                  onChange={(e) => setForm((c) => ({ ...c, location_name: e.target.value }))}
-                  placeholder="Address or office location"
-                  autoComplete="off"
-                  className="w-full bg-app border border-base rounded-lg px-3 py-2 text-primary text-sm outline-none focus:border-[color:var(--accent)] focus:ring-2 focus:ring-[color:var(--accent-soft)] transition"
+        {f.customDefs.length > 0 && (
+          <Section title={`${templateLabel} details`} icon="assets">
+            <div className="grid grid-cols-1 gap-x-5 gap-y-4 md:grid-cols-2">
+              {f.customDefs.map((field) => (
+                <DynamicField
+                  key={field.id}
+                  field={field}
+                  value={f.customValues[field.field_key] || ''}
+                  onChange={(v) => f.setCustomValues((c) => ({ ...c, [field.field_key]: v }))}
                 />
-                <datalist id="asset-location-suggestions">
-                  {locationSuggestions.map((label) => (
-                    <option key={label} value={label} />
-                  ))}
-                </datalist>
-              </div>
-
-              <Field
-                label="Purchase Date"
-                type="date"
-                value={form.purchase_date}
-                placeholder="YYYY-MM-DD"
-                onChange={(v) => setForm((c) => ({ ...c, purchase_date: v }))}
-              />
-              <Field
-                label="Warranty Expiry"
-                type="date"
-                value={form.warranty_expiry}
-                placeholder="YYYY-MM-DD"
-                onChange={(v) => setForm((c) => ({ ...c, warranty_expiry: v }))}
-              />
-
-              <div>
-                <label htmlFor="asset-form-status" className="block text-muted text-xs mb-0.5">
-                  Inventory Status{' '}
-                  <span className="text-accent" aria-hidden="true">*</span>
-                </label>
-                <FilterSelect
-                  label="Inventory Status"
-                  ariaLabel="Select inventory status"
-                  value={form.status}
-                  options={inventoryStatusOptions}
-                  onChange={(v) => setForm((c) => ({ ...c, status: v }))}
-                  hideLabel
-                  dense
-                  triggerId="asset-form-status"
-                />
-                <p className="text-[11px] text-muted mt-0.5 leading-snug">
-                  Status changes in edit mode are logged in asset history.
-                </p>
-              </div>
+              ))}
             </div>
-          </div>
+          </Section>
+        )}
 
-          {/* ── Category template fields ── */}
-          {customDefs.length > 0 && (
-            <div className="border-t border-base pt-3">
-              <p className="text-xs uppercase tracking-[0.14em] text-muted mb-2">
-                {getCategoryLabelFromSlug(form.category_slug)} fields
-              </p>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
-                {customDefs.map((field) => (
-                  <DynamicField
-                    key={field.id}
-                    field={field}
-                    value={customValues[field.field_key] || ''}
-                    onChange={(v) =>
-                      setCustomValues((c) => ({ ...c, [field.field_key]: v }))
-                    }
-                  />
-                ))}
-              </div>
-            </div>
-          )}
+        <LocationSection form={f.form} setForm={f.setForm} suggestions={f.locationSuggestions} />
+        <WarrantySection form={f.form} setForm={f.setForm} />
+        <AdditionalSection
+          form={f.form}
+          setForm={f.setForm}
+          extraPairs={f.extraPairs}
+          addExtraPair={f.addExtraPair}
+          updateExtraPair={f.updateExtraPair}
+          removeExtraPair={f.removeExtraPair}
+        />
 
-          {/* ── Additional Details (free-form key-value) ── */}
-          <div className="border-t border-base pt-3">
-            <div className="flex items-center justify-between gap-2 mb-2">
-              <p className="text-xs uppercase tracking-[0.14em] text-muted">Additional Details</p>
-              <button
-                type="button"
-                onClick={addExtraPair}
-                className="text-accent text-sm font-semibold hover:underline"
-                aria-label="Add additional detail"
-              >
-                + Add
-              </button>
-            </div>
-            {extraPairs.length === 0 ? (
-              <p className="text-sm text-subtle italic">
-                No extra details yet. Click "+ Add" to attach custom key-value information.
-              </p>
-            ) : (
-              <div className="space-y-2">
-                {extraPairs.map((pair) => (
-                  <div
-                    key={pair.id}
-                    className="flex flex-col sm:flex-row gap-2 items-stretch sm:items-center"
-                  >
-                    <input
-                      value={pair.key}
-                      onChange={(e) => updateExtraPair(pair.id, { key: e.target.value })}
-                      placeholder="Label — e.g. wifi_address"
-                      className="flex-1 min-w-0 bg-app border border-base rounded-lg px-3 py-2 text-primary placeholder:text-subtle text-sm outline-none focus:border-[color:var(--accent)] focus:ring-2 focus:ring-[color:var(--accent-soft)] transition"
-                    />
-                    <input
-                      value={pair.value}
-                      onChange={(e) => updateExtraPair(pair.id, { value: e.target.value })}
-                      placeholder="Value — e.g. 192.168.1.50"
-                      className="flex-1 min-w-0 bg-app border border-base rounded-lg px-3 py-2 text-primary placeholder:text-subtle text-sm outline-none focus:border-[color:var(--accent)] focus:ring-2 focus:ring-[color:var(--accent-soft)] transition"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => removeExtraPair(pair.id)}
-                      className="shrink-0 text-xs text-muted hover:text-accent px-2 py-1.5"
-                      aria-label="Remove row"
-                    >
-                      Remove
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+        {f.error && <p className="text-sm text-accent">{f.error}</p>}
 
-          {/* ── Notes ── */}
-          <div className="border-t border-base pt-3">
-            <label className="block text-muted text-xs mb-0.5">Notes (optional)</label>
-            <textarea
-              value={form.notes}
-              onChange={(e) => setForm((c) => ({ ...c, notes: e.target.value }))}
-              rows={2}
-              className="w-full bg-app border border-base rounded-lg px-3 py-2 text-primary text-sm outline-none focus:border-[color:var(--accent)] focus:ring-2 focus:ring-[color:var(--accent-soft)] transition resize-none"
-              placeholder="Operational notes, procurement references…"
-            />
-          </div>
-        </section>
-
-        {error && <p className="text-accent text-sm">{error}</p>}
-
-        <p className="text-[11px] text-muted leading-relaxed border-t border-base pt-2.5 mt-1">
-          <span className="text-accent font-semibold">*</span> Asset tag is auto-generated. Category and serial number
-          are the only required fields; everything else is optional.
-          All other fields including template and additional details are optional.
-        </p>
-
-        <div className="flex flex-col sm:flex-row gap-2 pt-1">
+        <div className="sticky bottom-0 -mx-4 flex flex-col gap-2 border-t border-base bg-app/95 px-4 py-3 backdrop-blur sm:-mx-6 sm:flex-row sm:justify-end sm:px-6">
           <button
             type="button"
             onClick={onClose}
-            className="flex-1 border border-base bg-surface text-primary py-2 rounded-lg hover:bg-surface-2 transition text-sm"
+            className="rounded-lg border border-base bg-surface px-5 py-2 text-sm text-primary transition hover:bg-surface-2 sm:min-w-[120px]"
           >
             Cancel
           </button>
           <button
             type="submit"
-            disabled={loading}
-            className="flex-1 bg-accent text-white font-semibold py-2 rounded-lg hover:bg-accent-hover transition text-sm disabled:opacity-60 shadow-accent"
+            disabled={f.loading}
+            className="rounded-lg bg-accent px-5 py-2 text-sm font-semibold text-on-accent shadow-accent transition hover:bg-accent-hover disabled:opacity-60 sm:min-w-[160px]"
           >
-            {loading ? 'Saving...' : isEditing ? 'Save Changes' : 'Create Asset'}
+            {f.loading ? LOADING.SAVING : f.isEditing ? 'Save changes' : 'Create asset'}
           </button>
         </div>
       </form>
@@ -571,122 +133,8 @@ export default function AssetForm({
   if (isPanel) return content
 
   return (
-    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-start justify-center z-50 overflow-y-auto py-10 px-4">
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/70 px-4 py-10 backdrop-blur-sm">
       {content}
-    </div>
-  )
-}
-
-function coerceValue(value: string, dataType: CustomFieldDefinition['data_type']) {
-  const trimmed = value.trim()
-  if (!trimmed) return null
-
-  if (dataType === 'number') {
-    const parsed = Number(trimmed)
-    return Number.isFinite(parsed) ? parsed : trimmed
-  }
-  if (dataType === 'boolean') {
-    if (trimmed.toLowerCase() === 'true') return true
-    if (trimmed.toLowerCase() === 'false') return false
-  }
-  if (dataType === 'json') {
-    try {
-      return JSON.parse(trimmed)
-    } catch {
-      return trimmed
-    }
-  }
-  return trimmed
-}
-
-function Field({
-  label,
-  requiredMark = false,
-  value,
-  onChange,
-  type = 'text',
-  placeholder,
-  disabled = false,
-}: {
-  label: string
-  requiredMark?: boolean
-  value: string
-  onChange: (value: string) => void
-  type?: string
-  placeholder?: string
-  disabled?: boolean
-}) {
-  return (
-    <div>
-      <label className="block text-muted text-xs mb-0.5">
-        {label}
-        {requiredMark ? (
-          <>
-            {' '}
-            <span className="text-accent" aria-hidden="true">*</span>
-          </>
-        ) : null}
-      </label>
-      <input
-        type={type}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        disabled={disabled}
-        className="w-full bg-app border border-base rounded-lg px-3 py-2 text-primary placeholder:text-subtle text-sm outline-none focus:border-[color:var(--accent)] focus:ring-2 focus:ring-[color:var(--accent-soft)] transition disabled:opacity-60 disabled:cursor-not-allowed"
-      />
-    </div>
-  )
-}
-
-function dynamicFieldPlaceholder(field: CustomFieldDefinition): string {
-  switch (field.data_type) {
-    case 'number': return 'e.g. 8'
-    case 'date': return 'YYYY-MM-DD'
-    case 'json': return 'e.g. {"key": "value"}'
-    default: return `Enter ${field.label}`
-  }
-}
-
-function DynamicField({
-  field,
-  value,
-  onChange,
-}: {
-  field: CustomFieldDefinition
-  value: string
-  onChange: (value: string) => void
-}) {
-  const commonClass =
-    'w-full bg-app border border-base rounded-lg px-3 py-2 text-primary placeholder:text-subtle text-sm outline-none focus:border-[color:var(--accent)] focus:ring-2 focus:ring-[color:var(--accent-soft)] transition'
-
-  return (
-    <div>
-      <label className="block text-muted text-xs mb-0.5">{field.label}</label>
-
-      {field.data_type === 'boolean' ? (
-        <select aria-label={field.label} value={value} onChange={(e) => onChange(e.target.value)} className={commonClass}>
-          <option value="">Select yes or no…</option>
-          <option value="true">True</option>
-          <option value="false">False</option>
-        </select>
-      ) : field.data_type === 'select' && Array.isArray(field.options) && field.options.length > 0 ? (
-        <select aria-label={field.label} value={value} onChange={(e) => onChange(e.target.value)} className={commonClass}>
-          <option value="">Choose an option…</option>
-          {field.options.map((option) => (
-            <option key={String(option)} value={String(option)}>{String(option)}</option>
-          ))}
-        </select>
-      ) : (
-        <input
-          aria-label={field.label}
-          type={field.data_type === 'date' ? 'date' : field.data_type === 'number' ? 'number' : 'text'}
-          value={value}
-          placeholder={dynamicFieldPlaceholder(field)}
-          onChange={(e) => onChange(e.target.value)}
-          className={commonClass}
-        />
-      )}
     </div>
   )
 }

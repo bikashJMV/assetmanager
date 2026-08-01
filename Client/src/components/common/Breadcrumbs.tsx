@@ -11,8 +11,7 @@ function labelForSegment(seg: string): string {
     'new': 'New',
     analysis: 'Analysis',
     notifications: 'Notifications',
-    'recycle-bin': 'Recycle Bin',
-    guide: 'Guide',
+    settings: 'Settings',
     scan: 'Scan',
     'Assets': 'Assets',
   }
@@ -37,14 +36,14 @@ function buildCrumbs(pathname: string): Crumb[] {
     if (segments[0] === 'assets' && isLast && seg === 'new') {
       label = 'New Asset'
     } else if (segments[0] === 'employee' && isLast && seg === 'new') {
-      label = 'New Employee'
+      label = 'Employee'
     } else if (
       seg.match(/^[a-z0-9-]+$/i) &&
       isLast &&
       segments.length > 1 &&
       !['assets', 'employee'].includes(seg)
     ) {
-      label = `${baseLabel === seg ? 'Detail' : baseLabel}: ${seg}`
+      label = baseLabel === seg ? 'Detail' : baseLabel
     }
 
     crumbs.push({ label, to: isLast ? undefined : pathAcc })

@@ -1,9 +1,12 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { getPublicScanAsset, scanAsset, type PublicScanAsset } from '../../api'
+import type { PublicScanAsset } from '../../api'
+import { useProtectedAssetScanQuery, usePublicAssetScanQuery } from '../../queries/assets'
 import { getUserFacingMessage, logDevError } from '../../utils/errors'
+import { getErrorStatusCode } from '../../utils/authNexus.api'
 import { formatDisplay } from '../../utils/formatDisplay'
 import InventoryStatusBadge from '../common/InventoryStatusBadge'
+import { LOADING } from '../../constants/loading'
 
 type BarcodeDetectorInstance = {
   detect: (image: HTMLVideoElement) => Promise<Array<{ rawValue?: string }>>
@@ -36,50 +39,64 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
   const [manualTag, setManualTag] = useState('')
   const [scannerActive, setScannerActive] = useState(false)
   const [scannerError, setScannerError] = useState('')
-  const [asset, setAsset] = useState<PublicScanAsset | AuthenticatedScanAsset | null>(null)
-  const [error, setError] = useState('')
+  const ref = (id || '').trim()
+  const publicScan = usePublicAssetScanQuery(ref)
+  const protectedScan = useProtectedAssetScanQuery(ref)
+  const activeScan = protectedRoute ? protectedScan : publicScan
 
   useEffect(() => {
-    if (!id) {
-      setAsset(null)
-      setError('')
-      return
+    if (activeScan.error) {
+      logDevError('scan.asset', activeScan.error)
+    }
+  }, [activeScan.error])
+
+  useEffect(() => {
+    if (!protectedRoute) return
+
+    const data = protectedScan.data
+    if (!data || typeof data !== 'object') return
+
+    // NEW — ready_to_log redirect (Path A scan-to-log)
+    if ('kind' in data && (data as { kind?: unknown }).kind === 'ready_to_log') {
+      const d = data as { asset_tag?: unknown; qr_reservation_id?: unknown }
+      const tag = typeof d.asset_tag === 'string' ? d.asset_tag : ref
+      const reservationId = typeof d.qr_reservation_id === 'string' ? d.qr_reservation_id : ''
+      if (tag && reservationId) {
+        void navigate(
+          `/assets/new?tag=${encodeURIComponent(tag)}&reservation_id=${encodeURIComponent(reservationId)}`,
+          { replace: true }
+        )
+        return
+      }
     }
 
-    let cancelled = false
+    // EXISTING — unchanged
+    if ('redirect' in data && (data as { redirect?: unknown }).redirect === true) {
+      const tag =
+        typeof (data as { asset_tag?: unknown }).asset_tag === 'string'
+          ? (data as { asset_tag: string }).asset_tag
+          : ref
+      void navigate(`/assets/${encodeURIComponent(tag || ref)}`, { replace: true })
+    }
+  }, [navigate, protectedRoute, protectedScan.data, ref])
 
-    void (async () => {
-      try {
-        if (!protectedRoute) {
-          // Public / unauthenticated path
-          const data = await getPublicScanAsset(id)
-          if (!cancelled) setAsset(data)
-          return
-        }
-
-        // Authenticated path: check role + ownership in one round-trip
-        const data = await scanAsset(id)
-        if (cancelled) return
-
-        if (data.is_privileged || data.is_own_asset) {
-          // Admin/IT Ops or employee viewing their own asset → go straight to asset detail
-          void navigate(`/assets/${encodeURIComponent(data.asset_tag ?? id)}`, { replace: true })
-          return
-        }
-
-        // Employee viewing an asset not assigned to them → show limited public-style view
-        const publicData = await getPublicScanAsset(id)
-        if (!cancelled) setAsset(publicData)
-      } catch (err) {
-        if (!cancelled) {
-          logDevError('scan.asset', err)
-          setError(getUserFacingMessage(err, 'Asset not found'))
-        }
+  const isNotFound = getErrorStatusCode(activeScan.error) === 404
+  const error = activeScan.error ? getUserFacingMessage(activeScan.error, 'Asset not found') : ''
+  const asset = (() => {
+    const data = activeScan.data
+    if (!data) return null
+    if (protectedRoute && typeof data === 'object') {
+      // Existing redirect skip
+      if ('redirect' in data && (data as { redirect?: unknown }).redirect === true) {
+        return null
       }
-    })()
-
-    return () => { cancelled = true }
-  }, [id, protectedRoute, navigate])
+      // NEW — skip rendering during ready_to_log (redirect effect handles it)
+      if ('kind' in data && (data as { kind?: unknown }).kind === 'ready_to_log') {
+        return null
+      }
+    }
+    return data as PublicScanAsset | AuthenticatedScanAsset
+  })()
 
   const handleLookup = (e: React.FormEvent) => {
     e.preventDefault()
@@ -199,7 +216,7 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
                 onClick={() => {
                   void startScanner()
                 }}
-                className="w-full bg-accent text-white font-semibold px-4 py-2.5 rounded-lg hover:bg-accent-hover transition text-sm"
+                className="w-full bg-accent text-on-accent font-semibold px-4 py-2.5 rounded-lg hover:bg-accent-hover transition text-sm"
               >
                 Start Camera Scanner
               </button>
@@ -225,12 +242,12 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
             <input
               value={manualTag}
               onChange={(evt) => setManualTag(evt.target.value)}
-              placeholder="e.g. AST-00012"
+              placeholder="e.g. JMV-LAP-00012"
               className="flex-1 bg-surface border border-base text-primary rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[color:var(--accent)] transition"
             />
             <button
               type="submit"
-              className="bg-accent text-white font-semibold px-4 py-2.5 rounded-lg hover:bg-accent-hover transition text-sm"
+              className="bg-accent text-on-accent font-semibold px-4 py-2.5 rounded-lg hover:bg-accent-hover transition text-sm"
             >
               Lookup
             </button>
@@ -242,13 +259,46 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
   }
 
   if (error) {
-    const isNotFound = error.toLowerCase().includes('not find')
     return (
-      <main className="min-h-screen bg-app flex items-center justify-center px-6">
-        <div className="text-center">
-          <p className="text-accent text-5xl font-bold">{isNotFound ? '404' : 'Error'}</p>
-          <p className="mt-2 text-subtle">{error}</p>
+      <main className="min-h-screen bg-app flex flex-col items-center justify-center px-6 text-center">
+        <div className="mb-6 flex h-20 w-20 items-center justify-center rounded-full bg-surface-2 border border-base text-subtle">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="h-9 w-9" aria-hidden="true">
+            <rect x="3" y="3" width="7" height="7" rx="1" />
+            <rect x="14" y="3" width="7" height="7" rx="1" />
+            <rect x="3" y="14" width="7" height="7" rx="1" />
+            <path d="M14 14h2" />
+            <path d="M14 18h2" />
+            <path d="M18 14h3" />
+            <path d="M18 18h3" />
+            <path d="M20 14v4" />
+          </svg>
         </div>
+
+        <p className="text-accent text-sm font-semibold uppercase tracking-widest mb-2">
+          {isNotFound ? '404' : 'Error'}
+        </p>
+        <h1 className="text-2xl font-bold text-primary mb-2">
+          {isNotFound ? 'Asset Not Found' : 'Something went wrong'}
+        </h1>
+        <p className="text-subtle text-sm max-w-xs mb-8">
+          {isNotFound
+            ? ref
+              ? `No asset with tag "${ref}" exists in the system.`
+              : 'This asset tag does not exist in the system.'
+            : error}
+        </p>
+
+        <button
+          type="button"
+          onClick={() => navigate(-1)}
+          className="inline-flex items-center gap-2 rounded-xl border border-base bg-surface px-5 py-2.5 text-sm font-medium text-primary transition hover:border-accent-soft hover:bg-[color:var(--accent-soft)]/10 hover:text-accent"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden="true">
+            <path d="M19 12H5" />
+            <path d="m12 5-7 7 7 7" />
+          </svg>
+          Go back
+        </button>
       </main>
     )
   }
@@ -256,7 +306,7 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
   if (!asset) {
     return (
       <main className="min-h-screen bg-app flex items-center justify-center">
-        <p className="text-subtle">Loading asset...</p>
+        <p className="text-subtle">{LOADING.ASSET}</p>
       </main>
     )
   }
@@ -264,9 +314,46 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
   // Signed-in users (admin/IT Ops and employees viewing their own asset) are always
   // redirected to /assets/:tag by the resolver effect above. The only time we render
   // here is for public (unauthenticated) scans OR employees viewing an asset not
-  // assigned to them — both cases use the PublicScanAsset shape.
+  // assigned to them â€” both cases use the PublicScanAsset shape.
   const publicAsset = asset as PublicScanAsset
   const heading = formatDisplay(publicAsset.category_name) || formatDisplay(publicAsset.asset_tag) || '-'
+
+  if ((activeScan.data as { kind?: string } | undefined)?.kind === 'reserved') {
+    return (
+      <main className="min-h-screen bg-app text-primary px-4 py-8">
+        <div className="text-center mb-8 mt-12">
+          <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-accent/10 text-accent mb-4">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-8 h-8">
+              <path d="M4 8V5h3" />
+              <path d="M20 8V5h-3" />
+              <path d="M4 16v3h3" />
+              <path d="M20 16v3h-3" />
+              <rect x="9" y="9" width="6" height="6" rx="1" />
+            </svg>
+          </div>
+          <p className="text-accent text-xs uppercase tracking-widest mb-1">New Asset</p>
+          <h1 className="text-2xl font-bold">{publicAsset.asset_tag}</h1>
+        </div>
+
+        <div className="max-w-md mx-auto p-6 text-center">
+          <p className="text-sm text-subtle mb-6">
+            Note: <b className="text-accent font-bold">Unassigned QR Tag</b> - This QR tag is ready to be assigned to a new asset. Please sign in to assign it to a new asset.
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              const next = `/assets/scan/${publicAsset.asset_tag}`
+              navigate(`/login?next=${encodeURIComponent(next)}`)
+            }}
+            className="bg-accent text-on-accent font-semibold px-6 py-3 rounded-xl hover:bg-accent-hover transition shadow-accent"
+          >
+            Sign In to Log Asset
+          </button>
+        </div>
+        <p className="text-center text-subtle text-xs mt-10">Powered by Asset Manager</p>
+      </main>
+    )
+  }
 
   return (
     <main className="min-h-screen bg-app text-primary px-4 py-8">
@@ -281,7 +368,8 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
             <Field label="Asset Tag" value={formatDisplay(publicAsset.asset_tag)} />
             <Field label="Category" value={formatDisplay(publicAsset.category_name)} />
             <Field label="User" value={formatDisplay(publicAsset.holder_name)} />
-            <Field label="Employee ID" value={formatDisplay(publicAsset.holder_employee_code)} />
+            <Field label="Department" value={formatDisplay(publicAsset.holder_department)} />
+            <Field label="Employee ID" value={formatDisplay(publicAsset.holder_employee_business_id)} />
           </>
         ) : (
           <>
@@ -304,9 +392,9 @@ export default function ScanPage({ protectedRoute = false }: { protectedRoute?: 
               const next = `/assets/${publicAsset.asset_tag}`
               navigate(`/login?next=${encodeURIComponent(next)}`)
             }}
-            className="bg-accent text-white font-semibold px-6 py-2.5 rounded-lg hover:bg-accent-hover transition text-sm shadow-accent"
+            className="bg-accent text-on-accent font-semibold px-6 py-2.5 rounded-lg hover:bg-accent-hover transition text-sm shadow-accent"
           >
-            See more
+           Login / See More
           </button>
         </div>
       ) : null}

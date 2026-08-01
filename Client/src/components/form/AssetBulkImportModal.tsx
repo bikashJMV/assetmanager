@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react'
-import * as XLSX from 'xlsx'
+
 import { bulkInsertAssets } from '../../api'
 import { getUserFacingMessage, logDevError } from '../../utils/errors'
 import {
@@ -11,8 +11,9 @@ import {
 } from '../../utils/assetBulkImport'
 import { useModalScrollLock } from '../../hooks/useModalScrollLock'
 import { ModalPortal } from '../common/ModalPortal'
-import { useToast } from '../common/ToastProvider'
+import { useToast } from '../../hooks/useToast'
 import AnimatedNavIcon from '../common/AnimatedNavIcon'
+import { LOADING } from '../../constants/loading'
 
 const ACCEPT =
   '.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel'
@@ -66,6 +67,7 @@ export default function AssetBulkImportModal({ open, onClose, onSuccess, default
       if (inputRef.current) inputRef.current.value = ''
       try {
         const buf = await file.arrayBuffer()
+        const XLSX = await import('@e965/xlsx')
         const workbook = XLSX.read(buf, { type: 'array' })
         const sheetName = pickSheetName(workbook.SheetNames)
         if (!sheetName) {
@@ -117,6 +119,13 @@ export default function AssetBulkImportModal({ open, onClose, onSuccess, default
       const inputs = rows.map((r) => r.input)
       const result = await bulkInsertAssets(inputs)
       if (!mountedRef.current) return
+
+      if (result.inserted === 0) {
+        setPhase({ name: 'error', errors: ['No assets were saved. All rows failed on the server.'] })
+        showToast({ variant: 'error', title: 'Import failed', message: 'No assets were saved.', durationMs: 0 })
+        return
+      }
+
       setPhase({ name: 'success', inserted: result.inserted })
       showToast({ variant: 'success', message: `Imported ${result.inserted} new asset${result.inserted === 1 ? '' : 's'}.` })
       onSuccess()
@@ -180,9 +189,9 @@ export default function AssetBulkImportModal({ open, onClose, onSuccess, default
               <button
                 type="button"
                 onClick={() => inputRef.current?.click()}
-                className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-accent-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent sm:w-auto"
+                className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-on-accent shadow-sm transition hover:bg-accent-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent sm:w-auto"
               >
-                <span className="inline-flex h-5 w-5 shrink-0 text-white" aria-hidden="true">
+                <span className="inline-flex h-5 w-5 shrink-0 text-on-accent" aria-hidden="true">
                   <AnimatedNavIcon name="upload" className="h-5 w-5 text-[color:var(--on-accent)]" />
                 </span>
                 <span>Choose Excel file</span>
@@ -216,7 +225,7 @@ export default function AssetBulkImportModal({ open, onClose, onSuccess, default
                 </div>
               </div>
 
-              <div className="rounded-xl border border-green-500/30 bg-green-500/[0.06] dark:bg-green-400/[0.08] px-4 py-3">
+              <div className="rounded-xl border px-4 py-3" style={{ borderColor: 'hsl(var(--success) / 0.3)', backgroundColor: 'hsl(var(--success) / 0.08)' }}>
                 <p className="text-sm font-semibold text-primary">
                   Ready to import {phase.rows.length} asset{phase.rows.length === 1 ? '' : 's'}
                 </p>
@@ -237,7 +246,7 @@ export default function AssetBulkImportModal({ open, onClose, onSuccess, default
                 <button
                   type="button"
                   onClick={() => void runImport()}
-                  className="flex-1 bg-accent text-white font-semibold py-2 rounded-lg hover:bg-accent-hover transition text-sm shadow-accent"
+                  className="flex-1 bg-accent text-on-accent font-semibold py-2 rounded-lg hover:bg-accent-hover transition text-sm shadow-accent"
                 >
                   Import {phase.rows.length} asset{phase.rows.length === 1 ? '' : 's'}
                 </button>
@@ -252,13 +261,13 @@ export default function AssetBulkImportModal({ open, onClose, onSuccess, default
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
               </svg>
-              <p className="text-sm text-muted">Saving assets… do not close this window.</p>
+              <p className="text-sm text-muted">{LOADING.SAVING_ASSETS}</p>
             </div>
           )}
 
           {/* ── Success ── */}
           {phase.name === 'success' && (
-            <div className="rounded-xl border border-green-500/30 bg-green-500/[0.06] dark:bg-green-400/[0.08] px-4 py-4 text-center">
+            <div className="rounded-xl border px-4 py-4 text-center" style={{ borderColor: 'hsl(var(--success) / 0.3)', backgroundColor: 'hsl(var(--success) / 0.08)' }}>
               <p className="text-lg font-semibold text-primary">
                 {phase.inserted} asset{phase.inserted === 1 ? '' : 's'} imported
               </p>
@@ -266,7 +275,7 @@ export default function AssetBulkImportModal({ open, onClose, onSuccess, default
               <button
                 type="button"
                 onClick={handleClose}
-                className="mt-4 bg-accent text-white font-semibold px-6 py-2 rounded-lg hover:bg-accent-hover transition text-sm shadow-accent"
+                className="mt-4 bg-accent text-on-accent font-semibold px-6 py-2 rounded-lg hover:bg-accent-hover transition text-sm shadow-accent"
               >
                 Done
               </button>
@@ -300,14 +309,15 @@ export default function AssetBulkImportModal({ open, onClose, onSuccess, default
               )}
 
               <div
-                className="max-h-52 overflow-y-auto rounded-xl border border-red-500/35 bg-red-500/[0.06] py-3 pl-4 pr-3 dark:border-red-400/35 dark:bg-red-400/[0.08]"
+                className="max-h-52 overflow-y-auto rounded-xl border py-3 pl-4 pr-3"
+                style={{ borderColor: 'hsl(var(--danger) / 0.35)', backgroundColor: 'hsl(var(--danger) / 0.06)' }}
                 role="region"
                 aria-label="Import errors"
               >
                 <p className="text-sm font-semibold text-primary">
                   Import was not applied — fix these issues in your file
                 </p>
-                <ul className="mt-2.5 list-disc space-y-2 pl-5 text-sm leading-snug text-muted marker:text-red-600 dark:marker:text-red-400">
+                <ul className="mt-2.5 list-disc space-y-2 pl-5 text-sm leading-snug text-muted">
                   {phase.errors.slice(0, 80).map((line, idx) => (
                     <li key={`${idx}-${line.slice(0, 48)}`} className="break-words pl-0.5">
                       {line}

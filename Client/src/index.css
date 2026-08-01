@@ -1,4 +1,7 @@
-@import './styles/theme.css';
+/* tokens.css is the single source of truth (Notes/UI.md v2.0). It also carries the
+   legacy-variable bridge for components still using the old token names. */
+@import '@fontsource-variable/inter';
+@import './styles/tokens.css';
 @import './styles/global.css';
 
 @tailwind base;

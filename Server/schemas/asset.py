@@ -21,7 +21,7 @@ class AssetBase(BaseModel):
     assignment_id: Optional[uuid.UUID] = None
     assigned_at: Optional[datetime] = None
     current_employee_id: Optional[uuid.UUID] = None
-    current_employee_code: Optional[str] = None
+    current_employee_business_id: Optional[str] = None
     current_employee_name: Optional[str] = None
     current_employee_email: Optional[str] = None
     current_employee_is_active: Optional[bool] = None
@@ -31,8 +31,11 @@ class AssetBase(BaseModel):
 
 
 class AssetCreate(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     asset_tag: Optional[str] = None
     category_slug: str
+    category_name: Optional[str] = None
     manufacturer_name: Optional[str] = None
     model: Optional[str] = None
     serial_number: str  # Now required
@@ -43,9 +46,15 @@ class AssetCreate(BaseModel):
     warranty_expiry: Optional[date] = None
     custom_fields: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    qr_code: Optional[str] = None
+    log_note: Optional[str] = None
+    qr_reservation_id: Optional[str] = None
+
 
 
 class AssetUpdate(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     category_slug: Optional[str] = None
     manufacturer_name: Optional[str] = None
     model: Optional[str] = None

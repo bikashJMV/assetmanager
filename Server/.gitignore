@@ -4,9 +4,21 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
-
+.env.production
 # Runtime/debug artifacts
 *.log
 debug.txt
 server_log.txt
 import_report*.json
+
+# Smoke tests
+*smoke*.py
+.env.production
+# Test files
+*test*.py
+tests/
+
+test_loki_logic.py
+test_imports.py
+test_endpoint.py
+test_qr_pdf.py

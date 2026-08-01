@@ -1,0 +1,160 @@
+services:
+  # ============================================================
+  # OBSERVABILITY STACK (starts first)
+  # ============================================================
+  
+  observability:
+    image: grafana/otel-lgtm:latest
+    container_name: ams-observability
+    ports:
+      - "${GRAFANA_PUBLISH_PORT}:3000"        # Grafana UI
+      # OTLP HTTP (4318) intentionally NOT published: browser telemetry is disabled
+      # (VITE_OTEL_GRAFANA_ENABLED=false) and the server exports over internal gRPC 4317.
+    expose:
+      - "3100"                                 # Loki (in-app Logs page queries this)
+      - "3200"                                 # Tempo
+      - "9090"                                 # Prometheus
+      - "4317"                                 # OTLP gRPC (server export)
+    volumes:
+      - lgtm_data:/data                        # persist Loki/Tempo/Prometheus/Grafana
+    networks:
+      - ams-observability
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:3000/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+
+  # ============================================================
+  # APPLICATION STACK (depends on observability being healthy)
+  # ============================================================
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: ams-postgres-docker
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./DB/init.sql:/docker-entrypoint-initdb.d/01-init.sql 
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    networks:
+      - ams-observability
+    restart: unless-stopped
+
+  server:
+    build:
+      context: ./Server
+      dockerfile: Dockerfile
+    container_name: ams-server
+    depends_on:
+      postgres:
+        condition: service_healthy
+      observability:
+        condition: service_healthy
+    environment:
+      # Database Connection
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      
+      # Frontend URLs
+      FRONTEND_URL: ${FRONTEND_URL}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS}
+      
+      # Authentication
+      AUTH_ENABLED: ${AUTH_ENABLED}
+      AUTH_JWKS_URL: ${AUTH_JWKS_URL}
+      AUTH_ISSUER: ${AUTH_ISSUER}
+      AUTH_PROJECT_ID: ${AUTH_PROJECT_ID}
+      AUTH_AUDIENCE: ${AUTH_AUDIENCE}
+      AUTH_CLOCK_SKEW_SECONDS: 30
+      AUTH_AUTHORITY: ${AUTH_AUTHORITY}
+      
+      # AuthNexus Admin (for sync)
+      AUTHNEXUS_ADMIN_USER: ${AUTHNEXUS_ADMIN_USER}
+      AUTHNEXUS_ADMIN_PASSWORD: ${AUTHNEXUS_ADMIN_PASSWORD}
+      AUTHNEXUS_ORG_ID: ${AUTHNEXUS_ORG_ID}
+      
+      # Environment
+      ENV: ${ENV}
+      VITE_ENV: ${ENV}
+      
+      # Observability
+      OTEL_GRAFANA_ENABLED: ${OTEL_GRAFANA_ENABLED}
+      LOKI_BASE_URL: ${LOKI_BASE_URL}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT}
+      
+      # Email Service
+      EMAIL_SERVICE_URL: ${EMAIL_SERVICE_URL}
+      BACKEND_API_KEY_EMAIL_NOTIFICATION: ${BACKEND_API_KEY_EMAIL_NOTIFICATION}
+      NOTIFICATIONS_ENABLED: ${NOTIFICATIONS_ENABLED}
+      
+      # API Key
+      BACKEND_API_KEY: ${BACKEND_API_KEY}
+      VITE_BACKEND_API_KEY: ${BACKEND_API_KEY}
+
+      
+    ports:
+      - "${SERVER_PUBLISH_PORT}:8000"
+    networks:
+      - ams-observability
+    restart: unless-stopped
+    develop:
+      watch:
+        - path: ./Server
+          action: rebuild
+
+  client:
+    build:
+      context: ./Client
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: ${VITE_API_URL}
+        VITE_BACKEND_API_KEY: ${BACKEND_API_KEY}
+        VITE_AUTH_AUTHORITY: ${VITE_AUTH_AUTHORITY}
+        VITE_CLIENT_ID: ${VITE_CLIENT_ID}
+        VITE_ORG_ID: ${VITE_ORG_ID}
+        VITE_PROJECT_ID: ${VITE_PROJECT_ID}
+        VITE_CALLBACK_PATH: ${VITE_CALLBACK_PATH}
+        VITE_LOGOUT_PATH: ${VITE_LOGOUT_PATH}
+        VITE_PUBLIC_APP_ORIGIN: ${VITE_PUBLIC_APP_ORIGIN}
+        VITE_PROJECT_NAME: ${VITE_PROJECT_NAME}
+        VITE_OTEL_GRAFANA_ENABLED: ${VITE_OTEL_GRAFANA_ENABLED}
+        VITE_OTEL_EXPORTER_ENDPOINT: ${VITE_OTEL_EXPORTER_ENDPOINT}
+        VITE_GRAFANA_DASHBOARD_URL_FOR_ITOPS: ${VITE_GRAFANA_DASHBOARD_URL_FOR_ITOPS}
+        VITE_LOKI_BASE_URL: ${VITE_LOKI_BASE_URL}
+    container_name: ams-client
+    depends_on:
+      server:
+        condition: service_healthy
+    ports:
+      - "${CLIENT_PUBLISH_PORT}:80"
+    networks:
+      - ams-observability
+    restart: unless-stopped
+    develop:
+      watch:
+        - path: ./Client
+          action: rebuild
+
+
+networks:
+  ams-observability:
+    name: ams-observability
+    driver: bridge
+
+volumes:
+  postgres_data:
+  lgtm_data:

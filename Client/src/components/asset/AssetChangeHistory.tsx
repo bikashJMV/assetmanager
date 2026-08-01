@@ -15,37 +15,37 @@ const VIEW_MODE_STORAGE_KEY = 'assetHistoryViewMode'
 
 const LIFECYCLE_EVENT_HINTS: Array<{
   label: string
-  accentClassName: string
+  accentColor: string
   description: string
 }> = [
   {
     label: 'Assigned',
-    accentClassName: 'text-sky-600',
+    accentColor: 'hsl(var(--info))',
     description: 'The asset was assigned to an employee and the current holder changed.',
   },
   {
     label: 'Returned',
-    accentClassName: 'text-sky-600',
+    accentColor: 'hsl(var(--info))',
     description: 'The active assignment was closed and the asset returned from that holder.',
   },
   {
     label: 'Updated',
-    accentClassName: 'text-amber-600',
+    accentColor: 'hsl(var(--warning))',
     description: 'Some asset details were changed, such as status, location, model, or other recorded fields.',
   },
   {
     label: 'Created',
-    accentClassName: 'text-emerald-600',
+    accentColor: 'hsl(var(--success))',
     description: 'A new asset record was created in the system.',
   },
   {
     label: 'Restored',
-    accentClassName: 'text-emerald-600',
+    accentColor: 'hsl(var(--success))',
     description: 'The asset was restored from the recycle bin and became active again.',
   },
   {
     label: 'Deleted',
-    accentClassName: 'text-rose-600',
+    accentColor: 'hsl(var(--danger))',
     description: 'The asset was moved to the recycle bin.',
   },
 ]
@@ -75,7 +75,7 @@ function ViewToggleButton({
       onClick={onClick}
       className={`h-8 w-8 rounded-md border flex items-center justify-center transition ${
         pressed
-          ? 'border-accent bg-accent text-white'
+          ? 'border-accent bg-accent text-on-accent'
           : 'border-base bg-surface text-muted hover:border-accent-soft hover:bg-[color:var(--accent-soft)]/15 hover:text-accent'
       }`}
     >
@@ -150,7 +150,7 @@ export default function AssetChangeHistory({ events, isCapped = false }: Props) 
             <div className="space-y-3">
               {LIFECYCLE_EVENT_HINTS.map((item) => (
                 <div key={item.label} className="space-y-1">
-                  <p className={`text-xs font-semibold uppercase tracking-[0.14em] ${item.accentClassName}`}>
+                  <p className="text-xs font-semibold uppercase tracking-[0.14em]" style={{ color: item.accentColor }}>
                     {item.label}
                   </p>
                   <p>{item.description}</p>

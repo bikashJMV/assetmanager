@@ -1,90 +1,101 @@
-# Asset Manager
+# Asset Manager (AMS)
 
-Asset Manager is a Supabase-centered asset tracking platform for physical and digital assets. It provides end-to-end lifecycle management with role-based access control, event-driven email notifications, and comprehensive telemetry.
+Track physical & digital assets — QR-tagged, assign/return to employees, warranty alerts, audit
+trail, bulk import/export, analytics. **React 19 + Vite** SPA · **FastAPI + asyncpg** API ·
+**Postgres 15** · OIDC sign-in via **authNexus** (BFF HttpOnly-cookie refresh) · single
+`grafana/otel-lgtm` container for logs/metrics/traces. nginx serves the client and reverse-proxies
+`/api/`.
 
-The repo currently contains:
+## Data flow
 
-- `Client/` - React 19 + Vite 7 + TypeScript SPA
-- `Server/` - FastAPI backend for trusted HTTP operations and email notification orchestration
-- `TelemetryServer/` - optional FastAPI service for telemetry ingest and query
-- `Server/db/migrations/v2/` - canonical AMS schema, RLS, views, RPCs, and audit logic
-- `TelemetryServer/db/migrations/` - telemetry schema bootstrap
-- `Telemetry.plan.md` - telemetry rollout notes
-- `Context.md` - working context and safety rules for AI/code changes
+```mermaid
+flowchart LR
+  U([User / QR scan]) --> C["Client SPA<br/>(React + nginx)"]
+  C -->|"/api/v1/*"| API["FastAPI<br/>(RBAC + audit)"]
+  C -.->|OIDC sign-in| AX["authNexus<br/>(OIDC)"]
+  API -.->|JWKS verify| AX
+  API -->|"asyncpg (raw SQL)"| DB[("Postgres 15")]
+  API -.->|"fire-and-forget events"| MAIL["Email microservice<br/>(optional)"]
+  API -->|logs / metrics / traces| OBS["otel-lgtm<br/>(Grafana)"]
+```
 
-## Architecture
+- Browser calls FastAPI for all data; nginx proxies `/api/` to the server.
+- Sign-in is OIDC; the server validates RS256 JWTs via JWKS. `POST /api/auth/refresh` rotates the
+  access token using the HttpOnly `nexus_refresh_token` cookie.
+- Postgres is the system of record; business rules live in `Server/repositories/` + `Server/services/`.
+  `DB/init.sql` is the authoritative schema.
 
-- The browser talks directly to Supabase for most runtime reads and writes.
-- Business rules live primarily in SQL, RLS, views, and RPC functions under `Server/db/migrations/v2/`.
-- `Server/` is a secondary trusted layer that uses the Supabase service-role key. It also acts as an orchestrator proxying event payloads to the Email Notification Microservice.
-- The external `Email Notification Microservice` acts as a dedicated dispatch system handling automated CC-enabled receipts.
-- `TelemetryServer/` is a modular and isolated service for collecting platform usage metrics.
+## Performance — 500 active users ✅ tested & verified
 
-## Core domain rules
+Load-tested with `wrk -t8 -c500 -d20s` against `/api/v1/assets` (from inside the Docker network):
 
-- **Nomenclature**: The platform standardizes labels across the UI and data to **Asset Tag** (identifier), **Category**, and **User** (assignment holder).
-- **Roles**: Canonical employee role is `employees.role`: `employee`, `admin`, `it_ops`. `it_ops` holds the highest tier.
-- **Flags**: `employees.is_active` and `employees.erp_active` are distinct flags requiring disparate handling.
-- **Assignments**: Assignment and return streams are exclusively powered by DB RPCs: `fn_assign_asset` and `fn_return_asset`.
-- **Lifecycle**: Post-assignment lifecycle states (`in_stock`, `in_repair`, `retired`, `lost`, `disposed`) are governed by `fn_set_asset_lifecycle_status`.
-- **Public Scan**: QR-based scans utilize `fn_public_scan_asset` fetching tightly-scoped anonymous records without leaking internal status logs.
-- **Recycle Bin**: Asset Manager delegates deletions to soft-delete mechanisms. The `v_employee_directory` dynamically conceals binned employees. Permanent purge necessitates validation on bin history (`fn_delete_employee_permanent_requires_recycle_bin`).
+| Metric | Result |
+| --- | --- |
+| Throughput | **586 req/s** sustained, **0 failures** |
+| Headroom | **~6×** (500 active users generate only ~60–90 req/s) |
+| Latency (p50) | **577 ms** under 500 concurrent |
+| Gain vs baseline | **172 → 586 req/s (3.4×)** after 4 uvicorn workers + PDF generation moved off the event loop |
 
-## Repository guides
+## Repository layout
 
-- [`Client/CLIENT_README.md`](./Client/CLIENT_README.md)
-- [`Server/SERVER_README.md`](./Server/SERVER_README.md)
-- [`Server/db/migrations/v2/README.md`](./Server/db/migrations/v2/README.md)
-- [`TelemetryServer/TELEMETRY_SERVER_README.md`](./TelemetryServer/TELEMETRY_SERVER_README.md)
-- [`TelemetryServer/db/migrations/README.md`](./TelemetryServer/db/migrations/README.md)
-- [`Telemetry.plan.md`](./Telemetry.plan.md)
-- [`Notes/Android-Supabase-Auth-Setup.md`](./Notes/Android-Supabase-Auth-Setup.md)
+| Folder | Contains |
+| --- | --- |
+| `Client/` | React + Vite + TypeScript SPA |
+| `Server/` | FastAPI app, asyncpg pool, versioned `/api/v1/*` routers |
+| `DB/` | `init.sql` full schema |
+| `Observability/` | otel-lgtm stack docs |
+| `Notes/` | Product + authNexus reference docs |
+
+## Domain rules (essentials)
+
+- **Roles:** `employee`, `admin`, `it_ops` (server `core/authz.py`). Anything but `employee` is privileged.
+- **Asset status:** `in_stock`, `assigned`, `in_repair`, `retired`, `lost`, `disposed`.
+- **Asset tags:** auto-generated `AST-#####` in Postgres.
+- **Public scan:** `/scan/:tag` (no auth) shows limited details; `/assets/scan/:tag` (authed) routes to
+  the asset or its create form.
+- **Audit:** every asset mutation (create/edit/assign/return/status/department) is recorded.
+
+## Quick start (Docker)
+
+```bash
+cd assetmanager
+# fill .env with POSTGRES_*, VITE_*, AUTH_*, FRONTEND_URL, ALLOWED_ORIGINS, ports
+docker compose up --build -d
+```
+
+Client `:11000` · API `:11100` · Grafana `:11200` (see `.env`). Provision one employee with
+`role='admin'` or `'it_ops'` for privileged routes.
 
 ## Local development
 
-### Client
-
-Create `Client/.env` (start from `Client/.env.example`), then run:
-
 ```bash
-cd Client
-npm install
-npm run dev
+# DB
+psql -U postgres -c "CREATE DATABASE assetmanager_db;"
+psql -U postgres -d assetmanager_db -f DB/init.sql
+
+# Server
+cd Server && cp .env.example .env && pip install -r requirements.txt
+uvicorn main:app --reload --port 8000
+
+# Client
+cd Client && cp .env.example .env && npm install && npm run dev   # http://localhost:5174
 ```
 
-### Server
+## Key environment variables
 
-Create `Server/.env` (start from `Server/.env.example`), then run:
+| Variable | Side | Purpose |
+| --- | --- | --- |
+| `POSTGRES_*` / `DATABASE_URL` | Server | Postgres connection |
+| `AUTH_ENABLED` | Server | Enable JWT validation |
+| `AUTH_JWKS_URL` / `AUTH_ISSUER` / `AUTH_AUDIENCE` | Server | JWT verify (`aud` must match token or 401) |
+| `AUTH_AUTHORITY` | Server | authNexus base URL (used by `/api/auth/refresh`) |
+| `FRONTEND_URL` / `ALLOWED_ORIGINS` | Server | QR PDF origin · CORS |
+| `NOTIFICATIONS_ENABLED` | Server | Email microservice calls |
+| `VITE_API_URL` | Client | API base URL |
+| `VITE_AUTH_AUTHORITY` / `VITE_CLIENT_ID` / `VITE_PROJECT_ID` | Client | OIDC config |
 
-```bash
-cd Server
-pip install -r requirements.txt
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
-```
+## More docs
 
-### TelemetryServer (optional)
-
-Apply `TelemetryServer/db/migrations/001_telemetry_schema.sql` to a dedicated telemetry database first, then run:
-
-```bash
-cd TelemetryServer
-pip install -r requirements.txt
-uvicorn main:app --reload --host 0.0.0.0 --port 8010
-```
-
-## Setup order
-
-1. Configure the client Supabase variables in `Client/.env`.
-2. Create `Server/.env` ensuring all environment properties including telemetry and email settings are provisioned.
-3. Apply AMS migrations mapped in `Server/db/migrations/v2/` iteratively.
-4. Start the client and server.
-5. If telemetry flows are requisite, initialize the telemetry schema, bind `.env` configurations, and spin up `TelemetryServer/`.
-
-## Notes
-
-- The Client currently assumes `https://web-assetmanager.vercel.app` natively for QR scaffolding unless overridden by `VITE_PUBLIC_APP_ORIGIN`.
-- The FastAPI server must have `FRONTEND_URL` corresponding with the Client host for accurate code deployments.
-- Anonymous QR scan limits expose strictly to:
-  - assigned assets: `asset_name`, `holder_name`, `holder_employee_code`, `holder_department`
-  - unassigned assets: `asset_name`, `status`, `asset_tag`
-- Treat the PostgreSQL (`Server/db/migrations/v2/`) RPC schema as your single source of truth when architecture assumptions or documents differ.
+[Client](./Client/CLIENT_README.md) · [Server](./Server/SERVER_README.md) ·
+[Database](./DB/README.md) · [Observability](./Observability/OBSERVABILITY_TELEMETRY.md) ·
+[Docker](./DOCKER_DEPLOYMENT.md) · load-test detail in `Notes/api-load-test-500-users.md`.

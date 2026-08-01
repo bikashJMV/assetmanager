@@ -1,0 +1,65 @@
+{
+  "$comment": "Asset Management System — loop-kit per-project config. Profile personal + ship checkpoint: agent plans+codes autonomously in small verified steps (Karpathy loop), but a human types approve-ship before any commit; no PR required, one human review then merge.",
+
+  "profile": "personal",
+
+  "prRequired": false,
+
+  "humanCheckpoints": ["ship"],
+
+  "envPrefix": "LOOP_",
+
+  "packageManager": "auto",
+
+  "sourceRoots": ["Client/src", "Server"],
+
+  "sourceExts": ["py", "ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs", "sql"],
+
+  "testGlobs": [
+    "\\.(test|spec)\\.[tj]sx?$",
+    "(^|/)(tests?|__tests__|e2e)/",
+    "(^|/)test_[^/]+\\.py$",
+    "[^/]+_test\\.py$",
+    "(^|/)conftest\\.py$"
+  ],
+
+  "protectedPaths": [
+    "Server/core/auth*.py",
+    "Server/core/authnexus.py",
+    "Server/routers/api_auth.py",
+    "Client/src/utils/authService.ts",
+    "Client/src/utils/authNexus.api.ts",
+    "Client/nginx.conf",
+    "docker-compose.yml",
+    "docker-compose.override.yml",
+    "DB/**",
+    "prod_schema.sql"
+  ],
+  "$comment_protectedPaths": "Auth/BFF stack, reverse proxy, compose, and DB dumps are human-owned. Bypass per-edit with LOOP_OFFLIMITS=ack.",
+
+  "protectedBranches": ["main", "master", "dev"],
+
+  "verify": {
+    "python": ["pytest -q"],
+    "frontend": ["npm run build", "npm run lint", "npm test"]
+  },
+  "$comment_verify": "Server: pytest only for now — ruff/mypy not configured in this repo yet; add here once adopted (they will then FAIL LOUD if missing, by design). Client: build includes tsc -b typecheck. Client commands run in Client/ (package.json lives there, not repo root).",
+
+  "verifyDirtyPaths": [],
+
+  "integrations": {
+    "docker": "auto",
+    "husky": "auto",
+    "codeowners": "auto",
+    "migrations": { "enabled": "auto", "dir": "migrations", "testDir": "Server/tests" }
+  },
+
+  "conventions": {
+    "apiContract": true,
+    "uiStates": true,
+    "banAny": true,
+    "banThen": true,
+    "maxComponentLines": 200
+  },
+  "$comment_conventions": "apiContract = THIS repo's envelope (see rules/api-standards.md): status is the string 'success'|'error', not a boolean. maxComponentLines=200 applies CODEBASE-WIDE (user directive 2026-07-18), not just new files. Existing violations tracked in .claude/context/rule-debt.md (39 files >200 lines at baseline); burn down incrementally — one file per iteration, build + e2e green after each, no blind mass-refactor."
+}

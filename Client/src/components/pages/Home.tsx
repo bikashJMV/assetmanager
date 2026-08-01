@@ -50,10 +50,10 @@ export default function Home({ isAuthenticated = false }: { isAuthenticated?: bo
 
   return (
     <>
-      <main className="min-h-screen  text-[#0A0A0A] mb-10">
+      <main className="min-h-screen text-primary mb-10">
         <HomeHero isAuthenticated={isAuthenticated} />
 
-        {error ? <p className="pb-3 text-center text-sm text-[#F04E0F]">{error}</p> : null}
+        {error ? <p className="pb-3 text-center text-sm text-accent">{error}</p> : null}
 
         <div className="mx-auto w-full max-w-[1100px] px-4 py-6 sm:px-6 lg:px-7">
           <section className="hidden xl:block">

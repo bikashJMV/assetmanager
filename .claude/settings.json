@@ -38,7 +38,8 @@
       "PowerShell($p = \"$env:ProgramFiles\\\\Docker\\\\Docker\\\\Docker Desktop.exe\"; if \\(Test-Path $p\\) { Start-Process $p; \"launching\" } else { \"not found: $p\" })",
       "Bash(docker rm *)",
       "Bash(curl -s -o /dev/null -w \"client:%{http_code} \" http://localhost:11000/)",
-      "Bash(curl -s -o /dev/null -w \"server:%{http_code}\\\\n\" http://localhost:11100/api/health)"
+      "Bash(curl -s -o /dev/null -w \"server:%{http_code}\\\\n\" http://localhost:11100/api/health)",
+      "Bash(npx vite *)"
     ],
     "deny": [
       "Bash(git push --force*)",

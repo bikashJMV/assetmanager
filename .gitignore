@@ -26,11 +26,11 @@ EVALUATION_SCORECARD.md
 .env.production
 .env.local
 docker-compose.override.yml
-logs/
+/logs/
 *.log
-logs/**
-logs/ams_server.log
-logs/telemetry_server.log
+/logs/**
+/logs/ams_server.log
+/logs/telemetry_server.log
 .env.observability
 .env.production
 logs.txt

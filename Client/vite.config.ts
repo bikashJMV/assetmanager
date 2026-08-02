@@ -41,6 +41,7 @@ export default defineConfig(({ mode }) => {
         manualChunks: {
           react: ['react', 'react-dom', 'react-router-dom'],
           qr: ['qrcode'],
+          three: ['three'],
           xlsx: ['@e965/xlsx'],
           vendor: ['axios', '@tanstack/react-query', 'oidc-client-ts'],
           otel: [

@@ -9,6 +9,8 @@ import OverviewKpisBox from '../home/OverviewKpisBox'
 import QuickFactsRow from '../home/QuickFactsRow'
 import RightAccessBox from '../home/RightAccessBox'
 import ShipAnythingBox from '../home/ShipAnythingBox'
+import DashboardContent from './dashboard/DashboardContent'
+import DashboardDiorama from './dashboard/DashboardDiorama'
 
 export default function Home({ isAuthenticated = false }: { isAuthenticated?: boolean }) {
   const [publicSummary, setPublicSummary] = useState<PublicDashboardSummary | null>(null)
@@ -55,6 +57,13 @@ export default function Home({ isAuthenticated = false }: { isAuthenticated?: bo
 
         {error ? <p className="pb-3 text-center text-sm text-accent">{error}</p> : null}
 
+        <DashboardDiorama isAuthenticated={isAuthenticated} />
+
+        {isAuthenticated ? <DashboardContent isAuthenticated={isAuthenticated} /> : null}
+
+        {/* Guests keep the original marketing sections; signed-in users get the
+            operational dashboard above instead. */}
+        {isAuthenticated ? null : (
         <div className="mx-auto w-full max-w-[1100px] px-4 py-6 sm:px-6 lg:px-7">
           <section className="hidden xl:block">
             <div className="mx-auto max-w-[1180px] space-y-6">
@@ -100,6 +109,7 @@ export default function Home({ isAuthenticated = false }: { isAuthenticated?: bo
             ]}
           />
         </div>
+        )}
       </main>
       <Footer />
     </>

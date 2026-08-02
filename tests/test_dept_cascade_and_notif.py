@@ -30,11 +30,12 @@ def _employees(api: httpx.Client, token: str) -> list[dict]:
 def test_department_cascade_logged_on_asset(api: httpx.Client, admin_session: dict) -> None:
     token = admin_session["access_token"]
 
-    emp = next((e for e in _employees(api, token) if e.get("id") and e.get("employee_id")), None)
+    # Strictly the dummy user for any assign/return — never a real employee.
+    emp = next((e for e in _employees(api, token) if e.get("employee_id") == "owWorkAdmin"), None)
     if emp is None:
-        pytest.skip("no employee available")
+        pytest.skip("owWorkAdmin (assign/return test user) not available")
 
-    # create an asset and assign it to the employee
+    # create an asset and assign it to the dummy user
     cr = api.post(
         "/api/v1/assets",
         headers=bearer(token),

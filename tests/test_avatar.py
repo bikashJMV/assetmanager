@@ -40,7 +40,10 @@ def test_avatar_put_get_delete_roundtrip(api: httpx.Client, admin_session: dict)
 
         d = api.request("DELETE", "/api/v1/employees/me/avatar", headers=bearer(token))
         assert d.status_code == 200
-        assert api.get("/api/v1/employees/me/avatar", headers=bearer(token)).status_code == 404
+        # No avatar is a normal empty state, not an error: 200 with data:null.
+        after = api.get("/api/v1/employees/me/avatar", headers=bearer(token))
+        assert after.status_code == 200
+        assert after.json()["data"] is None
     finally:
         _cleanup(api, token)
 

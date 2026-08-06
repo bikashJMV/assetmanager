@@ -45,22 +45,6 @@ export async function getEmployeePortfolio(id: string): Promise<EmployeePortfoli
   })
 }
 
-/** Create a new employee (admin/it_ops only). */
-export async function createEmployee(input: Omit<EmployeeUpsertInput, 'id'>): Promise<EmployeeRecord> {
-  return apiRequest<EmployeeRecord>({
-    method: 'POST',
-    url: '/api/v1/employees',
-    data: {
-      employee_id: input.employee_id.trim(),
-      name: input.name.trim(),
-      email: input.email?.trim() || null,
-      department: input.department?.trim() || null,
-      role: input.role ?? 'employee',
-      is_active: input.is_active ?? true,
-    },
-  })
-}
-
 /** Update an existing employee (admin/it_ops only). */
 export async function updateEmployee(id: string, input: Omit<EmployeeUpsertInput, 'id'>): Promise<EmployeeRecord> {
   return apiRequest<EmployeeRecord>({
@@ -83,14 +67,6 @@ export async function changeEmployeeRole(id: string, role: EmployeeRole): Promis
     method: 'PATCH',
     url: `/api/v1/employees/${encodeURIComponent(id)}/role`,
     data: { role },
-  })
-}
-
-/** Soft-delete an employee — moves to Recycle Bin (admin/it_ops only). */
-export async function softDeleteEmployee(id: string): Promise<{ employee_id: string; recycle_bin_id: string }> {
-  return apiRequest<{ employee_id: string; recycle_bin_id: string }>({
-    method: 'POST',
-    url: `/api/v1/employees/${encodeURIComponent(id)}/soft-delete`,
   })
 }
 

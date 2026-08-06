@@ -2,6 +2,7 @@ import axios from 'axios'
 import type { AxiosError, AxiosInstance, AxiosRequestConfig, AxiosResponse, InternalAxiosRequestConfig } from 'axios'
 
 import { clearAuthNexusAccessToken, getAuthNexusAccessToken, setAuthNexusAccessToken, userManager, registerSilentRefreshCallback } from './authService'
+import { describeError, devLog, devWarn, errorLog } from './devLog'
 
 type FailedQueueEntry = {
   resolve: (token: string | null) => void
@@ -45,20 +46,33 @@ const processQueue = (error: unknown, token: string | null = null) => {
   failedQueue = []
 }
 
-const refreshTokenViaBFF = async (): Promise<string> => {
+export const refreshTokenViaBFF = async (): Promise<string> => {
+  devLog('[authNexus][refreshTokenViaBFF] STEP 1 - calling POST /api/auth/refresh...')
+
   const response = await fetch(`/api/auth/refresh`, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
   })
 
+  devLog('[authNexus][refreshTokenViaBFF] STEP 1 response status:', response.status)
+
   if (!response.ok) {
+    // Body deliberately not read or logged - an error envelope can echo token material.
+    errorLog('[authNexus][refreshTokenViaBFF] FAILED STEP 1 - /api/auth/refresh returned', response.status)
     throw new Error(`Token refresh failed: ${response.status}`)
   }
 
   const data = await response.json()
+  devLog('[authNexus][refreshTokenViaBFF] STEP 2 - has_access_token:', !!data.access_token)
+
   const newAccessToken: string = data.access_token
   const expiresIn: number = data.expires_in ?? 900
+
+  if (!newAccessToken) {
+    errorLog('[authNexus][refreshTokenViaBFF] FAILED STEP 2 - access_token missing in refresh response')
+    throw new Error('No access_token in refresh response')
+  }
 
   setAuthNexusAccessToken(newAccessToken)
 
@@ -67,6 +81,9 @@ const refreshTokenViaBFF = async (): Promise<string> => {
     user.access_token = newAccessToken
     user.expires_at = Math.floor(Date.now() / 1000) + expiresIn
     await userManager.storeUser(user)
+    devLog('[authNexus][refreshTokenViaBFF] STEP 3 OK - token stored.')
+  } else {
+    devWarn('[authNexus][refreshTokenViaBFF] STEP 3 WARNING - no OIDC user in session to update.')
   }
 
   return newAccessToken
@@ -141,12 +158,12 @@ api.interceptors.request.use(async (config) => {
     isRefreshing = true
 
     try {
-      console.log("[authNexus.api] REQUEST INTERCEPTOR: Token expired or expiring - calling refreshTokenViaBFF()");
+      devLog("[authNexus.api] REQUEST INTERCEPTOR: token expiring - refreshing");
       const newToken = await refreshTokenViaBFF()
       processQueue(null, newToken)
       user = await userManager.getUser()
     } catch (err) {
-      console.error("[authNexus.api] REQUEST INTERCEPTOR: Failed to refresh token -", err);
+      errorLog("[authNexus.api] REQUEST INTERCEPTOR: failed to refresh token -", describeError(err));
       processQueue(err, null)
       clearAuthNexusAccessToken()
     } finally {
@@ -186,14 +203,14 @@ api.interceptors.response.use(
       isRefreshing = true
 
       try {
-        console.log("[authNexus.api] RESPONSE INTERCEPTOR: 401 error - calling refreshTokenViaBFF() to refresh");
+        devLog("[authNexus.api] RESPONSE INTERCEPTOR: 401 - refreshing");
         const newToken = await refreshTokenViaBFF()
         processQueue(null, newToken)
         originalRequest.headers.set('Authorization', `Bearer ${newToken}`)
         return api(originalRequest)
       } catch (refreshError) {
-        console.error("[authNexus.api] RESPONSE INTERCEPTOR: Failed to refresh token -", refreshError);
-        console.log("[authNexus.api] RESPONSE INTERCEPTOR: Calling removeUser() and redirecting to /login");
+        errorLog("[authNexus.api] RESPONSE INTERCEPTOR: failed to refresh token -", describeError(refreshError));
+        devLog("[authNexus.api] RESPONSE INTERCEPTOR: signing out and redirecting to /login");
         processQueue(refreshError, null)
         await userManager.removeUser()
         clearAuthNexusAccessToken()
@@ -272,7 +289,10 @@ function toErrorMessage(error: unknown, fallback: string): Error {
 export function getErrorStatusCode(error: unknown): number | undefined {
   if (error == null) return undefined
   // Augmented errors from toErrorMessage / unwrapEnvelope
-  if (typeof (error as any).statusCode === 'number') return (error as any).statusCode
+  if (typeof error === 'object' && 'statusCode' in error) {
+    const { statusCode } = error as { statusCode?: unknown }
+    if (typeof statusCode === 'number') return statusCode
+  }
   // Raw AxiosError (e.g. 404 that didn't pass through unwrapEnvelope)
   if (axios.isAxiosError(error)) return error.response?.status
   return undefined

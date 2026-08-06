@@ -1,48 +1,39 @@
-import AnimatedNavIcon from './AnimatedNavIcon'
+import { AppIcon, Button } from '../ui'
 
-interface IdleWarningModalProps {
-  onStayLoggedIn: () => void
-  onLogoutNow: () => void
-}
+/**
+ * Inactivity warning (Notes/UI.md modal spec). Slides bottom→center. Offers Stay (keep the
+ * session) or Logout, and shows the remaining seconds before automatic logout.
+ */
+export function IdleWarningModal({
+  open,
+  secondsLeft,
+  onStay,
+  onLogout,
+}: {
+  open: boolean
+  secondsLeft: number
+  onStay: () => void
+  onLogout: () => void
+}) {
+  if (!open) return null
 
-export default function IdleWarningModal({ onStayLoggedIn, onLogoutNow }: IdleWarningModalProps) {
   return (
-    <div className="fixed inset-0 z-[100] overflow-y-auto bg-black/55 backdrop-blur-sm">
-      <div className="flex min-h-full items-center justify-center px-4 py-6 sm:py-10">
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="idle-warning-title"
-          aria-describedby="idle-warning-description"
-          className="relative w-full max-w-md rounded-2xl border border-base bg-app p-5 shadow-[0_20px_60px_rgba(0,0,0,0.22)] sm:p-6"
-        >
-          <div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-full bg-[color:var(--accent-soft)] text-accent">
-            <AnimatedNavIcon name="logout" />
-          </div>
-
-          <h3 id="idle-warning-title" className="mb-1 text-center text-base font-bold text-primary sm:text-lg">
-            Are you still there?
-          </h3>
-          <p id="idle-warning-description" className="mb-5 text-center text-sm leading-relaxed text-muted">
-            You have been inactive for a while. For your security, we will log you out soon.
-          </p>
-
-          <div className="flex flex-col gap-2">
-            <button
-              type="button"
-              onClick={onStayLoggedIn}
-              className="w-full rounded-lg bg-accent px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-accent-hover"
-            >
-              Yes, stay logged in
-            </button>
-            <button
-              type="button"
-              onClick={onLogoutNow}
-              className="w-full rounded-lg border border-base bg-surface px-4 py-2.5 text-sm font-medium text-primary transition hover:bg-surface-3"
-            >
-              Logout now
-            </button>
-          </div>
+    <div className="fixed inset-0 z-[120] flex items-end justify-center p-4 sm:items-center" role="dialog" aria-modal="true" aria-labelledby="idle-title">
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-[2px]" />
+      <div className="ams-idle-in relative w-full max-w-sm rounded-lg border border-line bg-surface p-6 text-center shadow-lg">
+        <span className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full" style={{ backgroundColor: 'hsl(var(--warning) / 0.14)', color: 'hsl(var(--warning))' }}>
+          <AppIcon name="warning" size={24} />
+        </span>
+        <h2 id="idle-title" className="text-[length:var(--text-lg)] font-semibold text-foreground">You are not active</h2>
+        <p className="mt-1 text-[length:var(--text-sm)] text-foreground-muted">
+          Still there? For your security you will be signed out automatically.
+        </p>
+        <p className="mt-3 text-[length:var(--text-sm)] font-medium text-foreground">
+          Auto logout in <span className="tabular-nums font-bold" style={{ color: 'hsl(var(--danger))' }}>{secondsLeft}s</span>
+        </p>
+        <div className="mt-6 grid grid-cols-2 gap-3">
+          <Button variant="secondary" icon="signOut" onClick={onLogout}>Log out</Button>
+          <Button variant="primary" onClick={onStay}>Stay signed in</Button>
         </div>
       </div>
     </div>

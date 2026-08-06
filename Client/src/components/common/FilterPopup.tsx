@@ -68,7 +68,7 @@ export default function FilterPopup({
               <div className="flex flex-wrap items-center gap-2">
                 <h2 className="text-lg font-semibold text-primary sm:text-xl">{title}</h2>
                 {activeCount > 0 ? (
-                  <span className="inline-flex min-w-[1.5rem] items-center justify-center rounded-full bg-accent px-2 py-0.5 text-xs font-semibold text-white">
+                  <span className="inline-flex min-w-[1.5rem] items-center justify-center rounded-full bg-accent px-2 py-0.5 text-xs font-semibold text-on-accent">
                     {activeCount}
                   </span>
                 ) : null}
@@ -117,7 +117,7 @@ export default function FilterPopup({
                 type="button"
                 onClick={onApply}
                 disabled={applyDisabled}
-                className="inline-flex h-11 items-center justify-center rounded-xl bg-accent px-5 text-sm font-semibold text-white transition hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-60"
+                className="inline-flex h-11 items-center justify-center rounded-xl bg-accent px-5 text-sm font-semibold text-on-accent transition hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {applyLabel}
               </button>

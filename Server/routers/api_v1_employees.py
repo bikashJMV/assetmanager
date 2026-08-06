@@ -7,15 +7,18 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, Query, status
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, EmailStr, field_validator
+from pydantic import BaseModel, field_validator
 
 from core.api_response import error_response, success_response
 from core.authnexus import EmployeeContext
 from core.authz import require_authenticated, require_privileged
 from repositories.db import pool
+from repositories.assignment_repository import AssignmentRepository
 from repositories.employee_repository import EmployeeRepository
 from repositories.errors import ConflictError, NotFoundError, ValidationError
+from services.audit_service import AssetEventType, audit_service
 from services.authnexus_service import AuthNexusClient
+from services.avatar_service import avatar_service, AvatarTooLargeError
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +101,83 @@ async def get_session_employee(
         )
     except Exception as exc:
         return _json_error(500, message="Failed to retrieve session employee.", code="INTERNAL_ERROR", details=str(exc))
+
+
+class AvatarUploadBody(BaseModel):
+    image_base64: str
+    mime_type: str
+
+
+@router.get("/me/avatar")
+async def get_my_avatar(
+    employee: EmployeeContext = Depends(require_authenticated),
+) -> JSONResponse:
+    """
+    Purpose: Return the caller's own profile image (base64).
+    Method/Route: GET /api/v1/employees/me/avatar
+    Response: 200 envelope `{data:{image_base64, mime_type, updated_at}}`, or 200 with `data:null`
+        when no image is set; 500 on error.
+    Notes: Authenticated; own record only. "No avatar" is a normal empty state, not an error — it
+        answers 200/`data:null` so a fresh profile does not surface as a 404 failure in logs/devtools.
+    """
+    try:
+        data = await avatar_service.get(employee.id)
+        if not data:
+            return JSONResponse(
+                status_code=status.HTTP_200_OK,
+                content=success_response(message="No profile image set.", data=None, status_code=200),
+            )
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content=success_response(message="Profile image retrieved.", data=data, status_code=200),
+        )
+    except Exception as exc:
+        return _json_error(500, message="Failed to retrieve profile image.", code="INTERNAL_ERROR", details=str(exc))
+
+
+@router.put("/me/avatar")
+async def set_my_avatar(
+    body: AvatarUploadBody,
+    employee: EmployeeContext = Depends(require_authenticated),
+) -> JSONResponse:
+    """
+    Purpose: Upsert the caller's own profile image.
+    Method/Route: PUT /api/v1/employees/me/avatar
+    Request: `{image_base64, mime_type}`; server enforces <=50 KB (decoded) + PNG/JPEG/WebP.
+    Response: 200 envelope `{data:{byte_size}}`; 413 too large; 400 invalid/unsupported; 500 on error.
+    Notes: Authenticated; own record only.
+    """
+    try:
+        size = await avatar_service.set(employee.id, body.image_base64, body.mime_type)
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content=success_response(message="Profile image updated.", data={"byte_size": size}, status_code=200),
+        )
+    except AvatarTooLargeError as exc:
+        return _json_error(413, message=str(exc), code="PAYLOAD_TOO_LARGE")
+    except ValidationError as exc:
+        return _json_error(400, message=str(exc), code="VALIDATION_ERROR")
+    except Exception as exc:
+        return _json_error(500, message="Failed to update profile image.", code="INTERNAL_ERROR", details=str(exc))
+
+
+@router.delete("/me/avatar")
+async def delete_my_avatar(
+    employee: EmployeeContext = Depends(require_authenticated),
+) -> JSONResponse:
+    """
+    Purpose: Remove the caller's own profile image.
+    Method/Route: DELETE /api/v1/employees/me/avatar
+    Response: 200 envelope; 500 on error. Notes: Authenticated; own record only.
+    """
+    try:
+        await avatar_service.delete(employee.id)
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content=success_response(message="Profile image removed.", data=None, status_code=200),
+        )
+    except Exception as exc:
+        return _json_error(500, message="Failed to remove profile image.", code="INTERNAL_ERROR", details=str(exc))
 
 
 @router.get("")
@@ -223,6 +303,9 @@ async def create_employee(
         
         # Best-effort sync (inline for debugging visibility)
         await _sync_employee_to_auth_nexus(row, is_create=True)
+        # Re-read so the response reflects the linked auth_user_id (the sync links it AFTER
+        # the upsert, so the original `row` still has auth_user_id=None).
+        row = await EmployeeRepository.get_by_id(row.id) or row
 
         return JSONResponse(
             status_code=status.HTTP_201_CREATED,
@@ -331,23 +414,66 @@ async def get_employee(
         return _json_error(500, message="Failed to retrieve employee.", code="INTERNAL_ERROR", details=str(exc))
 
 
+async def _audit_department_cascade(
+    *,
+    actor: EmployeeContext,
+    employee_row_id: str,
+    employee_name: str,
+    before: Optional[str],
+    after: Optional[str],
+) -> None:
+    """Log the department change on every asset the employee currently holds (best-effort).
+
+    Asset department is derived from its holder, so the value already updates; this records the
+    change in each asset's audit trail. Failure here must not fail the employee update.
+    """
+    try:
+        held = await AssignmentRepository.list_held_assets_for_employee(employee_row_id)
+        for asset in held:
+            asset_id = asset["asset_id"]
+            await audit_service.write_asset_event(
+                asset_id=asset_id,
+                event_type=AssetEventType.ASSET_UPDATED,
+                actor=actor,
+                payload={
+                    "asset_tag": asset.get("asset_tag"),
+                    "changes": [
+                        {"field": "department", "label": "Department", "before": before, "after": after}
+                    ],
+                    "reason": "holder_department_changed",
+                    "employee_row_id": employee_row_id,
+                    "employee_name": employee_name,
+                },
+            )
+            await audit_service.write_asset_log(
+                asset_id=asset_id,
+                actor=actor,
+                note=f"Department changed to {after or '—'} (holder {employee_name}'s department updated).",
+                metadata={"op": "employee.department_cascade", "before": before, "after": after},
+            )
+    except Exception:
+        logger.warning("Department cascade audit failed for employee %s", employee_row_id, exc_info=True)
+
+
 @router.put("/{id}")
 async def update_employee(
     id: str,
     body: EmployeeUpsertBody,
-    _: EmployeeContext = Depends(require_privileged),
+    actor: EmployeeContext = Depends(require_privileged),
 ) -> JSONResponse:
     """
     Purpose: Update an existing employee record.
     Method/Route: PUT /api/v1/employees/{id}
     Request: Path `id`; Body `{employee_id, name, email?, department?, role?, is_active?}`.
     Response: 200 envelope `{data:<employee>}`; Errors: 400/404/409/500 envelope.
-    Notes: Privileged only (admin/it_ops).
+    Notes: Privileged only (admin/it_ops). A department change cascades to every asset the
+           employee currently holds (department follows the holder) and is recorded per asset in
+           the audit trail.
     """
     try:
         # Fetch old state to detect changes
         old_row = await EmployeeRepository.get_by_id(id)
-        
+
         row = await EmployeeRepository.upsert(
             record_id=id,
             employee_id=body.employee_id,
@@ -361,9 +487,21 @@ async def update_employee(
         # Detect changes for selective sync
         name_changed = False
         role_changed = False
+        department_changed = False
         if old_row:
             name_changed = (old_row.name != row.name)
             role_changed = (old_row.role != row.role)
+            department_changed = (old_row.department != row.department)
+
+        # Department follows the holder: record the cascade on each held asset's audit trail.
+        if department_changed:
+            await _audit_department_cascade(
+                actor=actor,
+                employee_row_id=id,
+                employee_name=row.name,
+                before=old_row.department if old_row else None,
+                after=row.department,
+            )
 
         # Best-effort sync
         if name_changed or role_changed or not row.auth_user_id:
@@ -425,34 +563,6 @@ async def change_employee_role(
         return _json_error(500, message="Failed to update employee role.", code="INTERNAL_ERROR", details=str(exc))
 
 
-@router.post("/{id}/soft-delete")
-async def soft_delete_employee(
-    id: str,
-    _: EmployeeContext = Depends(require_privileged),
-) -> JSONResponse:
-    """
-    Purpose: Soft-delete an employee (moves to Recycle Bin, hides from directory).
-    Method/Route: POST /api/v1/employees/{id}/soft-delete
-    Request: Path `id` (employee UUID).
-    Response: 200 envelope `{data:{employee_id,recycle_bin_id}}`; Errors: 400/404/500 envelope.
-    Notes: Privileged only; employee must have no open asset assignments.
-    """
-    try:
-        result = await EmployeeRepository.soft_delete(employee_id=id)
-        return JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content=success_response(
-                message="Employee moved to Recycle Bin.",
-                data=result,
-                status_code=200,
-            ),
-        )
-    except NotFoundError as exc:
-        return _json_error(404, message=str(exc), code="NOT_FOUND")
-    except ValidationError as exc:
-        return _json_error(400, message=str(exc), code="VALIDATION_ERROR")
-    except Exception as exc:
-        return _json_error(500, message="Failed to soft-delete employee.", code="INTERNAL_ERROR", details=str(exc))
 async def _bulk_sync_to_auth_nexus(rows: list[Any]):
     """
     Concurrent best-effort sync for bulk imports.

@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException, status
 from pydantic import BaseModel
 
 from core.settings import settings
-from core.auth import require_it_ops_access
+from core.authz import require_it_ops
 
 router = APIRouter(prefix="/observability/logs", tags=["Observability"])
 
@@ -30,7 +30,7 @@ async def get_logs(
     service: str = Query("all", description="'ams-server', 'telemetry-server', or 'all'"),
     level: str = Query("", description="error, warn, info, debug"),
     cursor: str = Query("", description="For forward pagination"),
-    _=Depends(require_it_ops_access)
+    _=Depends(require_it_ops)
 ):
     """
     Purpose: Query Loki and return recent logs for IT Ops troubleshooting.
@@ -54,28 +54,27 @@ async def get_logs(
     if not end:
         end = int(time.time() * 1_000_000_000)
 
-    # Map frontend levels to Loki labels extracted by Alloy
-    # Note: Alloy regex captures uppercase, so we match uppercase labels
+    # OTLP → lgtm pipeline exposes the Python levelname as the `severity_text` structured
+    # metadata field (INFO/WARNING/ERROR/DEBUG/CRITICAL); the indexed label is `service_name`.
     LEVEL_MAP = {
         "error": "ERROR",
         "warn": "WARNING",
         "info": "INFO",
-        "debug": "DEBUG"
+        "debug": "DEBUG",
     }
-    
+
+    # Level is structured metadata, filtered after the stream selector via a metadata matcher.
     level_selector = ""
     if level:
-        loki_level = LEVEL_MAP.get(level.lower())
-        if loki_level:
-            level_selector = f', level=~"(?i){loki_level}"'
+        severity = LEVEL_MAP.get(level.lower())
+        if severity:
+            level_selector = f' | severity_text=~"(?i){severity}"'
 
-    # Build LogQL query using label selectors (faster than line filtering)
-    if service == "ams-server":
-        logql = f'{{service="ams-server"{level_selector}}}'
-    elif service == "telemetry-server":
-        logql = f'{{service="telemetry-server"{level_selector}}}'
+    # Build LogQL: indexed `service_name` stream selector (fast) + optional metadata filter.
+    if service in ("ams-server", "telemetry-server"):
+        logql = f'{{service_name="{service}"}}{level_selector}'
     else:
-        logql = f'{{service=~"ams-server|telemetry-server"{level_selector}}}'
+        logql = f'{{service_name=~"ams-server|telemetry-server"}}{level_selector}'
 
     direction = "backward"
 
@@ -98,7 +97,7 @@ async def get_logs(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Error querying Loki: {str(e)}"
         )
-    except Exception as e:
+    except Exception:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Unexpected error communicating with log backend"
@@ -110,24 +109,29 @@ async def get_logs(
     
     for stream in results:
         stream_labels = stream.get("stream", {})
-        svc = stream_labels.get("service", "unknown")
-        
+        svc = stream_labels.get("service_name", "unknown")
+        # severity_text carries the Python levelname from the OTLP pipeline.
+        stream_level = (stream_labels.get("severity_text") or "").upper()
+
         for val in stream.get("values", []):
-            if len(val) != 2:
+            if len(val) < 2:
                 continue
             ts_ns = val[0]
             log_line = val[1]
-            
-            # Detect log level by scanning keywords
-            line_upper = log_line.upper()
+
+            # Prefer the structured severity; fall back to scanning the line text.
             detected_level = "INFO"
-            if "ERROR" in line_upper:
-                detected_level = "ERROR"
-            elif "WARN" in line_upper or "WARNING" in line_upper:
-                detected_level = "WARN"
-            elif "DEBUG" in line_upper:
-                detected_level = "DEBUG"
-                
+            if stream_level:
+                detected_level = "WARN" if stream_level.startswith("WARN") else stream_level
+            else:
+                line_upper = log_line.upper()
+                if "ERROR" in line_upper:
+                    detected_level = "ERROR"
+                elif "WARN" in line_upper:
+                    detected_level = "WARN"
+                elif "DEBUG" in line_upper:
+                    detected_level = "DEBUG"
+
             # Convert nanoseconds to ISO 8601 string
             try:
                 ts_sec = int(ts_ns) / 1_000_000_000

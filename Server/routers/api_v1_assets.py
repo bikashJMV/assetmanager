@@ -1,24 +1,28 @@
 from __future__ import annotations
 
+import logging
+import time
 from datetime import datetime
 from typing import Any, Optional
 from repositories.db import pool, fetchrow_dict, fetch_dicts
 from fastapi import APIRouter, Depends, Query, Request, Response, status
 from fastapi.responses import JSONResponse, StreamingResponse
+from starlette.concurrency import run_in_threadpool
 
 from core.api_response import error_response, success_response
 from core.authnexus import EmployeeContext
-from core.authz import require_admin, require_authenticated, require_privileged
+from core.authz import require_authenticated, require_privileged
 from core.settings import settings
 from repositories.asset_detail_repository import AssetDetailRepository
 from repositories.asset_repository import AssetRepository
 from repositories.errors import NotFoundError, ValidationError
 from schemas.asset import AssetCreate, AssetQrLabelsExportRequest, AssetUpdate
-from schemas.asset_admin import SoftDeleteAssetRequest
 from services.asset_service import asset_service
 from services.asset_csv_export_service import asset_csv_export_service
 from services.qr_label_pdf_service import qr_label_pdf_service
 from services.audit_trail_pdf_service import AuditTrailPdfAssetHeader, audit_trail_pdf_service
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/assets", tags=["Assets (v1)"])
 
@@ -112,159 +116,19 @@ def _json_error(status_code: int, *, message: str, code: str, details: str | Non
         ),
     )
 
-@router.get("/recycle-bin")
-async def list_recycle_bin(
-    employee: EmployeeContext = Depends(require_privileged),
-) -> JSONResponse:
-    """
-    Purpose: List all entries in the recycle bin (deleted assets/employees).
-    Method/Route: GET /api/v1/assets/recycle-bin
-    Response: 200 Guideline envelope `{data:[{id, type, name, ...}]}`; Errors: 500 envelope.
-    Notes: Privileged only.
-    """
-    try:
-        rows = await AssetRepository.list_recycle_bin_entries()
-        return JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content=success_response(
-                message="Recycle bin entries retrieved successfully.",
-                data=rows,
-                status_code=200,
-            ),
-        )
-    except Exception as exc:
-        return _json_error(500, message="Failed to retrieve recycle bin.", code="INTERNAL_ERROR", details=str(exc))
-
-
-@router.post("/recycle-bin/{entry_id}/restore")
-async def restore_recycle_bin_entry(
-    entry_id: str,
-    request: Request,
-    employee: EmployeeContext = Depends(require_privileged),
-) -> JSONResponse:
-    """
-    Purpose: Restore a soft-deleted entity (asset/employee) from the recycle bin.
-    Method/Route: POST /api/v1/assets/recycle-bin/{entry_id}/restore
-    Response: 200 Guideline envelope `{data:{asset_id, recycle_bin_id}}`; Errors: 400/404/500 envelope.
-    Notes: Privileged only.
-    """
-    try:
-        from repositories.recycle_bin_repository import RecycleBinRepository
-        entry = await RecycleBinRepository.get_entry(entry_id)
-        if not entry:
-            return _json_error(404, message="Recycle bin entry not found.", code="NOT_FOUND")
-
-        entity_type = entry.get("entity_type")
-
-        if entity_type == "asset":
-            request_id = getattr(request.state, "request_id", None)
-            ip_address = request.client.host if request.client else None
-            user_agent = request.headers.get("user-agent")
-
-            result = await asset_service.restore_asset(
-                asset_id=entry["entity_id"],
-                recycle_bin_id=entry_id,
-                actor=employee,
-                request_id=request_id,
-                ip_address=ip_address,
-                user_agent=user_agent,
-            )
-
-            return JSONResponse(
-                status_code=status.HTTP_200_OK,
-                content=success_response(
-                    message="Asset restored successfully.",
-                    data=result,
-                    status_code=200,
-                ),
-            )
-
-        elif entity_type == "employee":
-            from repositories.employee_repository import EmployeeRepository
-            await EmployeeRepository.restore_from_payload(entry["payload"])
-            await RecycleBinRepository.mark_restored(
-                recycle_bin_id=entry_id,
-                restored_by_employee_id=employee.id,
-            )
-            return JSONResponse(
-                status_code=status.HTTP_200_OK,
-                content=success_response(
-                    message="Employee restored successfully.",
-                    data={"employee_id": entry["entity_id"], "recycle_bin_id": entry_id},
-                    status_code=200,
-                ),
-            )
-
-        else:
-            return _json_error(400, message=f"Unsupported entity type: {entity_type}", code="UNSUPPORTED_ENTITY_TYPE")
-
-    except ValidationError as exc:
-        return _json_error(400, message=str(exc), code="VALIDATION_ERROR")
-    except Exception as exc:
-        return _json_error(500, message="Failed to restore entry.", code="INTERNAL_ERROR", details=str(exc))
-
-
-@router.delete("/recycle-bin/{entry_id}")
-async def delete_recycle_bin_entry_permanent(
-    entry_id: str,
-    employee: EmployeeContext = Depends(require_privileged),
-) -> JSONResponse:
-    """
-    Purpose: Permanently delete an entity from the recycle bin (hard delete).
-    Method/Route: DELETE /api/v1/assets/recycle-bin/{entry_id}
-    Response: 200 Guideline envelope; Errors: 404/500 envelope.
-    Notes: Privileged only.
-    """
-    try:
-        from repositories.recycle_bin_repository import RecycleBinRepository
-        entry = await RecycleBinRepository.get_entry(entry_id)
-        if not entry:
-            return _json_error(404, message="Recycle bin entry not found.", code="NOT_FOUND")
-
-        async with pool().acquire() as conn:
-            async with conn.transaction():
-                # Step 1 — delete from the actual underlying table
-                if entry["entity_type"] == "asset":
-                    await conn.execute(
-                        "DELETE FROM assets WHERE id = $1::uuid",
-                        entry["entity_id"]
-                    )
-                elif entry["entity_type"] == "employee":
-                    await conn.execute(
-                        "DELETE FROM employees WHERE id = $1::uuid",
-                        entry["entity_id"]
-                    )
-
-                # Step 2 — remove from recycle bin
-                await conn.execute(
-                    "DELETE FROM recycle_bin_entries WHERE id = $1::uuid",
-                    entry_id
-                )
-
-        return JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content=success_response(
-                message="Entry permanently deleted.",
-                data={"entry_id": entry_id},
-                status_code=200,
-            ),
-        )
-    except Exception as exc:
-        return _json_error(500, message="Failed to delete entry permanently.", code="INTERNAL_ERROR", details=str(exc))
-
-
 @router.get("/next-tag")
 async def get_next_asset_tag(
+    category_slug: str = Query(..., min_length=1),
     employee: EmployeeContext = Depends(require_privileged),
 ) -> JSONResponse:
     """
-    Purpose: Generate the next available sequential asset tag.
-    Method/Route: GET /api/v1/assets/next-tag
-    Response: 200 Guideline envelope `{data: string}`; Errors: 500 envelope.
-    Notes: Privileged only.
+    Purpose: Preview the next asset tag for a category ('JMV-{alias}-#####') without consuming it.
+    Method/Route: GET /api/v1/assets/next-tag?category_slug=laptop
+    Response: 200 Guideline envelope `{data: string}`; Errors: 404/500 envelope.
+    Notes: Privileged only. Preview only — does not increment the counter.
     """
     try:
-        tag = await AssetRepository.get_next_asset_tag()
+        tag = await AssetRepository.peek_next_asset_tag(category_slug)
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content=success_response(
@@ -289,8 +153,8 @@ async def create_asset(
     Response: 201 Guideline envelope `{data: asset}`; Errors: 400/500 envelope.
     Notes: Privileged only.
     """
+    t0 = time.perf_counter()
     try:
-        request_id = getattr(request.state, "request_id", None)
         ip_address = request.client.host if request.client else None
         user_agent = request.headers.get("user-agent")
 
@@ -304,7 +168,10 @@ async def create_asset(
             qr_reservation_id=qr_reservation_id,
         )
 
-
+        logger.info(
+            "[timing] asset.create tag=%s from_reservation=%s took %.1fms",
+            asset.get("asset_tag"), bool(qr_reservation_id), (time.perf_counter() - t0) * 1000,
+        )
         return JSONResponse(
             status_code=status.HTTP_201_CREATED,
             content=success_response(
@@ -440,9 +307,7 @@ async def public_scan_asset(
         if not asset:
             return _json_error(404, message="Asset not found.", code="NOT_FOUND")
 
-        # Optional: log the scan event (anonymous)
-        user_agent = request.headers.get("user-agent")
-        # In a real system, we'd write to a 'scan_logs' table here.
+        # Optional: log the scan event (anonymous) — placeholder for a future scan_logs table.
 
         return JSONResponse(
             status_code=status.HTTP_200_OK,
@@ -483,23 +348,24 @@ async def update_asset(
         new_asset = result["new"]
         changes = _calculate_changes(old_asset, new_asset)
 
-        # Log to audit trail
-        await audit_service.write_asset_event(
-            asset_id=id,
-            event_type=AssetEventType.ASSET_UPDATED,
-            actor=employee,
-            payload={
-                "op": "asset.update", 
-                "fields": list(payload.keys()),
-                "changes": changes
-            },
-        )
-        await audit_service.write_asset_log(
-            asset_id=id,
-            actor=employee,
-            note=f"Asset details updated via PUT /api/v1/assets/{id}.",
-            metadata={"op": "asset.update", "fields": list(payload.keys())},
-        )
+        # Only record an audit entry when something actually changed (no no-op logs).
+        if changes:
+            await audit_service.write_asset_event(
+                asset_id=id,
+                event_type=AssetEventType.ASSET_UPDATED,
+                actor=employee,
+                payload={
+                    "op": "asset.update",
+                    "fields": [c["field"] for c in changes],
+                    "changes": changes,
+                },
+            )
+            await audit_service.write_asset_log(
+                asset_id=id,
+                actor=employee,
+                note=f"Asset details updated ({', '.join(c['label'] for c in changes)}).",
+                metadata={"op": "asset.update", "fields": [c["field"] for c in changes]},
+            )
 
         return JSONResponse(
             status_code=status.HTTP_200_OK,
@@ -543,23 +409,24 @@ async def update_asset_by_tag(
         new_asset = result["new"]
         changes = _calculate_changes(old_asset, new_asset)
 
-        # Log to audit trail
-        await audit_service.write_asset_event(
-            asset_id=new_asset["id"],
-            event_type=AssetEventType.ASSET_UPDATED,
-            actor=employee,
-            payload={
-                "op": "asset.update_by_tag", 
-                "fields": list(payload.keys()),
-                "changes": changes
-            },
-        )
-        await audit_service.write_asset_log(
-            asset_id=new_asset["id"],
-            actor=employee,
-            note=f"Asset details updated via PATCH /api/v1/assets/tag/{asset_tag}.",
-            metadata={"op": "asset.update_by_tag", "fields": list(payload.keys())},
-        )
+        # Only record an audit entry when something actually changed (no no-op logs).
+        if changes:
+            await audit_service.write_asset_event(
+                asset_id=new_asset["id"],
+                event_type=AssetEventType.ASSET_UPDATED,
+                actor=employee,
+                payload={
+                    "op": "asset.update_by_tag",
+                    "fields": [c["field"] for c in changes],
+                    "changes": changes,
+                },
+            )
+            await audit_service.write_asset_log(
+                asset_id=new_asset["id"],
+                actor=employee,
+                note=f"Asset details updated ({', '.join(c['label'] for c in changes)}).",
+                metadata={"op": "asset.update_by_tag", "fields": [c["field"] for c in changes]},
+            )
 
         return JSONResponse(
             status_code=status.HTTP_200_OK,
@@ -650,110 +517,6 @@ async def create_asset_log(
         )
     except Exception as exc:
         return _json_error(500, message="Failed to create asset log.", code="INTERNAL_ERROR", details=str(exc))
-
-
-@router.post("/assign")
-async def assign_asset(
-    body: dict[str, Any],
-    request: Request,
-    employee: EmployeeContext = Depends(require_privileged),
-) -> JSONResponse:
-    """
-    Purpose: Assign an asset to an employee.
-    Method/Route: POST /api/v1/assets/assign
-    Request: Body `{asset_tag, employee_id, notes?, assigned_at?}`.
-    Response: 200 Guideline envelope; Errors: 400/404/500 envelope.
-    Notes: Privileged only.
-    """
-    try:
-        from services.asset_service import asset_service
-        
-        asset_tag = body.get("asset_tag")
-        target_employee_id = body.get("employee_id")
-        notes = body.get("notes")
-        assigned_at = body.get("assigned_at")
-        
-        if not asset_tag or not target_employee_id:
-            raise ValidationError("asset_tag and employee_id are required")
-            
-        ip_address = request.client.host if request.client else None
-        user_agent = request.headers.get("user-agent")
-
-        result = await asset_service.assign_asset(
-            asset_tag=asset_tag,
-            employee_id=target_employee_id,
-            actor=employee,
-            notes=notes,
-            assigned_at=assigned_at,
-            ip_address=ip_address,
-            user_agent=user_agent
-        )
-        
-        return JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content=success_response(
-                message="Asset assigned successfully.",
-                data=result,
-                status_code=200,
-            ),
-        )
-    except NotFoundError as exc:
-        return _json_error(404, message=str(exc), code="NOT_FOUND")
-    except ValidationError as exc:
-        return _json_error(400, message=str(exc), code="VALIDATION_ERROR")
-    except Exception as exc:
-        return _json_error(500, message="Failed to assign asset.", code="INTERNAL_ERROR", details=str(exc))
-
-@router.post("/return")
-async def return_asset(
-    body: dict[str, Any],
-    request: Request,
-    employee: EmployeeContext = Depends(require_privileged),
-) -> JSONResponse:
-    """
-    Purpose: Return an assigned asset to stock.
-    Method/Route: POST /api/v1/assets/return
-    Request: Body `{asset_tag, notes?, returned_at?}`.
-    Response: 200 Guideline envelope; Errors: 400/404/500 envelope.
-    Notes: Privileged only.
-    """
-    try:
-        from services.asset_service import asset_service
-        
-        asset_tag = body.get("asset_tag")
-        notes = body.get("notes")
-        returned_at = body.get("returned_at")
-        
-        if not asset_tag:
-            raise ValidationError("asset_tag is required")
-            
-        ip_address = request.client.host if request.client else None
-        user_agent = request.headers.get("user-agent")
-
-        result = await asset_service.return_asset(
-            asset_tag=asset_tag,
-            actor=employee,
-            notes=notes,
-            returned_at=returned_at,
-            ip_address=ip_address,
-            user_agent=user_agent
-        )
-        
-        return JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content=success_response(
-                message="Asset returned successfully.",
-                data=result,
-                status_code=200,
-            ),
-        )
-    except NotFoundError as exc:
-        return _json_error(404, message=str(exc), code="NOT_FOUND")
-    except ValidationError as exc:
-        return _json_error(400, message=str(exc), code="VALIDATION_ERROR")
-    except Exception as exc:
-        return _json_error(500, message="Failed to return asset.", code="INTERNAL_ERROR", details=str(exc))
-
 
 @router.get("")
 async def list_assets(
@@ -936,14 +699,14 @@ async def scan_asset(ref: str, request: Request) -> JSONResponse:
 
 @router.get("/export.csv")
 async def export_assets_csv(
-    employee: EmployeeContext = Depends(require_admin),
+    employee: EmployeeContext = Depends(require_privileged),
 ) -> Response:
     """
     Purpose: Export all asset inventory rows as a CSV file.
     Method/Route: GET /api/v1/assets/export.csv
     Request: None.
     Response: 200 `text/csv` with `Content-Disposition` attachment.
-    Notes: Admin only (`require_admin`); streams results for efficiency.
+    Notes: Admin or IT Ops (`require_privileged`); streams results for efficiency.
     """
     _ = employee
     if not settings.ASSET_EXPORT_ENABLED:
@@ -983,17 +746,16 @@ _XLSX_EXPORT_COLUMNS = (
 
 @router.get("/export.json")
 async def export_assets_json(
-    employee: EmployeeContext = Depends(require_admin),
+    employee: EmployeeContext = Depends(require_privileged),
 ) -> JSONResponse:
     """
     Purpose: Export curated asset rows as JSON for client-side XLSX generation.
     Method/Route: GET /api/v1/assets/export.json
     Request: None.
     Response: 200 Guideline envelope `{data: [{asset_tag, category_name, ...}]}`.
-    Notes: Strict-admin only (`require_admin` + role check); guarded by ASSET_EXPORT_ENABLED.
+    Notes: Admin or IT Ops (`require_privileged`); guarded by ASSET_EXPORT_ENABLED.
     """
-    if employee.role != "admin":
-        return _json_error(403, message="Only administrators can export assets.", code="FORBIDDEN")
+    _ = employee
     if not settings.ASSET_EXPORT_ENABLED:
         return _json_error(503, message="Asset export is disabled.", code="SERVICE_UNAVAILABLE")
 
@@ -1079,7 +841,8 @@ async def export_asset_qr_labels(
     }
 
     if not requested_tags:
-        pdf_bytes = qr_label_pdf_service.build_empty_notice_pdf(
+        pdf_bytes = await run_in_threadpool(
+            qr_label_pdf_service.build_empty_notice_pdf,
             "No assets to export",
             "There are no assets with tags in the current view. Adjust filters or add assets, then try again.",
         )
@@ -1087,13 +850,14 @@ async def export_asset_qr_labels(
 
     printable_tags = await AssetRepository.list_existing_asset_tags_in_order(requested_tags)
     if not printable_tags:
-        pdf_bytes = qr_label_pdf_service.build_empty_notice_pdf(
+        pdf_bytes = await run_in_threadpool(
+            qr_label_pdf_service.build_empty_notice_pdf,
             "No printable labels",
             "None of the requested assets could be found in the directory, or they cannot be printed.",
         )
         return Response(content=pdf_bytes, media_type="application/pdf", headers=empty_notice_headers)
 
-    pdf_bytes = qr_label_pdf_service.build_pdf(printable_tags)
+    pdf_bytes = await run_in_threadpool(qr_label_pdf_service.build_pdf, printable_tags)
     headers = {
         "Content-Disposition": f'inline; filename="{qr_label_pdf_service.file_name}"',
         "Cache-Control": "no-store",
@@ -1153,7 +917,8 @@ async def export_asset_audit_trail_pdf(
         ) or "—"
         generated_at = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
 
-        pdf_bytes = audit_trail_pdf_service.build_pdf(
+        pdf_bytes = await run_in_threadpool(
+            audit_trail_pdf_service.build_pdf,
             header=AuditTrailPdfAssetHeader(
                 asset_name=asset_name,
                 asset_tag=asset_tag,
@@ -1175,50 +940,6 @@ async def export_asset_audit_trail_pdf(
         return _json_error(400, message=str(exc), code="VALIDATION_ERROR")
     except Exception as exc:
         return _json_error(500, message="Failed to export audit trail PDF.", code="INTERNAL_ERROR", details=str(exc))
-
-
-@router.post("/{asset_id}/soft-delete")
-async def soft_delete_asset(
-    asset_id: str,
-    payload: SoftDeleteAssetRequest,
-    request: Request,
-    employee: EmployeeContext = Depends(require_privileged),
-) -> JSONResponse:
-    """
-    Purpose: Soft-delete an asset (move to recycle bin).
-    Method/Route: POST /api/v1/assets/{asset_id}/soft-delete
-    Request: Path `asset_id` (uuid); JSON body `{note?: string}`.
-    Response: 200 envelope `{data:{asset_id,recycle_bin_id}}`; Errors: 400/404/500 envelope.
-    Notes: Privileged only (`require_privileged`).
-    """
-    try:
-        request_id = getattr(request.state, "request_id", None)
-        ip_address = request.client.host if request.client else None
-        user_agent = request.headers.get("user-agent")
-
-        result = await asset_service.soft_delete_asset(
-            asset_id=asset_id,
-            actor=employee,
-            reason=payload.note,
-            request_id=request_id,
-            ip_address=ip_address,
-            user_agent=user_agent,
-        )
-
-        return JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content=success_response(
-                message="Asset moved to recycle bin.",
-                data=result,
-                status_code=200,
-            ),
-        )
-    except ValidationError as exc:
-        return _json_error(400, message=str(exc), code="VALIDATION_ERROR")
-    except NotFoundError as exc:
-        return _json_error(404, message=str(exc), code="NOT_FOUND")
-    except Exception as exc:
-        return _json_error(500, message="Failed to delete asset.", code="INTERNAL_ERROR", details=str(exc))
 
 
 @router.get("/{ref}/detail")
@@ -1334,7 +1055,9 @@ async def export_asset_history_pdf(
             
         lifecycle_events, lifecycle_is_capped = await AssetDetailRepository.list_events(asset_id=asset_id)
         
-        pdf_bytes = asset_history_pdf_service.build_pdf(row, assignments, lifecycle_events)
+        pdf_bytes = await run_in_threadpool(
+            asset_history_pdf_service.build_pdf, row, assignments, lifecycle_events
+        )
         
         asset_tag = row.get("asset_tag") or "asset"
         filename = f"{asset_tag}-history.pdf"

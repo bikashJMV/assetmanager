@@ -1,0 +1,282 @@
+/* =========================================================
+   AMS DESIGN TOKENS — single source of truth (Notes/UI.md v2.0)
+   Docker calm density + Hugging Face warmth. One brand hue.
+   Components NEVER use raw values. Tailwind maps to these.
+   HSL triplets so opacity variants stay free: hsl(var(--primary) / 0.1)
+   ========================================================= */
+
+:root {
+  /* ---------- Brand hue anchor (one hue, whole app) ---------- */
+  --hue-brand: 217; /* Docker-blue family */
+
+  /* ---------- Light theme (default) ---------- */
+  --background:        var(--hue-brand) 20% 98%;
+  --surface-t:         0 0% 100%;
+  --surface-hover:     var(--hue-brand) 30% 96%;
+  --surface-sunken:    var(--hue-brand) 20% 95%;
+  --border-t:          var(--hue-brand) 15% 89%;
+  --border-strong:     var(--hue-brand) 15% 80%;
+
+  --foreground:        var(--hue-brand) 25% 12%;
+  --muted-foreground:  var(--hue-brand) 10% 42%;
+  --faint-foreground:  var(--hue-brand) 8% 60%;
+
+  --primary:           var(--hue-brand) 91% 53%;
+  --primary-hover:     var(--hue-brand) 91% 47%;
+  --primary-active:    var(--hue-brand) 91% 42%;
+  --primary-foreground: 0 0% 100%;
+
+  /* ---------- Semantic ---------- */
+  --success: 152 60% 38%;
+  --warning: 38 92% 44%;
+  --danger:  0 72% 51%;
+  --danger-active: 0 72% 42%;
+  --info:    199 89% 44%;
+
+  /* ---------- Status (asset lifecycle) — the REAL vocabulary used by the app:
+     assigned | in_stock | in_repair | retired | lost | disposed. (Do not add
+     statuses here that the API doesn't emit — checked against
+     AllAssets `statusFilters` / getInventoryStatusTone.) ---------- */
+  --status-assigned:   152 60% 38%;   /* green  — in active use, healthy */
+  --status-in-stock:   38 92% 48%;    /* amber  — available, needs attention to deploy */
+  --status-in-repair:  199 89% 44%;   /* cyan   — in maintenance */
+  --status-retired:    var(--hue-brand) 8% 40%;  /* neutral grey — end of life, deliberate */
+  --status-lost:       0 72% 51%;     /* red    — needs action */
+  --status-disposed:   var(--hue-brand) 8% 60%;  /* lighter grey — gone, informational only */
+
+  /* ---------- Role badges (solid pill, white/on-accent text) ---------- */
+  --role-admin:    var(--hue-brand) 91% 53%;  /* reuses brand */
+  --role-it-ops:   212 64% 45%;               /* system-blue (steel) — distinct from brand admin blue */
+  --role-employee: var(--hue-brand) 8% 45%;   /* neutral grey */
+
+  /* ---------- Categorical chart palette (dataviz skill, validated) ----------
+     Fixed-order 8-slot palette for chart SERIES IDENTITY (asset status/category
+     breakdowns). Full hex (not HSL triplets, unlike the rest of this file) —
+     these are validated as literal sRGB values; converting would risk drifting
+     off the checked hue/lightness. NEVER reuse for status/insight cards — those
+     use --danger/--warning/--info/--success, which are deliberately distinct
+     from these series colors (see palette.md "status palette" section).
+     Validated: `node scripts/validate_palette.js "<hexes>" --mode light|dark`
+     — all 8 slots pass lightness/chroma/CVD-separation/normal-vision-floor;
+     light mode has a documented contrast WARN on 3 slots (relief: direct
+     labels, which this UI already shows next to every dot/bar). ---------- */
+  --chart-1: #2a78d6; /* blue */
+  --chart-2: #008300; /* green */
+  --chart-3: #e87ba4; /* magenta */
+  --chart-4: #eda100; /* yellow */
+  --chart-5: #1baf7a; /* aqua */
+  --chart-6: #eb6834; /* orange */
+  --chart-7: #4a3aa7; /* violet */
+  --chart-8: #e34948; /* red */
+
+  /* ---------- Sidebar (dark anchor in BOTH themes, Docker-style) ---------- */
+  /* Sidebar follows the theme: light surface + dark text in light mode (dark set in [data-theme]). */
+  --sidebar-bg:          var(--hue-brand) 24% 96%;
+  --sidebar-fg:          var(--hue-brand) 12% 42%;
+  --sidebar-fg-active:   var(--hue-brand) 35% 16%;
+  --sidebar-item-hover:  var(--hue-brand) 28% 90%;
+  --sidebar-border:      var(--hue-brand) 20% 87%;
+
+  /* ---------- Typography ---------- */
+  --font-sans: 'Inter Variable', 'Inter', 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Cascadia Code', 'Consolas', monospace;
+
+  --text-xs:   0.75rem;
+  --text-sm:   0.8125rem;
+  --text-base: 0.875rem;
+  --text-md:   1rem;      /* form inputs — prevents iOS zoom */
+  --text-lg:   1.125rem;
+  --text-xl:   1.375rem;
+  --text-2xl:  1.75rem;
+
+  --leading-tight: 1.25;
+  --leading-normal: 1.5;
+
+  /* ---------- Spacing (4px scale) ---------- */
+  --space-1: 0.25rem;  --space-2: 0.5rem;  --space-3: 0.75rem;
+  --space-4: 1rem;     --space-5: 1.25rem; --space-6: 1.5rem;
+  --space-8: 2rem;     --space-10: 2.5rem; --space-12: 3rem;
+
+  /* ---------- Radius ---------- */
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-full: 9999px;
+
+  /* ---------- Elevation (composited, never animated) ---------- */
+  --shadow-sm: 0 1px 2px hsl(var(--hue-brand) 30% 10% / 0.06);
+  --shadow-md: 0 4px 12px hsl(var(--hue-brand) 30% 10% / 0.08);
+  --shadow-lg: 0 12px 32px hsl(var(--hue-brand) 30% 10% / 0.14);
+  --shadow-focus: 0 0 0 3px hsl(var(--primary) / 0.25);
+  --shadow-focus-danger: 0 0 0 3px hsl(var(--danger) / 0.35);
+
+  /* ---------- Motion ---------- */
+  --ease-out:   cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-inout: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-fast:   120ms;
+  --dur-base:   180ms;
+  --dur-slow:   260ms;
+
+  /* ---------- Layout ---------- */
+  --sidebar-width: 240px;
+  --sidebar-width-collapsed: 64px;
+  --topbar-height: 56px;
+  --bottombar-height: 64px;
+  --content-max: 1440px;
+  --touch-target: 44px;
+
+  /* ---------- Z-index scale ---------- */
+  --z-dropdown: 40; --z-sticky: 50; --z-drawer: 60;
+  --z-modal: 70;    --z-toast: 80;  --z-tooltip: 90;
+}
+
+/* ---------- Dark theme ----------
+   Tuned to VS Code "Dark Modern": neutral, low-saturation greys with a hint of the brand
+   hue. Clear stepped separation bg(13) < sunken(15) < surface(17) < hover(21) < border(28)
+   so panels, cards and dividers are actually visible (the old 8/11/19 steps were muddy).
+   Text sits at 90% for strong contrast. */
+:root[data-theme='dark'] {
+  --background:        var(--hue-brand) 9% 13%;   /* ~#1e2024, editor bg */
+  --surface-t:         var(--hue-brand) 8% 17%;   /* cards / panels */
+  --surface-hover:     var(--hue-brand) 8% 22%;
+  --surface-sunken:    var(--hue-brand) 9% 15%;   /* table headers, wells */
+  --border-t:          var(--hue-brand) 7% 28%;
+  --border-strong:     var(--hue-brand) 7% 38%;
+
+  --foreground:        var(--hue-brand) 12% 90%;  /* ~#e2e4e8 */
+  --muted-foreground:  var(--hue-brand) 8% 68%;
+  --faint-foreground:  var(--hue-brand) 6% 52%;
+
+  --primary:           var(--hue-brand) 91% 62%;
+  --primary-hover:     var(--hue-brand) 91% 68%;
+  --primary-active:    var(--hue-brand) 91% 56%;
+
+  --success: 152 52% 50%;  --warning: 38 92% 58%;
+  --danger:  0 72% 62%;    --danger-active: 0 72% 54%;    --info: 199 85% 58%;
+
+  --status-assigned:  152 52% 50%;
+  --status-in-stock:  38 92% 58%;
+  --status-in-repair: 199 85% 58%;
+  --status-retired:   var(--hue-brand) 8% 55%;
+  --status-lost:      0 72% 62%;
+  --status-disposed:  var(--hue-brand) 8% 42%;
+
+  --role-admin:    var(--hue-brand) 91% 62%;
+  --role-it-ops:   212 60% 62%;
+  --role-employee: var(--hue-brand) 8% 55%;
+
+  /* Same 8 hues, dark-surface steps — validated as a set (see palette.md). */
+  --chart-1: #3987e5; /* blue */
+  --chart-2: #008300; /* green */
+  --chart-3: #d55181; /* magenta */
+  --chart-4: #c98500; /* yellow */
+  --chart-5: #199e70; /* aqua */
+  --chart-6: #d95926; /* orange */
+  --chart-7: #9085e9; /* violet */
+  --chart-8: #e66767; /* red */
+
+  --sidebar-bg:          var(--hue-brand) 10% 10%;     /* darker anchor than content */
+  --sidebar-fg:          var(--hue-brand) 15% 78%;
+  --sidebar-fg-active:   0 0% 100%;
+  --sidebar-item-hover:  var(--hue-brand) 30% 16%;
+  --sidebar-border:      var(--hue-brand) 8% 20%;
+
+  --shadow-sm: 0 1px 2px hsl(0 0% 0% / 0.3);
+  --shadow-md: 0 4px 12px hsl(0 0% 0% / 0.4);
+  --shadow-lg: 0 12px 32px hsl(0 0% 0% / 0.5);
+}
+
+/* System dark (no explicit choice stored) mirrors the dark theme */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --background:        var(--hue-brand) 9% 13%;
+    --surface-t:         var(--hue-brand) 8% 17%;
+    --surface-hover:     var(--hue-brand) 8% 22%;
+    --surface-sunken:    var(--hue-brand) 9% 15%;
+    --border-t:          var(--hue-brand) 7% 28%;
+    --border-strong:     var(--hue-brand) 7% 38%;
+
+    --foreground:        var(--hue-brand) 12% 90%;
+    --muted-foreground:  var(--hue-brand) 8% 68%;
+    --faint-foreground:  var(--hue-brand) 6% 52%;
+
+    --primary:           var(--hue-brand) 91% 62%;
+    --primary-hover:     var(--hue-brand) 91% 68%;
+    --primary-active:    var(--hue-brand) 91% 56%;
+
+    --success: 152 52% 50%;  --warning: 38 92% 58%;
+    --danger:  0 72% 62%;    --danger-active: 0 72% 54%;    --info: 199 85% 58%;
+
+    --status-assigned:  152 52% 50%;
+    --status-in-stock:  38 92% 58%;
+    --status-in-repair: 199 85% 58%;
+    --status-retired:   var(--hue-brand) 8% 55%;
+    --status-lost:      0 72% 62%;
+    --status-disposed:  var(--hue-brand) 8% 42%;
+
+    --role-admin:    var(--hue-brand) 91% 62%;
+    --role-it-ops:   212 60% 62%;
+    --role-employee: var(--hue-brand) 8% 55%;
+
+    --chart-1: #3987e5;
+    --chart-2: #008300;
+    --chart-3: #d55181;
+    --chart-4: #c98500;
+    --chart-5: #199e70;
+    --chart-6: #d95926;
+    --chart-7: #9085e9;
+    --chart-8: #e66767;
+
+    --sidebar-bg:          var(--hue-brand) 10% 10%;
+    --sidebar-fg:          var(--hue-brand) 15% 78%;
+    --sidebar-fg-active:   0 0% 100%;
+    --sidebar-item-hover:  var(--hue-brand) 30% 16%;
+    --sidebar-border:      var(--hue-brand) 8% 20%;
+
+    --shadow-sm: 0 1px 2px hsl(0 0% 0% / 0.3);
+    --shadow-md: 0 4px 12px hsl(0 0% 0% / 0.4);
+    --shadow-lg: 0 12px 32px hsl(0 0% 0% / 0.5);
+  }
+}
+
+/* =========================================================
+   LOG TERMINAL — a deliberately always-dark console (Grafana/Datadog/Kibana
+   convention). Formalized as tokens so the console colors are a design decision,
+   not magic hex. Identical in light + dark (defined once on :root). Full hex.
+   ========================================================= */
+:root {
+  --term-bg:    #0c0e12;   /* console surface */
+  --term-fg:    #d9dde3;   /* message text */
+  --term-dim:   #6b7280;   /* timestamps, service */
+  --term-line:  rgba(255, 255, 255, 0.06);  /* row dividers */
+  --term-hover: rgba(255, 255, 255, 0.05);
+  --term-error: #f87171;
+  --term-warn:  #fbbf24;
+  --term-info:  #60a5fa;
+  --term-debug: #9ca3af;
+}
+
+/* =========================================================
+   LEGACY BRIDGE — maps the pre-v2 variable names consumed by
+   existing components (.bg-app, .text-primary, the old token names)
+   onto the new token system. This is what reskins the whole app
+   without touching every component. Remove once all components
+   consume the new tokens directly.
+   ========================================================= */
+:root,
+:root[data-theme='dark'],
+:root[data-theme='light'] {
+  --bg:            hsl(var(--background));
+  --surface:       hsl(var(--surface-t));
+  --surface-2:     hsl(var(--surface-sunken));
+  --surface-3:     hsl(var(--surface-hover));
+  --text:          hsl(var(--foreground));
+  --muted:         hsl(var(--muted-foreground));
+  --subtle:        hsl(var(--faint-foreground));
+  --border:        hsl(var(--border-t));
+  --accent:        hsl(var(--primary));
+  --accent-hover:  hsl(var(--primary-hover));
+  --accent-soft:   hsl(var(--primary) / 0.28);
+  --accent-shadow: hsl(var(--hue-brand) 30% 10% / 0.25);
+  --on-accent:     hsl(var(--primary-foreground));
+}

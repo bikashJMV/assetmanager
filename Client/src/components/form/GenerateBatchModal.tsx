@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useCreateQrBatchMutation } from '../../queries/qr'
 import { getUserFacingMessage, logDevError } from '../../utils/errors'
 import { useToast } from '../../hooks/useToast'
+import { LOADING } from '../../constants/loading'
 
 export default function GenerateBatchModal({
   open,
@@ -85,9 +86,9 @@ export default function GenerateBatchModal({
             <button
               type="submit"
               disabled={createMutation.isPending}
-              className="flex-1 bg-accent text-white py-2 rounded-lg font-medium hover:bg-accent-hover transition disabled:opacity-50 disabled:cursor-not-allowed"
+              className="flex-1 bg-accent text-on-accent py-2 rounded-lg font-medium hover:bg-accent-hover transition disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {createMutation.isPending ? 'Generating...' : 'Generate'}
+              {createMutation.isPending ? LOADING.GENERATING : 'Generate'}
             </button>
           </div>
         </form>

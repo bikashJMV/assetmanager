@@ -1,10 +1,11 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
+import FilterSelectMenu, { type FloatingMenuPosition } from './FilterSelectMenu'
 
 export type FilterSelectOption = {
   label: string
   value: string
-  dotClassName?: string
+  /** CSS color value (e.g. `hsl(var(--status-assigned))`) for the option's status dot. */
+  dotColor?: string
 }
 
 type FilterSelectProps = {
@@ -20,16 +21,9 @@ type FilterSelectProps = {
   dense?: boolean
   /** `id` on the trigger button for `htmlFor` on an external label. */
   triggerId?: string
-  /** Disable the control. */
+  /** Disable the control. Re-clicking the selected option resets to `deselectValue` (toggle-off). */
   disabled?: boolean
-}
-
-type FloatingMenuPosition = {
-  left: number
-  width: number
-  maxHeight: number
-  top?: number
-  bottom?: number
+  deselectValue?: string
 }
 
 export default function FilterSelect({
@@ -43,6 +37,7 @@ export default function FilterSelect({
   dense = false,
   triggerId,
   disabled = false,
+  deselectValue,
 }: FilterSelectProps) {
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement | null>(null)
@@ -187,57 +182,19 @@ export default function FilterSelect({
         </button>
       </div>
 
-      {open && menuPosition && typeof document !== 'undefined'
-        ? createPortal(
-            <div
-              ref={menuRef}
-              id={listboxId}
-              role="listbox"
-              aria-label={ariaLabel}
-              className="fixed z-[150] overflow-y-auto rounded-xl border border-base bg-app p-1.5 shadow-[0_18px_48px_rgba(0,0,0,0.22)] dark:shadow-[0_18px_48px_rgba(0,0,0,0.45)]"
-              style={{
-                left: menuPosition.left,
-                width: menuPosition.width,
-                maxHeight: menuPosition.maxHeight,
-                top: menuPosition.top,
-                bottom: menuPosition.bottom,
-              }}
-            >
-              {options.map((option) => {
-                const selected = option.value === value
-
-                return (
-                  <button
-                    key={option.value}
-                    type="button"
-                    role="option"
-                    aria-selected={selected}
-                    onClick={() => {
-                      onChange(option.value)
-                      setOpen(false)
-                    }}
-                    className={`group flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left text-sm transition ${
-                      selected
-                        ? 'bg-[color:var(--accent-soft)]/15 text-primary'
-                        : 'text-primary hover:bg-surface-3'
-                    }`}
-                  >
-                    <span className="inline-flex items-center gap-2 underline decoration-transparent underline-offset-[3px] transition group-hover:decoration-[color:var(--accent)] group-hover:underline">
-                      {option.dotClassName ? (
-                        <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${option.dotClassName}`} aria-hidden="true" />
-                      ) : null}
-                      <span>{option.label}</span>
-                    </span>
-                    {selected ? (
-                      <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-accent" aria-hidden="true" />
-                    ) : null}
-                  </button>
-                )
-              })}
-            </div>,
-            document.body,
-          )
-        : null}
+      {open && menuPosition ? (
+        <FilterSelectMenu
+          menuRef={menuRef}
+          listboxId={listboxId}
+          ariaLabel={ariaLabel}
+          menuPosition={menuPosition}
+          options={options}
+          value={value}
+          onChange={onChange}
+          onClose={() => setOpen(false)}
+          deselectValue={deselectValue}
+        />
+      ) : null}
     </div>
   )
 }

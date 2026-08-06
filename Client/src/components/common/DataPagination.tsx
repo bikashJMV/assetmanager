@@ -10,6 +10,8 @@ type DataPaginationProps = {
   showSummary?: boolean
   showPageSizeSelector?: boolean
   showNavigation?: boolean
+  bare?: boolean
+  spread?: boolean
   onPageChange: (page: number) => void
   onPageSizeChange: (pageSize: number) => void
 }
@@ -44,6 +46,8 @@ export default function DataPagination({
   showSummary = true,
   showPageSizeSelector = true,
   showNavigation = true,
+  bare = false,
+  spread = false,
   onPageChange,
   onPageSizeChange,
 }: DataPaginationProps) {
@@ -55,8 +59,7 @@ export default function DataPagination({
 
   const pageSizeControl = (
     <div className="inline-flex items-center gap-2 text-xs text-subtle">
-      <span>Rows per page</span>
-      <div className={`min-w-[104px] ${loading ? 'pointer-events-none opacity-60' : ''}`}>
+      <div className={`min-w-[92px] ${loading ? 'pointer-events-none opacity-60' : ''}`}>
         <FilterSelect
           label="Rows per page"
           ariaLabel="Select rows per page"
@@ -83,7 +86,15 @@ export default function DataPagination({
   const pageItems = buildPageItems(safeCurrentPage, totalPages)
 
   return (
-    <div className="mt-4 flex flex-col gap-3 rounded-2xl border border-base bg-surface px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
+    <div
+      className={
+        bare
+          ? spread
+            ? 'flex w-full flex-wrap items-center justify-between gap-3'
+            : 'flex flex-wrap items-center gap-2'
+          : 'mt-4 flex flex-col gap-3 rounded-2xl border border-base bg-surface px-4 py-3 lg:flex-row lg:items-center lg:justify-between'
+      }
+    >
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
         {showSummary ? (
           <p className="text-xs text-subtle">
@@ -101,7 +112,7 @@ export default function DataPagination({
             type="button"
             onClick={() => onPageChange(safeCurrentPage - 1)}
             disabled={loading || safeCurrentPage <= 1}
-            className="inline-flex h-9 items-center justify-center rounded-lg border border-base bg-app px-3 text-sm font-medium text-primary transition hover:border-accent-soft hover:bg-[color:var(--accent-soft)]/15 hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex h-9 items-center justify-center rounded-lg border border-base bg-app px-2.5 text-sm font-medium text-primary transition hover:border-accent-soft hover:bg-[color:var(--accent-soft)]/15 hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
           >
             Previous
           </button>
@@ -114,7 +125,7 @@ export default function DataPagination({
                 onClick={() => onPageChange(item)}
                 disabled={loading}
                 aria-current={item === safeCurrentPage ? 'page' : undefined}
-                className={`inline-flex h-9 min-w-9 items-center justify-center rounded-lg border px-3 text-sm font-medium transition ${
+                className={`inline-flex h-9 min-w-9 items-center justify-center rounded-lg border px-2.5 text-sm font-medium transition ${
                   item === safeCurrentPage
                     ? 'border-accent-soft bg-[color:var(--accent-soft)]/15 text-accent'
                     : 'border-base bg-app text-primary hover:border-accent-soft hover:bg-[color:var(--accent-soft)]/15 hover:text-accent'
@@ -137,7 +148,7 @@ export default function DataPagination({
             type="button"
             onClick={() => onPageChange(safeCurrentPage + 1)}
             disabled={loading || safeCurrentPage >= totalPages}
-            className="inline-flex h-9 items-center justify-center rounded-lg border border-base bg-app px-3 text-sm font-medium text-primary transition hover:border-accent-soft hover:bg-[color:var(--accent-soft)]/15 hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex h-9 items-center justify-center rounded-lg border border-base bg-app px-2.5 text-sm font-medium text-primary transition hover:border-accent-soft hover:bg-[color:var(--accent-soft)]/15 hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
           >
             Next
           </button>

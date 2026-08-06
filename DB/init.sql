@@ -73,7 +73,9 @@ CREATE TYPE public.asset_event_type AS ENUM (
     'asset_restored',
     'qr_scanned',
     'lifecycle_changed',
-    'bulk_imported'
+    'bulk_imported',
+    'qr_batch_generated',
+    'qr_reservation_consumed'
 );
 
 
@@ -333,7 +335,9 @@ CREATE TABLE public.assets (
     created_by uuid,
     updated_by uuid,
     qr_code text,
-    created_by_employee_id uuid
+    created_by_employee_id uuid,
+    source text DEFAULT 'direct'::text NOT NULL,
+    qr_reservation_id uuid
 );
 
 
@@ -468,6 +472,34 @@ CREATE TABLE public.recycle_bin_entries (
 ALTER TABLE public.recycle_bin_entries OWNER TO assetmanager_user;
 
 --
+-- Name: employee_avatars; Type: TABLE; Schema: public; Owner: assetmanager_user
+--
+
+CREATE TABLE public.employee_avatars (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    employee_id uuid NOT NULL,
+    image_data bytea NOT NULL,
+    mime_type text NOT NULL,
+    byte_size integer NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT employee_avatars_size_chk CHECK (((byte_size > 0) AND (byte_size <= 51200))),
+    CONSTRAINT employee_avatars_mime_chk CHECK ((mime_type = ANY (ARRAY['image/png'::text, 'image/jpeg'::text, 'image/webp'::text])))
+);
+
+
+ALTER TABLE public.employee_avatars OWNER TO assetmanager_user;
+
+ALTER TABLE ONLY public.employee_avatars
+    ADD CONSTRAINT employee_avatars_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY public.employee_avatars
+    ADD CONSTRAINT employee_avatars_employee_id_key UNIQUE (employee_id);
+
+ALTER TABLE ONLY public.employee_avatars
+    ADD CONSTRAINT employee_avatars_employee_id_fkey FOREIGN KEY (employee_id) REFERENCES public.employees(id) ON DELETE CASCADE;
+
+--
 -- Name: role_audit_log; Type: TABLE; Schema: public; Owner: assetmanager_user
 --
 
@@ -484,6 +516,73 @@ CREATE TABLE public.role_audit_log (
 
 
 ALTER TABLE public.role_audit_log OWNER TO assetmanager_user;
+
+--
+-- Name: qr_batches; Type: TABLE; Schema: public; Owner: assetmanager_user
+-- Reverse-engineered from Server/repositories/qr_repository.py and
+-- Server/routers/api_v1_qr.py -- these tables were queried by the app but never
+-- captured in the schema dump (BUG-1, 2026-07-18: "relation qr_batches does not exist").
+--
+
+CREATE TABLE public.qr_batches (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    idempotency_key text NOT NULL,
+    batch_code text NOT NULL,
+    requested_count integer NOT NULL,
+    start_tag text,
+    end_tag text,
+    status text DEFAULT 'generated'::text NOT NULL,
+    created_by_employee_id uuid,
+    completed_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT qr_batches_idempotency_key_key UNIQUE (idempotency_key)
+);
+
+ALTER TABLE public.qr_batches OWNER TO assetmanager_user;
+
+ALTER TABLE ONLY public.qr_batches
+    ADD CONSTRAINT qr_batches_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY public.qr_batches
+    ADD CONSTRAINT qr_batches_created_by_employee_id_fkey FOREIGN KEY (created_by_employee_id) REFERENCES public.employees(id);
+
+CREATE INDEX idx_qr_batches_created_at ON public.qr_batches USING btree (created_at DESC);
+
+--
+-- Name: qr_tag_reservations; Type: TABLE; Schema: public; Owner: assetmanager_user
+--
+
+CREATE TABLE public.qr_tag_reservations (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    batch_id uuid NOT NULL,
+    asset_tag text NOT NULL,
+    status text DEFAULT 'reserved'::text NOT NULL,
+    consumed_at timestamp with time zone,
+    consumed_by_asset_id uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT qr_tag_reservations_status_check CHECK ((status = ANY (ARRAY['reserved'::text, 'consumed'::text])))
+);
+
+ALTER TABLE public.qr_tag_reservations OWNER TO assetmanager_user;
+
+ALTER TABLE ONLY public.qr_tag_reservations
+    ADD CONSTRAINT qr_tag_reservations_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY public.qr_tag_reservations
+    ADD CONSTRAINT qr_tag_reservations_asset_tag_key UNIQUE (asset_tag);
+
+ALTER TABLE ONLY public.qr_tag_reservations
+    ADD CONSTRAINT qr_tag_reservations_batch_id_fkey FOREIGN KEY (batch_id) REFERENCES public.qr_batches(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.qr_tag_reservations
+    ADD CONSTRAINT qr_tag_reservations_consumed_by_asset_id_fkey FOREIGN KEY (consumed_by_asset_id) REFERENCES public.assets(id);
+
+CREATE INDEX idx_qr_tag_reservations_batch_id ON public.qr_tag_reservations USING btree (batch_id);
+
+CREATE INDEX idx_qr_reservations_unused ON public.qr_tag_reservations USING btree (created_at) WHERE (status = 'reserved'::text);
+
+ALTER TABLE ONLY public.assets
+    ADD CONSTRAINT assets_qr_reservation_id_fkey FOREIGN KEY (qr_reservation_id) REFERENCES public.qr_tag_reservations(id);
 
 --
 -- Name: v_asset_inventory; Type: VIEW; Schema: public; Owner: assetmanager_user
@@ -569,8 +668,16 @@ CREATE VIEW public.v_recycle_bin AS
     recycle_bin_entries.deleted_at,
     recycle_bin_entries.deleted_by_employee_id,
     recycle_bin_entries.restored_at,
-    recycle_bin_entries.restored_by_employee_id
-   FROM public.recycle_bin_entries;
+    recycle_bin_entries.restored_by_employee_id,
+    recycle_bin_entries.deleted_at AS archived_at,
+    del.employee_id AS archived_by_employee_id,
+    del.name AS archived_by_name,
+    split_part(del.name, ' '::text, 1) AS archived_by_first_name,
+    res.employee_id AS restored_by_business_id,
+    res.name AS restored_by_name
+   FROM ((public.recycle_bin_entries
+     LEFT JOIN public.employees del ON ((del.id = recycle_bin_entries.deleted_by_employee_id)))
+     LEFT JOIN public.employees res ON ((res.id = recycle_bin_entries.restored_by_employee_id)));
 
 
 ALTER TABLE public.v_recycle_bin OWNER TO assetmanager_user;
@@ -1905,3 +2012,20 @@ ALTER TABLE ONLY public.role_audit_log
 --
 
 
+
+-- ── Asset tag nomenclature: JMV-{ALIAS}-##### (per-category counter) ──
+-- Added 2026-08. Replaces the legacy global AST-##### generator.
+ALTER TABLE public.asset_categories ADD COLUMN IF NOT EXISTS alias text;
+ALTER TABLE public.asset_categories ADD COLUMN IF NOT EXISTS tag_seq bigint NOT NULL DEFAULT 0;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_asset_categories_alias ON public.asset_categories(alias) WHERE alias IS NOT NULL;
+UPDATE public.asset_categories SET alias = m.alias FROM (VALUES
+  ('laptop','LAP'),('desktop','DES'),('mobile','MOB'),('printer','PRN'),
+  ('monitor','MON'),('mouse','MOU'),('keyboard','KBD'),('pen-drive','PDR'),
+  ('locker','LCK'),('other','OTH')
+) AS m(slug,alias) WHERE public.asset_categories.slug = m.slug AND public.asset_categories.alias IS NULL;
+DROP FUNCTION IF EXISTS public.fn_next_asset_tag();
+
+-- Asset inventory status must always be set; default to in_stock (was being stored NULL when
+-- create passed status omitted, showing as "—" in the UI).
+UPDATE public.assets SET status = 'in_stock' WHERE status IS NULL;
+ALTER TABLE public.assets ALTER COLUMN status SET NOT NULL;

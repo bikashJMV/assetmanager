@@ -4,14 +4,17 @@ import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http'
 import { Resource } from '@opentelemetry/resources'
 import { SemanticResourceAttributes } from '@opentelemetry/semantic-conventions'
 import { ZoneContextManager } from '@opentelemetry/context-zone'
-import { registerInstrumentations } from '@opentelemetry/instrumentation'
-import { FetchInstrumentation } from '@opentelemetry/instrumentation-fetch'
-import { XMLHttpRequestInstrumentation } from '@opentelemetry/instrumentation-xml-http-request'
 
 /**
  * Initializes the OpenTelemetry Web SDK.
  * This acts as an independent middleware check: it will ONLY initialize if
  * VITE_OTEL_GRAFANA_ENABLED is explicitly set to 'true'.
+ *
+ * NOTE (2026-07-19): browser fetch/XHR auto-instrumentation was REMOVED — every frontend API
+ * call was being traced into observability, which is noise. Observability should reflect
+ * server-side operations only (see the [timing] logs in the backend). The provider is left in
+ * place (registers no auto-instrumentation) so custom manual spans can still be added later if
+ * ever needed; with nothing instrumented it emits nothing on its own.
  */
 export function startOtelTelemetry() {
   const isEnabled = import.meta.env.VITE_OTEL_GRAFANA_ENABLED === 'true'
@@ -49,19 +52,10 @@ export function startOtelTelemetry() {
       contextManager: new ZoneContextManager(),
     })
 
-    registerInstrumentations({
-      instrumentations: [
-        new FetchInstrumentation({
-          ignoreUrls: [/localhost:11400/],
-          clearTimingResources: true,
-        }),
-        new XMLHttpRequestInstrumentation({
-          ignoreUrls: [/localhost:11400/],
-        }),
-      ],
-    })
+    // Intentionally NO fetch/XHR auto-instrumentation — frontend API calls must not flood
+    // observability. Server-side [timing] logs carry the operation durations instead.
 
-    console.info('[OTel] OpenTelemetry Web SDK initialized, exporting to', exporterEndpoint)
+    console.info('[OTel] Web SDK initialized (no auto-instrumentation) →', exporterEndpoint)
   } catch (err) {
     console.error('[OTel] Failed to initialize OpenTelemetry:', err)
   }

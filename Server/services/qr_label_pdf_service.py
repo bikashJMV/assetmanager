@@ -1,18 +1,21 @@
 from io import BytesIO
 
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.units import mm
-from reportlab.lib.utils import ImageReader
-from reportlab.pdfbase.pdfmetrics import stringWidth
-from reportlab.pdfgen import canvas
+# reportlab ships no type stubs and types-reportlab is not a dependency here.
+from reportlab.lib.pagesizes import A4  # type: ignore[import-untyped]
+from reportlab.lib.units import mm  # type: ignore[import-untyped]
+from reportlab.lib.utils import ImageReader  # type: ignore[import-untyped]
+from reportlab.pdfbase.pdfmetrics import stringWidth  # type: ignore[import-untyped]
+from reportlab.pdfgen import canvas  # type: ignore[import-untyped]
 
-from services.qr_service import qr_service
+from core.pdf_footer import FooterCanvas  # type: ignore[import-not-found]
+from services.qr_service import qr_service  # type: ignore[import-not-found]
 
 
 class QRLabelPDFService:
     """Builds print-ready QR label PDFs for assets."""
 
     file_name = "Asset manager QRs.pdf"
+    document_title = "Asset Manager Directory — QR Codes"
     label_size = 24 * mm
     page_margin_x = 10 * mm
     page_margin_y = 10 * mm
@@ -29,10 +32,10 @@ class QRLabelPDFService:
     def build_empty_notice_pdf(self, title: str, body: str) -> bytes:
         """Single-page PDF when there are no labels to print (empty selection or nothing printable)."""
         buffer = BytesIO()
-        pdf = canvas.Canvas(buffer, pagesize=A4, pageCompression=1)
+        pdf = FooterCanvas(buffer, pagesize=A4, pageCompression=1)
         pdf.setTitle("Asset Manager — Export notice")
         page_width, page_height = A4
-        self._draw_header(pdf, page_width, page_height)
+        self._draw_header(pdf, page_width, page_height, self.document_title)
 
         margin_x = self.page_margin_x
         max_text_width = page_width - (2 * margin_x)
@@ -87,13 +90,13 @@ class QRLabelPDFService:
                 out.append(chunk)
         return out if out else [text[:120]]
 
-    def build_pdf(self, asset_tags: list[str], title: str = "Asset Manager Directory — QR Codes") -> bytes:
+    def build_pdf(self, asset_tags: list[str], title: str = document_title) -> bytes:
         cleaned_tags = [tag.strip() for tag in asset_tags if isinstance(tag, str) and tag.strip()]
         if not cleaned_tags:
             raise ValueError("At least one asset tag is required to export QR labels.")
 
         buffer = BytesIO()
-        pdf = canvas.Canvas(buffer, pagesize=A4, pageCompression=1)
+        pdf = FooterCanvas(buffer, pagesize=A4, pageCompression=1)
         pdf.setTitle("Asset Manager QRs")
         page_width, page_height = A4
         header_height = 15 * mm
@@ -181,7 +184,7 @@ class QRLabelPDFService:
 
     def _tag_area_height(self) -> float:
         """Height reserved for the asset tag text line, in ReportLab points (via mm)."""
-        return 3.5 * mm
+        return float(3.5 * mm)
 
 
 qr_label_pdf_service = QRLabelPDFService()

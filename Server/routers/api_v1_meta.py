@@ -3,13 +3,42 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, status, Query
 from fastapi.responses import JSONResponse
 
+from datetime import datetime, timezone
+
+from core.analytics_timeseries import (
+    AssetRow,
+    AssignmentRow,
+    build_analytics_timeseries,
+)
 from core.api_response import error_response, success_response
 from core.authnexus import EmployeeContext
 from core.authz import require_authenticated, require_privileged
+from core.ttl_cache import TtlCache
 from repositories.meta_repository import MetaRepository
 from repositories.db import pool, fetch_dicts
 
 router = APIRouter(prefix="/api/v1/meta", tags=["Meta (v1)"])
+
+# Dashboard totals are 4 count(*) scans per request and every signed-in user hits them on load.
+# 30 s is short enough that a newly added asset still looks live.
+DASHBOARD_STATS_TTL_SECONDS = 30.0
+_dashboard_stats_cache: TtlCache[dict[str, int]] = TtlCache(DASHBOARD_STATS_TTL_SECONDS)
+
+
+async def _load_dashboard_stats() -> dict[str, int]:
+    async with pool().acquire() as conn:
+        total_assets = await conn.fetchval("select count(*)::int from assets where coalesce(is_deleted,false)=false")
+        assigned_assets = await conn.fetchval("select count(*)::int from asset_assignments where returned_at is null")
+        active_employees = await conn.fetchval("select count(*)::int from employees where coalesce(is_active,true)=true")
+        total_employees = await conn.fetchval("select count(*)::int from employees")
+
+    return {
+        "totalAssets": total_assets or 0,
+        "assignedAssets": assigned_assets or 0,
+        "inStockAssets": max((total_assets or 0) - (assigned_assets or 0), 0),
+        "activeEmployees": active_employees or 0,
+        "totalEmployees": total_employees or 0,
+    }
 
 
 def _json_error(status_code: int, *, message: str, code: str, details: str | None = None) -> JSONResponse:
@@ -110,25 +139,28 @@ async def list_departments(
 @router.get("/warranty-notifications")
 async def list_warranty_notifications(
     days_ahead: int = Query(default=30, ge=1, le=365, alias="limit"),
-    employee: EmployeeContext = Depends(require_privileged),
+    employee: EmployeeContext = Depends(require_authenticated),
 ) -> JSONResponse:
     """
     Purpose: List assets with expiring warranties for dashboard alerts.
     Method/Route: GET /api/v1/meta/warranty-notifications
     Response: 200 Guideline envelope `{data:[{asset_tag, warranty_expiry, ...}]}`; Errors: 500 envelope.
-    Notes: Privileged only.
+    Notes: Authenticated. Admin/IT Ops see all assets; a plain employee sees only alerts for the
+           assets they currently hold (scoped by current_employee_id).
     """
     try:
+        scope_employee_id = employee.id if employee.role == "employee" else None
         async with pool().acquire() as conn:
-            # Query the view with a dynamic days_ahead filter
+            # Query the view with a dynamic days_ahead filter; employees are scoped to held assets.
             rows = await fetch_dicts(conn, """
-                select * 
-                  from v_warranty_notifications 
-                 where days_remaining <= $1 
+                select *
+                  from v_warranty_notifications
+                 where days_remaining <= $1
+                   and ($2::text is null or current_employee_id = $2::text)
                  order by days_remaining asc
                  limit 100
-            """, days_ahead)
-        
+            """, days_ahead, scope_employee_id)
+
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content=success_response(
@@ -177,26 +209,12 @@ async def get_dashboard_stats(
     Notes: Authenticated.
     """
     try:
-        async with pool().acquire() as conn:
-            # Replicate dashboard stats logic
-            total_assets = await conn.fetchval("select count(*)::int from assets where coalesce(is_deleted,false)=false")
-            assigned_assets = await conn.fetchval("select count(*)::int from asset_assignments where returned_at is null")
-            
-            # Active employees count
-            active_employees = await conn.fetchval("select count(*)::int from employees where coalesce(is_active,true)=true")
-            total_employees = await conn.fetchval("select count(*)::int from employees")
-            
+        data = await _dashboard_stats_cache.get(_load_dashboard_stats)
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content=success_response(
                 message="Dashboard stats retrieved successfully.",
-                data={
-                    "totalAssets": total_assets or 0,
-                    "assignedAssets": assigned_assets or 0,
-                    "inStockAssets": max((total_assets or 0) - (assigned_assets or 0), 0),
-                    "activeEmployees": active_employees or 0,
-                    "totalEmployees": total_employees or 0,
-                },
+                data=data,
                 status_code=200,
             ),
         )
@@ -280,8 +298,10 @@ async def get_overview_analysis(
             status_map[s] = status_map.get(s, 0) + 1
             category_map[c] = category_map.get(c, 0) + 1
             
-            if s == "assigned": assigned_assets += 1
-            if s == "in_stock": in_stock_assets += 1
+            if s == "assigned":
+                assigned_assets += 1
+            if s == "in_stock":
+                in_stock_assets += 1
             
             eid = r["current_employee_id"]
             if eid:
@@ -317,3 +337,63 @@ async def get_overview_analysis(
         )
     except Exception as exc:
         return _json_error(500, message="Failed to retrieve overview analysis.", code="INTERNAL_ERROR", details=str(exc))
+
+
+@router.get("/analytics-timeseries")
+async def get_analytics_timeseries(
+    _: EmployeeContext = Depends(require_privileged),
+) -> JSONResponse:
+    """
+    Purpose: Time-series aggregates powering the six-chart analytics report.
+    Method/Route: GET /api/v1/meta/analytics-timeseries
+    Response: 200 Guideline envelope `{data:{cumulativeByMonth, acquisitionMatrix,
+        acquisitionByYear, categoryDistribution, warrantyPoints, assignmentsByMonth,
+        generatedAt}}`.
+    Notes: Privileged only. Excludes soft-deleted assets.
+    """
+    try:
+        # Use raw conn.fetch (not fetch_dicts) so date/datetime columns stay native
+        # Python objects — fetch_dicts ISO-stringifies them, which breaks the .year
+        # access in the time-series aggregation below.
+        async with pool().acquire() as conn:
+            asset_dicts = await conn.fetch(
+                "select purchase_date, warranty_expiry, category_name from v_asset_inventory",
+            )
+            assignment_dicts = await conn.fetch(
+                "select aa.assigned_at "
+                "from asset_assignments aa "
+                "join assets a on a.id = aa.asset_id "
+                "where a.is_deleted = false",
+            )
+
+        assets: list[AssetRow] = [
+            {
+                "purchase_date": r["purchase_date"],
+                "warranty_expiry": r["warranty_expiry"],
+                "category_name": r["category_name"],
+            }
+            for r in asset_dicts
+        ]
+        assignments: list[AssignmentRow] = [
+            {"assigned_at": r["assigned_at"]} for r in assignment_dicts
+        ]
+
+        payload = build_analytics_timeseries(
+            assets, assignments, datetime.now(timezone.utc)
+        )
+
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content=success_response(
+                message="Analytics time-series retrieved.",
+                data=payload,
+                status_code=200,
+            ),
+        )
+    except Exception as exc:
+        return _json_error(
+            500,
+            message="Failed to retrieve analytics time-series.",
+            code="INTERNAL_ERROR",
+            details=str(exc),
+        )

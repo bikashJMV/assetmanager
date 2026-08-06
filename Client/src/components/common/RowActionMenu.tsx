@@ -40,8 +40,13 @@ export default function RowActionMenu({
     if (!open) return
 
     const onDocumentClick = (event: MouseEvent) => {
+      // The same row renders in two layouts (table + `sm:hidden` cards) sharing one open state.
+      // The hidden instance never renders its menu (menuRef is null); it must NOT treat a click on
+      // the visible instance's menu as "outside" and close on mousedown — that removes the menu item
+      // before its click fires, so the action would never run.
+      if (!menuRef.current) return
       const target = event.target as Node | null
-      if (triggerRef.current?.contains(target) || menuRef.current?.contains(target)) return
+      if (triggerRef.current?.contains(target) || menuRef.current.contains(target)) return
       onClose()
     }
 
@@ -70,6 +75,14 @@ export default function RowActionMenu({
       if (!trigger) return
 
       const rect = trigger.getBoundingClientRect()
+      // The same row can be rendered in two layouts (desktop table + a `sm:hidden` mobile card
+      // list). The hidden layout's trigger has no box (display:none → all-zero rect); skip it so
+      // its duplicate menu never appears anchored at the top-left corner.
+      if (rect.width === 0 && rect.height === 0) {
+        setMenuPosition(null)
+        return
+      }
+
       const viewportWidth = window.innerWidth
       const viewportHeight = window.innerHeight
       const gutter = 12

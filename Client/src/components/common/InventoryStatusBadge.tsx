@@ -17,8 +17,11 @@ export default function InventoryStatusBadge({ status, size = 'sm' }: InventoryS
   const shapeClass = size === 'md' ? 'rounded-lg px-3 py-1' : 'rounded-md px-2 py-0.5'
 
   return (
-    <span className={`inline-flex items-center ${gapClass} border font-medium ${textSizeClass} ${shapeClass} ${tone.border} ${tone.bg} ${tone.text}`}>
-      <span className={`${dotSizeClass} rounded-full ${tone.dot}`} aria-hidden="true" />
+    <span
+      className={`inline-flex items-center ${gapClass} border font-medium ${textSizeClass} ${shapeClass} ${tone.text}`}
+      style={{ borderColor: tone.borderColor, backgroundColor: tone.bgColor }}
+    >
+      <span className={`${dotSizeClass} rounded-full`} style={{ backgroundColor: tone.dotColor }} aria-hidden="true" />
       <span>{label}</span>
     </span>
   )

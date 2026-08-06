@@ -35,7 +35,6 @@ COPY repositories/ ./repositories/
 COPY schemas/ ./schemas/
 COPY services/ ./services/
 COPY core/ ./core/
-COPY auth/ ./auth/
 COPY scripts/ ./scripts/
 
 # Expose port
@@ -45,5 +44,6 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/', timeout=5)" || exit 1
 
-# Entrypoint
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Entrypoint — 4 workers: one event loop saturates ~220 req/s regardless of core count.
+# Keep workers x POSTGRES_MAX_POOL_SIZE (4 x 15 = 60) under postgres max_connections (100).
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]

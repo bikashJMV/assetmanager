@@ -1,7 +1,6 @@
 import type { IconName } from './AnimatedNavIcon'
-import { FEATURES } from '../../utils/featureFlags'
 
-export type SidebarNavVisibility = 'always' | 'authenticated' | 'manage'
+export type SidebarNavVisibility = 'always' | 'authenticated' | 'manage' | 'it_ops'
 
 type SidebarNavCommon = {
   id: string
@@ -82,38 +81,22 @@ export const sidebarSections: SidebarNavSection[] = [
     items: [
       { id: 'qr-batches', type: 'link', label: 'QR Batches', to: '/qr-generate/batches', icon: 'qr', visibility: 'manage' },
       { id: 'analysis', type: 'link', label: 'Analysis', to: '/analysis', icon: 'chart-column', visibility: 'manage' },
-      // { id: 'notifications', type: 'link', label: 'Notifications', to: '/notifications', icon: 'bell', visibility: 'authenticated' },
+      // Appearance/font/density preferences moved to the dedicated /settings page.
+      { id: 'settings', type: 'link', label: 'Settings', to: '/settings', icon: 'settings', visibility: 'authenticated', matchPrefix: true },
+    ],
+  },
+  {
+    id: 'it-ops',
+    title: 'IT Ops',
+    items: [
       {
-        id: 'settings',
-        type: 'group',
-        label: 'Settings',
-        icon: 'settings',
-        children: [
-          ...(FEATURES.RECYCLE_BIN ? [{ id: 'recycle-bin', type: 'link' as const, label: 'Recycle Bin', to: '/recycle-bin', icon: 'trash' as const, visibility: 'manage' as const }] : []),
-          { id: 'guide', type: 'link', label: 'Guide', to: '/guide', icon: 'guide' },
-          { id: 'theme-toggle', type: 'action', label: 'Theme: Light/Dark', icon: 'settings', action: 'toggle-theme' },
-          {
-            id: 'text-layout',
-            type: 'nested-group',
-            label: 'Text UI',
-            icon: 'text-layout',
-            children: [
-              { id: 'font-scale-slider', type: 'control', label: 'Scale', icon: 'text-layout', control: 'font-scale' },
-            ],
-          },
-          {
-            id: 'text-font',
-            type: 'nested-group',
-            label: 'Font Family',
-            icon: 'text-font',
-            children: [
-              { id: 'font-claude', type: 'action', label: 'Claude', icon: 'text-font', action: 'font-claude' },
-              { id: 'font-clean', type: 'action', label: 'Clean', icon: 'text-font', action: 'font-clean' },
-              { id: 'font-mono', type: 'action', label: 'Mono', icon: 'text-font', action: 'font-mono' },
-              { id: 'font-serif', type: 'action', label: 'Serif', icon: 'text-font', action: 'font-serif' },
-            ],
-          },
-        ],
+        id: 'logs',
+        type: 'link',
+        label: 'Logs',
+        to: '/logs',
+        icon: 'bell',
+        visibility: 'it_ops',
+        matchPrefix: true,
       },
     ],
   },

@@ -1,10 +1,27 @@
 from __future__ import annotations
 
+import re
 from typing import Any, Optional
 
 from repositories.db import fetch_dicts, fetchrow_dict, pool
 
 _MANUFACTURERS_TABLE = "manufacturers"
+# 'GEN' is reserved for the category-agnostic QR-batch tag pool (JMV-GEN-#####).
+_RESERVED_ALIASES = {"GEN"}
+
+
+async def _generate_unique_alias(conn: Any, source: str) -> str:
+    """Derive a 3-char uppercase alias from a category name/slug, made unique."""
+    letters = re.sub(r"[^A-Za-z0-9]", "", source or "").upper()
+    base = (letters[:3] or "CAT").ljust(3, "X")
+    candidate = base
+    suffix = 1
+    while candidate in _RESERVED_ALIASES or await conn.fetchval(
+        "select 1 from asset_categories where alias = $1", candidate
+    ):
+        candidate = f"{base[:2]}{suffix}"[:3]
+        suffix += 1
+    return candidate
 
 
 class MetaRepository:
@@ -38,12 +55,13 @@ class MetaRepository:
             )
             if row:
                 return str(row["id"])
-            
-            # Create it
+
+            # Create it — assign a unique tag alias so new categories get JMV-{alias}-##### tags.
+            alias = await _generate_unique_alias(conn, name or slug)
             row = await fetchrow_dict(
                 conn,
-                "insert into asset_categories (slug, name) values ($1, $2) returning id",
-                slug, name or slug.replace("-", " ").title()
+                "insert into asset_categories (slug, name, alias) values ($1, $2, $3) returning id",
+                slug, name or slug.replace("-", " ").title(), alias,
             )
             return str(row["id"])
 

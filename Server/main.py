@@ -1,21 +1,7 @@
-import base64
-import hashlib
-import hmac
-import json
 import logging
-import time
 
-# Configure application-level logging before uvicorn starts.
-# Without this, Python root logger defaults to WARNING and all
-# logger.info / logger.warning calls in app code are silently suppressed.
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)-8s %(name)s — %(message)s",
-)
-
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from core.auth import require_backend_api_key, _resolve_request_role, get_auth_user_id_from_bearer
 from core.auth_middleware import AuthMiddleware
 from core.middleware import EnvelopeMiddleware, RequestIdMiddleware
 from core.settings import settings
@@ -25,12 +11,19 @@ from routers.api_v1_employees import router as api_v1_employees_router
 from routers.api_v1_assignments import router as api_v1_assignments_router
 from routers.api_v1_meta import router as api_v1_meta_router
 from routers.api_v1_authz import router as api_v1_authz_router
-from routers.api_v1_recycle_bin import router as api_v1_recycle_bin_router
 from routers.api_auth import router as api_auth_router
 from routers.api_v1_qr import router as api_v1_qr_router
 from routers import health
 from prometheus_fastapi_instrumentator import Instrumentator
 from core.postgres import init_pg_pool, close_pg_pool
+
+# Configure application-level logging. Without this, the root logger defaults to
+# WARNING and all logger.info / logger.warning calls in app code are suppressed.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)-8s %(name)s — %(message)s",
+)
+
 
 def create_app() -> FastAPI:
     app = FastAPI(
@@ -79,14 +72,12 @@ def create_app() -> FastAPI:
 
     app.include_router(health.api_router)
     app.include_router(api_v1_assets_router)
-    app.include_router(api_v1_recycle_bin_router)
     app.include_router(api_v1_employees_router)
     app.include_router(api_v1_assignments_router)
     app.include_router(api_v1_meta_router)
     app.include_router(api_v1_authz_router)
     app.include_router(api_auth_router)
     app.include_router(api_v1_qr_router)
-    protected_dependencies = [Depends(require_backend_api_key)]
 
     # ── Observability ──
     from routers import observability
@@ -107,6 +98,14 @@ def create_app() -> FastAPI:
     # Prometheus metrics endpoint (non-invasive; does not affect existing routes)
     if settings.OTEL_GRAFANA_ENABLED:
         Instrumentator().instrument(app).expose(app, endpoint="/metrics")
+        # OTLP logs + traces → grafana/otel-lgtm collector (feeds the in-app Logs page).
+        from core.observability import init_observability
+
+        init_observability(app)
+
+    # Config warnings are buffered by Settings (constructed at import time, before logging was
+    # configured). Flush them here so they reach the formatter and the OTLP handler above.
+    settings.emit_startup_warnings()
 
     @app.on_event("startup")
     async def _startup():

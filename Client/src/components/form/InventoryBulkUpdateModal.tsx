@@ -18,6 +18,7 @@ import { useModalScrollLock } from '../../hooks/useModalScrollLock'
 import { ModalPortal } from '../common/ModalPortal'
 import { useToast } from '../../hooks/useToast'
 import AnimatedNavIcon from '../common/AnimatedNavIcon'
+import { LOADING } from '../../constants/loading'
 
 const ACCEPT =
   '.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel'
@@ -295,9 +296,9 @@ export default function InventoryBulkUpdateModal({ open, onClose, onSuccess }: P
             type="button"
             disabled={busy}
             onClick={() => inputRef.current?.click()}
-            className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-accent-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:pointer-events-none disabled:opacity-50 sm:w-auto"
+            className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-on-accent shadow-sm transition hover:bg-accent-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:pointer-events-none disabled:opacity-50 sm:w-auto"
           >
-            <span className="inline-flex h-5 w-5 shrink-0 text-white" aria-hidden="true">
+            <span className="inline-flex h-5 w-5 shrink-0 text-on-accent" aria-hidden="true">
               <AnimatedNavIcon name="upload" className="h-5 w-5 text-[color:var(--on-accent)]" />
             </span>
             <span>{busy ? 'Updating…' : 'Upload Excel file'}</span>
@@ -312,7 +313,7 @@ export default function InventoryBulkUpdateModal({ open, onClose, onSuccess }: P
           {progress ? (
             <div className="mt-5 space-y-2" role="status" aria-live="polite" aria-busy="true">
               <div className="flex flex-wrap items-baseline justify-between gap-2 text-sm">
-                <span className="font-medium text-primary">Processing rows…</span>
+                <span className="font-medium text-primary">{LOADING.PROCESSING_ROWS}</span>
                 <span className="tabular-nums text-muted">
                   {progress.done} of {progress.total} ({pct}%)
                 </span>
@@ -328,7 +329,8 @@ export default function InventoryBulkUpdateModal({ open, onClose, onSuccess }: P
 
           {issueLines.length > 0 && (
             <div
-              className="mt-5 max-h-52 overflow-y-auto rounded-xl border border-red-500/35 bg-red-500/[0.06] py-3 pl-4 pr-3 dark:border-red-400/35 dark:bg-red-400/[0.08]"
+              className="mt-5 max-h-52 overflow-y-auto rounded-xl border py-3 pl-4 pr-3"
+              style={{ borderColor: 'hsl(var(--danger) / 0.35)', backgroundColor: 'hsl(var(--danger) / 0.06)' }}
               role="region"
               aria-label="Update issues"
             >
@@ -339,7 +341,7 @@ export default function InventoryBulkUpdateModal({ open, onClose, onSuccess }: P
                     ? 'Update was not applied — fix these in your file'
                     : 'Update did not complete'}
               </p>
-              <ul className="mt-2.5 list-disc space-y-2 pl-5 text-sm leading-snug text-muted marker:text-red-600 dark:marker:text-red-400">
+              <ul className="mt-2.5 list-disc space-y-2 pl-5 text-sm leading-snug text-muted">
                 {issueLines.slice(0, 80).map((line, idx) => (
                   <li key={`${idx}-${line.slice(0, 48)}`} className="break-words pl-0.5">
                     {line}

@@ -150,3 +150,20 @@ export type AssetDetailRecord = {
     updated_by: AssetAuditActorDisplay | null
   }
 }
+
+export type AnalyticsMonthPoint = { month: string; total: number }
+export type AnalyticsMonthCount = { month: string; count: number }
+export type AnalyticsMatrixCell = { year: number; month: number; count: number }
+export type AnalyticsYearCount = { year: number; count: number }
+export type AnalyticsLabelCount = { label: string; count: number }
+export type AnalyticsWarrantyPoint = { ageDays: number; warrantyDays: number }
+
+export type AnalyticsTimeseries = {
+  cumulativeByMonth: AnalyticsMonthPoint[]
+  acquisitionMatrix: AnalyticsMatrixCell[]
+  acquisitionByYear: AnalyticsYearCount[]
+  categoryDistribution: AnalyticsLabelCount[]
+  warrantyPoints: AnalyticsWarrantyPoint[]
+  assignmentsByMonth: AnalyticsMonthCount[]
+  generatedAt: string
+}

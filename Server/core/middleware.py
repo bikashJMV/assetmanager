@@ -1,10 +1,7 @@
-import asyncio
-import base64
 import json
 import logging
 import time
 import uuid
-from datetime import datetime, timezone
 
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
@@ -51,19 +48,24 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
     """Attach a unique request_id to every request and log it with basic timing."""
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
-        from core.settings import settings  # local import avoids circular dep at module load
 
         request_id = request.headers.get("x-request-id") or str(uuid.uuid4())
         request.state.request_id = request_id
 
         start = time.perf_counter()
         response = await call_next(request)
-        elapsed_ms = round((time.perf_counter() - start) * 1000, 1)
+        elapsed_ms = round((time.perf_counter() - start) * 1000, 2)
 
         response.headers["x-request-id"] = request_id
 
+        # Human-readable message so the Logs page shows endpoint + status + latency at a glance;
+        # the same fields stay in `extra` as structured metadata for querying/aggregation.
         logger.info(
-            "request_completed",
+            "%s %s -> %d (%.2f ms)",
+            request.method,
+            request.url.path,
+            response.status_code,
+            elapsed_ms,
             extra={
                 "request_id": request_id,
                 "method": request.method,

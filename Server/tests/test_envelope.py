@@ -2,19 +2,10 @@
 
 Run with:  python -m pytest tests/test_envelope.py -v
 """
-import json
-
-import pytest
 from fastapi.testclient import TestClient
 
 from main import app
-from schemas.envelope import (
-    ApiEnvelope,
-    ErrorDetail,
-    ResponseMeta,
-    error_envelope,
-    success_envelope,
-)
+from schemas.envelope import error_envelope, success_envelope
 
 
 # ───────── Unit tests for envelope builders ─────────
@@ -116,10 +107,13 @@ class TestV1Unchanged:
         assert body["message"] == "AMS API is running"
 
     def test_health_raw(self):
-        r = client.get("/health")
+        # /api/health returns its own envelope (via success_response/error_response).
+        # Under TestClient the pg pool is not connected, so status may be 200 or 503;
+        # either way the envelope contract holds.
+        r = client.get("/api/health")
         body = r.json()
-        assert "status_code" not in body
-        assert "api" in body
+        assert body["status_code"] in (200, 503)
+        assert set(("status", "status_code", "message", "data")) <= body.keys()
 
 
 class TestV2Envelope:
@@ -134,11 +128,14 @@ class TestV2Envelope:
         assert body["data"]["message"] == "AMS API is running"
 
     def test_health_enveloped(self):
-        r = client.get("/v2/health")
+        # /v2 wraps the (already-enveloped) /api/health payload in the outer envelope.
+        # DB state is irrelevant here — assert the outer wrapping contract.
+        r = client.get("/v2/api/health")
         body = r.json()
-        assert body["status_code"] == 200
-        assert body["status"] is True
-        assert "api" in body["data"]
+        assert body["status_code"] == r.status_code
+        assert "meta" in body and body["meta"]["request_id"]
+        # data carries the inner /api/health envelope
+        assert isinstance(body["data"], dict) and "status_code" in body["data"]
 
 
 class TestHeaderOptIn:
@@ -160,7 +157,7 @@ class TestErrorEnvelopeIntegration:
     """Errors on v2 routes return the error envelope shape."""
 
     def test_401_envelope(self):
-        r = client.get("/v2/assets")
+        r = client.get("/v2/api/v1/assets")
         assert r.status_code == 401
         body = r.json()
         assert body["status"] is False
